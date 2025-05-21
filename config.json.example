@@ -1,0 +1,12 @@
+{
+  "clickhouse": {
+    "host": "your-clickhouse-host.com",
+    "port": 8123,
+    "username": "default",
+    "password": "your-password",
+    "database": "xatu"
+  },
+  "parquet": {
+    "base_path": "./data"
+  }
+}
