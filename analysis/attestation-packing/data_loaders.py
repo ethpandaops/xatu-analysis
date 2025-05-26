@@ -412,6 +412,41 @@ def get_database_connection():
     except Exception as e:
         st.error(f"Failed to connect to database: {e}")
         return None
+@st.cache_data(ttl=3600)  # Cache for 1 hour since entities don't change frequently
+def load_validators_from_ethseer(network):
+    """Load validators from the ethseer_validator_entity table for the specified network."""
+    connection = get_database_connection()
+    if connection is None:
+        return {}
+        
+    try:
+        # Query to fetch validator entities from ethseer
+        proposer_query = text("""
+            SELECT 
+                `index` as proposer_index,
+                entity
+            FROM ethseer_validator_entity
+            WHERE 
+                meta_network_name = :network
+        """)
+        
+        result = connection.execute(proposer_query, {"network": network}).fetchall()
+        
+        # Convert the result to a pandas DataFrame
+        validator_entities_df = pd.DataFrame(result, columns=['proposer_index', 'entity'])
+        
+        # Convert the dataframe to a dictionary for easier lookup
+        validators_map = {}
+        for _, row in validator_entities_df.iterrows():
+            entity = row['entity']
+            if entity is None or pd.isna(entity) or entity == '':
+                entity = 'unknown'
+            validators_map[row['proposer_index']] = entity
+        
+        return validators_map
+    finally:
+        connection.close()
+
 def get_cache_dir():
     """Get the cache directory for parquet files."""
     cache_dir = Path(".cache")
