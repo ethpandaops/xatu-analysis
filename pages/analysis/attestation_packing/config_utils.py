@@ -23,13 +23,8 @@ import dotenv
 # Load environment variables
 dotenv.load_dotenv()
 
-# Set page configuration with light theme
-st.set_page_config(
-    page_title="Attestation Packing Analysis",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Page configuration is handled by the main app.py
+# Removed st.set_page_config() to avoid conflict with main app navigation
 
 # Custom CSS for minimal branding (working with Streamlit's default light theme)
 st.markdown("""
