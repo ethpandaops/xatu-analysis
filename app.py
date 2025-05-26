@@ -22,13 +22,22 @@ home_page = st.Page(
 attestation_packing_page = st.Page(
     "pages/analysis/attestation_packing/page.py",
     title="Attestation Packing",
-    icon="📦"
+    icon="📦",
+    url_path="attestation-packing"
 )
+
+gas_usage_performance_page = st.Page(
+    "pages/analysis/gas_usage_performance/page.py",
+    title="Gas Usage Performance",
+    icon="⛽",
+    url_path="gas-usage-performance"
+)
+
 
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [attestation_packing_page]
+    "Analysis": [attestation_packing_page, gas_usage_performance_page]
 })
 
 # Run the selected page

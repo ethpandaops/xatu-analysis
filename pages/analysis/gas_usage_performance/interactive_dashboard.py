@@ -1,0 +1,875 @@
+"""
+Interactive dashboard for gas usage performance analysis.
+
+This module provides the main Streamlit interface for analyzing the relationship
+between gas usage and block arrival times in Ethereum networks.
+"""
+
+import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
+import logging
+
+from shared.ui_components import apply_ethPandaOps_styling
+from shared.filesystem import get_cache_dir
+from config_utils import (
+    get_metric_info, get_analysis_config, get_default_periods,
+    validate_analysis_config, get_visualization_types
+)
+from data_loaders import load_complete_analysis_data, validate_data_quality
+from metrics_calculators import (
+    create_time_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
+    calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
+    calculate_comparative_analysis
+)
+from plot_generators import (
+    create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
+    create_box_plot_comparison, create_correlation_matrix, create_geographic_performance_plot,
+    create_gas_binned_performance_plot
+)
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def initialize_session_state():
+    """Initialize session state variables."""
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+    if 'analysis_data' not in st.session_state:
+        st.session_state.analysis_data = {}
+    if 'last_config' not in st.session_state:
+        st.session_state.last_config = None
+    if 'time_buckets_data' not in st.session_state:
+        st.session_state.time_buckets_data = {}
+    if 'selected_metrics' not in st.session_state:
+        st.session_state.selected_metrics = ['gas_used', 'block_gossip_time_mean']
+
+
+def render_sidebar_configuration() -> Dict[str, Any]:
+    """
+    Render sidebar configuration panel and return selected parameters.
+    
+    Returns:
+        Dictionary with configuration parameters
+    """
+    st.sidebar.header("⚙️ Analysis Configuration")
+    
+    # Network selection
+    config = get_analysis_config()
+    network = st.sidebar.selectbox(
+        "Select Network",
+        config['supported_networks'],
+        index=0,
+        help="Ethereum network to analyze"
+    )
+    
+    # Time range configuration
+    st.sidebar.subheader("📅 Analysis Periods")
+    
+    # Quick period selection
+    default_periods = get_default_periods()
+    period_options = ["Custom"] + list(default_periods.keys())
+    
+    selected_period = st.sidebar.selectbox(
+        "Quick Period Selection",
+        period_options,
+        index=1,  # Default to "Last 7 Days"
+        help="Select a predefined period or choose Custom for manual selection"
+    )
+    
+    # Period 1 configuration
+    st.sidebar.write("**Period 1**")
+    period1_col1, period1_col2 = st.sidebar.columns(2)
+    
+    if selected_period != "Custom":
+        period_config = default_periods[selected_period]
+        default_start = period_config["start"].date()
+        default_end = period_config["end"].date()
+    else:
+        default_start = (datetime.now() - timedelta(days=7)).date()
+        default_end = datetime.now().date()
+    
+    with period1_col1:
+        period1_start = st.date_input(
+            "Start Date", 
+            value=default_start,
+            max_value=datetime.now().date(),
+            key="period1_start"
+        )
+    with period1_col2:
+        period1_end = st.date_input(
+            "End Date", 
+            value=default_end,
+            max_value=datetime.now().date(),
+            key="period1_end"
+        )
+    
+    # Period comparison option
+    enable_comparison = st.sidebar.checkbox(
+        "Enable Period Comparison", 
+        help="Compare metrics between two time periods"
+    )
+    
+    period2_start, period2_end = None, None
+    if enable_comparison:
+        st.sidebar.write("**Period 2**")
+        period2_col1, period2_col2 = st.sidebar.columns(2)
+        
+        with period2_col1:
+            period2_start = st.date_input(
+                "Start Date", 
+                value=(datetime.now() - timedelta(days=14)).date(),
+                max_value=datetime.now().date(),
+                key="period2_start"
+            )
+        with period2_col2:
+            period2_end = st.date_input(
+                "End Date", 
+                value=(datetime.now() - timedelta(days=7)).date(),
+                max_value=datetime.now().date(),
+                key="period2_end"
+            )
+    
+    # Advanced settings
+    with st.sidebar.expander("🔧 Advanced Settings"):
+        time_buckets = st.number_input(
+            "Number of Time Buckets", 
+            min_value=config['min_time_buckets'], 
+            max_value=config['max_time_buckets'], 
+            value=config['default_time_buckets'],
+            help="Number of equal-duration time periods for temporal analysis"
+        )
+        
+        min_samples = st.number_input(
+            "Minimum Samples per Analysis", 
+            min_value=100, 
+            value=config['min_samples_per_analysis'],
+            help="Minimum number of data points required for analysis"
+        )
+        
+        max_propagation = st.number_input(
+            "Max Propagation Time (ms)",
+            min_value=1000,
+            max_value=30000,
+            value=config['max_propagation_time_ms'],
+            help="Maximum propagation time to include in analysis"
+        )
+    
+    return {
+        'network': network,
+        'period1_start': period1_start,
+        'period1_end': period1_end,
+        'period2_start': period2_start,
+        'period2_end': period2_end,
+        'enable_comparison': enable_comparison,
+        'time_buckets': time_buckets,
+        'min_samples': min_samples,
+        'max_propagation': max_propagation
+    }
+
+
+def render_cache_management():
+    """Render cache management section in sidebar."""
+    st.sidebar.subheader("💾 Cache Management")
+    
+    cache_dir = get_cache_dir()
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        if st.button("🗑️ Clear Cache"):
+            st.cache_data.clear()
+            # Also clear parquet file cache if it exists
+            import shutil
+            if cache_dir.exists():
+                shutil.rmtree(cache_dir)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+            st.sidebar.success("Cache cleared!")
+    
+    with col2:
+        # Show cache size
+        cache_size = 0
+        if cache_dir.exists():
+            for file in cache_dir.glob("*.parquet"):
+                cache_size += file.stat().st_size
+        cache_size_mb = cache_size / (1024 * 1024)
+        st.write(f"💾 {cache_size_mb:.1f}MB")
+
+
+def load_and_validate_data(config: Dict[str, Any]) -> bool:
+    """
+    Load and validate analysis data based on configuration.
+    
+    Args:
+        config: Configuration parameters
+        
+    Returns:
+        True if data loaded successfully, False otherwise
+    """
+    with st.spinner("🔄 Loading gas usage and performance data..."):
+        try:
+            # Validate configuration
+            validation_errors = validate_analysis_config(
+                config['network'],
+                datetime.combine(config['period1_start'], datetime.min.time()),
+                datetime.combine(config['period1_end'], datetime.min.time()),
+                config['time_buckets']
+            )
+            
+            if validation_errors:
+                for error in validation_errors:
+                    st.error(f"❌ Configuration error: {error}")
+                return False
+            
+            # Load Period 1 data
+            period1_data = load_complete_analysis_data(
+                config['network'],
+                datetime.combine(config['period1_start'], datetime.min.time()),
+                datetime.combine(config['period1_end'], datetime.min.time()),
+                "Period 1"
+            )
+            
+            st.session_state.analysis_data['period1'] = period1_data
+            
+            # Load Period 2 data if comparison enabled
+            if config['enable_comparison']:
+                period2_data = load_complete_analysis_data(
+                    config['network'],
+                    datetime.combine(config['period2_start'], datetime.min.time()),
+                    datetime.combine(config['period2_end'], datetime.min.time()),
+                    "Period 2"
+                )
+                st.session_state.analysis_data['period2'] = period2_data
+            
+            # Validate data quality
+            period1_quality = validate_data_quality(period1_data['combined_data'])
+            if not period1_quality['valid']:
+                st.warning("⚠️ Data quality issues detected:")
+                for warning in period1_quality['warnings']:
+                    st.warning(f"• {warning}")
+            
+            # Create time buckets
+            if not period1_data['combined_data'].empty:
+                bucketed_data = create_time_buckets(
+                    period1_data['combined_data'], 
+                    config['time_buckets']
+                )
+                st.session_state.time_buckets_data['period1'] = bucketed_data
+                
+                if config['enable_comparison'] and not st.session_state.analysis_data['period2']['combined_data'].empty:
+                    bucketed_data2 = create_time_buckets(
+                        st.session_state.analysis_data['period2']['combined_data'],
+                        config['time_buckets']
+                    )
+                    st.session_state.time_buckets_data['period2'] = bucketed_data2
+            
+            st.session_state.data_loaded = True
+            st.success("✅ Data loaded successfully!")
+            
+            # Display data summary
+            summary = period1_data['summary_stats']
+            
+            # Check if we have gas data
+            has_gas_data = summary.get('avg_gas_used', 0) > 0
+            
+            if has_gas_data:
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Records", f"{summary.get('total_blocks', 0):,}")
+                with col2:
+                    st.metric("Avg Gas Used", f"{summary.get('avg_gas_used', 0):.0f}")
+                with col3:
+                    st.metric("Avg Gas Utilization", f"{summary.get('avg_gas_utilization', 0):.1f}%")
+                with col4:
+                    st.metric("Avg Block Gossip Time", f"{summary.get('avg_block_gossip_time', 0):.1f}ms")
+            else:
+                st.info("ℹ️ **Timing-Only Analysis Mode**: No gas usage data available for this network/period. Analysis will focus on block propagation timing metrics.")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Records", f"{summary.get('total_blocks', 0):,}")
+                with col2:
+                    st.metric("Avg Block Gossip Time", f"{summary.get('avg_block_gossip_time', 0):.1f}ms")
+                with col3:
+                    st.metric("Avg Head Time", f"{summary.get('avg_head_time', 0):.1f}ms")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error loading data: {e}")
+            st.error(f"❌ Error loading data: {str(e)}")
+            st.session_state.data_loaded = False
+            return False
+
+
+def render_analysis_controls() -> Dict[str, Any]:
+    """
+    Render analysis controls including metrics, aggregation, and grouping.
+    
+    Returns:
+        Dictionary with analysis configuration
+    """
+    st.subheader("📊 Analysis Configuration")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.write("**Metrics**")
+        # Available metrics (now using raw column names from client-level data)
+        gas_metrics = st.multiselect(
+            "Gas metrics:",
+            ['gas_used', 'gas_utilization', 'blob_count'],
+            default=['gas_used'],
+            key="gas_metrics"
+        )
+        
+        perf_metrics = st.multiselect(
+            "Performance metrics:",
+            ['block_gossip_time', 'head_time', 'time_difference'],
+            default=['block_gossip_time'],
+            key="perf_metrics"
+        )
+        
+        selected_metrics = gas_metrics + perf_metrics
+    
+    with col2:
+        st.write("**Aggregation Level**")
+        aggregation_options = {
+            'Client Level': None,  # No aggregation - raw client data
+            'Slot Level': ['slot'],
+            'Consensus Implementation': ['meta_consensus_implementation'],
+            'Time Bucket': ['bucket_number'],
+            'Implementation + Time': ['meta_consensus_implementation', 'bucket_number'],
+            'Continent': ['meta_client_geo_continent_code'],
+            'Continent + Time': ['meta_client_geo_continent_code', 'bucket_number']
+        }
+        
+        aggregation_level = st.selectbox(
+            "Group data by:",
+            list(aggregation_options.keys()),
+            index=1,  # Default to Slot Level
+            key="aggregation_level"
+        )
+        
+        group_by = aggregation_options[aggregation_level]
+    
+    with col3:
+        st.write("**Aggregation Function**")
+        agg_function = st.selectbox(
+            "How to aggregate:",
+            ['mean', 'median', 'p95', 'p99', 'min', 'max'],
+            index=0,
+            key="agg_function"
+        )
+    
+    # Don't store widget values in session state - they're already managed by the widgets
+    # Just return the configuration
+    return {
+        'metrics': selected_metrics,
+        'group_by': group_by,
+        'agg_function': agg_function,
+        'aggregation_level': aggregation_level
+    }
+
+
+def render_analysis_dashboard():
+    """Render the main analysis dashboard with all visualizations."""
+    if not st.session_state.data_loaded or 'period1' not in st.session_state.analysis_data:
+        st.warning("⚠️ No data loaded. Please configure analysis parameters and load data.")
+        return
+    
+    period1_data = st.session_state.analysis_data['period1']['combined_data']
+    period1_bucketed = st.session_state.time_buckets_data.get('period1', pd.DataFrame())
+    
+    if period1_data.empty:
+        st.error("❌ No data available for analysis")
+        return
+    
+    # Analysis controls
+    analysis_config = render_analysis_controls()
+    
+    if not analysis_config['metrics']:
+        st.warning("⚠️ Please select at least one metric for analysis")
+        return
+    
+    # Apply user-controlled aggregation
+    if analysis_config['group_by'] is not None:
+        # Aggregate the data according to user selection
+        with st.spinner(f"Aggregating {len(period1_data):,} records..."):
+            aggregated_data = aggregate_data(
+                period1_data,
+                group_by=analysis_config['group_by'],
+                metrics=analysis_config['metrics'],
+                agg_function=analysis_config['agg_function']
+            )
+        display_data = aggregated_data
+        st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records)")
+    else:
+        # Use raw client-level data (sample for performance if too large)
+        if len(period1_data) > 100000:
+            st.warning(f"⚠️ Dataset is large ({len(period1_data):,} records). Consider using aggregation for better performance.")
+            # Sample for visualization performance
+            display_data = period1_data.sample(n=min(50000, len(period1_data)), random_state=42)
+            st.info(f"📊 Showing sample of {len(display_data):,} records from {len(period1_data):,} total client-level records")
+        else:
+            display_data = period1_data
+            st.info(f"📊 Showing {len(display_data):,} raw client-level records")
+    
+    # Update bucketed data for time series analysis
+    if not period1_bucketed.empty and analysis_config['group_by'] is not None:
+        period1_bucketed_agg = aggregate_data(
+            period1_bucketed,
+            group_by=analysis_config['group_by'],
+            metrics=analysis_config['metrics'],
+            agg_function=analysis_config['agg_function']
+        )
+    else:
+        period1_bucketed_agg = period1_bucketed
+    
+    # Visualization type selection
+    st.subheader("📈 Visualization Options")
+    viz_types = get_visualization_types()
+    
+    # Create tabs for different analysis types
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🔗 Correlation Analysis", 
+        "📈 Time Series", 
+        "🔥 Performance Heatmap",
+        "📦 Distribution Analysis",
+        "🌍 Geographic Analysis"
+    ])
+    
+    with tab1:
+        with st.spinner("Generating correlation analysis..."):
+            render_correlation_analysis(display_data, analysis_config['metrics'])
+    
+    with tab2:
+        with st.spinner("Generating time series analysis..."):
+            render_time_series_analysis(period1_bucketed_agg, analysis_config['metrics'])
+    
+    with tab3:
+        with st.spinner("Generating performance heatmap..."):
+            render_performance_heatmap(period1_bucketed_agg)
+    
+    with tab4:
+        with st.spinner("Generating distribution analysis..."):
+            render_distribution_analysis(display_data, analysis_config['metrics'])
+    
+    with tab5:
+        with st.spinner("Generating geographic analysis..."):
+            render_geographic_analysis(display_data, analysis_config['metrics'])
+    
+    # Statistical summary
+    render_statistical_summary(display_data, analysis_config['metrics'])
+
+
+def render_correlation_analysis(data: pd.DataFrame, metrics: List[str]):
+    """Render correlation analysis section."""
+    st.write("### Gas Usage vs Performance Correlation")
+    
+    if data.empty:
+        st.warning("No data available for correlation analysis")
+        return
+    
+    if len(metrics) < 2:
+        st.warning("Need at least 2 metrics for correlation analysis")
+        return
+    
+    # Filter metrics to only those that exist in the data
+    available_metrics = [m for m in metrics if m in data.columns and data[m].notna().sum() > 0]
+    
+    if len(available_metrics) < 2:
+        st.warning(f"Need at least 2 metrics with data. Available metrics: {available_metrics}")
+        st.write(f"Data columns: {list(data.columns)}")
+        return
+    
+    # Metric pair selection
+    col1, col2 = st.columns(2)
+    with col1:
+        gas_metrics = [m for m in available_metrics if 'gas' in m.lower()]
+        if not gas_metrics:
+            gas_metrics = available_metrics
+        x_metric = st.selectbox(
+            "X-axis metric (typically gas):",
+            gas_metrics,
+            key="corr_x_metric"
+        )
+    with col2:
+        perf_metrics = [m for m in available_metrics if m != x_metric]
+        y_metric = st.selectbox(
+            "Y-axis metric (typically performance):",
+            perf_metrics,
+            key="corr_y_metric"
+        )
+    
+    if x_metric and y_metric:
+        try:
+            # Create scatter plot
+            fig = create_gas_vs_arrival_scatter(
+                data, x_metric, y_metric,
+                title_suffix=" - Correlation Analysis"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show correlation matrix if multiple metrics
+            if len(available_metrics) > 2:
+                st.write("#### Correlation Matrix")
+                corr_fig = create_correlation_matrix(data, available_metrics)
+                st.plotly_chart(corr_fig, use_container_width=True)
+                
+        except Exception as e:
+            st.error(f"Error creating correlation plot: {str(e)}")
+            st.write(f"Data shape: {data.shape}")
+            st.write(f"X metric ({x_metric}) stats: {data[x_metric].describe()}")
+            st.write(f"Y metric ({y_metric}) stats: {data[y_metric].describe()}")
+
+
+def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str]):
+    """Render time series analysis section."""
+    st.write("### Temporal Analysis Over Time Buckets")
+    
+    if bucketed_data.empty:
+        st.warning("No time bucket data available")
+        return
+    
+    # Debug info
+    st.write(f"Debug: Bucketed data shape: {bucketed_data.shape}")
+    st.write(f"Debug: Bucketed data columns: {list(bucketed_data.columns)}")
+    
+    try:
+        # Check if data has time buckets
+        if 'bucket_number' not in bucketed_data.columns:
+            st.warning("Data not properly bucketed. Cannot create time series.")
+            return
+        
+        # Check if data is already aggregated by time buckets
+        bucket_counts = bucketed_data['bucket_number'].value_counts()
+        if bucket_counts.max() > 1:
+            # Data needs further aggregation by bucket
+            st.write(f"Aggregating {len(bucketed_data)} records by {bucketed_data['bucket_number'].nunique()} time buckets...")
+            bucket_metrics = calculate_bucket_metrics(
+                bucketed_data, 
+                metric_cols=metrics,
+                agg_function='mean'
+            )
+        else:
+            # Data is already properly aggregated
+            bucket_metrics = bucketed_data
+        
+        if bucket_metrics.empty:
+            st.warning("Could not calculate bucket metrics")
+            return
+        
+        st.write(f"Debug: Bucket metrics shape: {bucket_metrics.shape}")
+        st.write(f"Debug: Bucket metrics columns: {list(bucket_metrics.columns)}")
+        
+        # Select metrics for time series
+        available_ts_metrics = [col for col in metrics if col in bucket_metrics.columns and bucket_metrics[col].notna().sum() > 0]
+        
+        if not available_ts_metrics:
+            st.warning(f"No time series metrics available. Requested: {metrics}, Available: {list(bucket_metrics.columns)}")
+            return
+        
+        selected_ts_metrics = st.multiselect(
+            "Select metrics for time series:",
+            available_ts_metrics,
+            default=available_ts_metrics[:2] if len(available_ts_metrics) >= 2 else available_ts_metrics,
+            key="ts_metrics"
+        )
+        
+        if selected_ts_metrics:
+            # Sort by bucket number
+            bucket_metrics_sorted = bucket_metrics.sort_values('bucket_number')
+            
+            # Create time series plot
+            fig = create_time_series_comparison(
+                bucket_metrics_sorted.set_index('bucket_number'),
+                selected_ts_metrics,
+                title_suffix=" - Temporal Analysis"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show trend analysis
+            try:
+                trends = calculate_temporal_trends(bucket_metrics_sorted, metric_cols=selected_ts_metrics)
+                if trends:
+                    st.write("#### Trend Analysis")
+                    trend_data = []
+                    for metric, trend_info in trends.items():
+                        if trend_info:
+                            trend_data.append({
+                                'Metric': get_metric_info(metric)['title'],
+                                'Trend': trend_info['trend_direction'],
+                                'Slope': f"{trend_info['slope']:.2e}",
+                                'R²': f"{trend_info['r_squared']:.3f}",
+                                'Significant': "Yes" if trend_info['significant'] else "No"
+                            })
+                    
+                    if trend_data:
+                        st.dataframe(pd.DataFrame(trend_data), use_container_width=True)
+            except Exception as e:
+                st.warning(f"Could not calculate trends: {str(e)}")
+                
+    except Exception as e:
+        st.error(f"Error in time series analysis: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+
+
+def render_performance_heatmap(bucketed_data: pd.DataFrame):
+    """Render performance heatmap section."""
+    st.write("### Consensus Implementation Performance Heatmap")
+    
+    if bucketed_data.empty:
+        st.warning("No data available for heatmap")
+        return
+    
+    # Check for consensus implementation column
+    consensus_col = None
+    for col in ['meta_consensus_implementation', 'consensus_implementations']:
+        if col in bucketed_data.columns:
+            consensus_col = col
+            break
+    
+    if not consensus_col:
+        st.warning("No consensus implementation data available for heatmap")
+        st.write(f"Available columns: {list(bucketed_data.columns)}")
+        return
+    
+    # Metric selection for heatmap  
+    heatmap_metrics = ['block_gossip_time', 'head_time', 'gas_utilization', 'gas_used']
+    available_heatmap_metrics = [m for m in heatmap_metrics if m in bucketed_data.columns and bucketed_data[m].notna().sum() > 0]
+    
+    if not available_heatmap_metrics:
+        st.warning(f"No suitable metrics available for heatmap. Available columns: {list(bucketed_data.columns)}")
+        return
+    
+    selected_heatmap_metric = st.selectbox(
+        "Select metric for heatmap:",
+        available_heatmap_metrics,
+        key="heatmap_metric"
+    )
+    
+    try:
+        # Create heatmap data manually for better control
+        if 'bucket_number' in bucketed_data.columns:
+            # Aggregate by consensus implementation and bucket
+            heatmap_data = bucketed_data.groupby(['bucket_number', consensus_col])[selected_heatmap_metric].mean().reset_index()
+            
+            if not heatmap_data.empty:
+                pivot_data = heatmap_data.pivot(index=consensus_col, columns='bucket_number', values=selected_heatmap_metric)
+                
+                # Create simple heatmap using plotly
+                import plotly.graph_objects as go
+                fig = go.Figure(data=go.Heatmap(
+                    z=pivot_data.values,
+                    x=pivot_data.columns,
+                    y=pivot_data.index,
+                    colorscale='RdYlBu_r'
+                ))
+                fig.update_layout(title=f"{get_metric_info(selected_heatmap_metric)['title']} by Implementation Over Time")
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No data available after grouping")
+        else:
+            st.warning("Time bucket data not available for heatmap")
+            
+    except Exception as e:
+        st.error(f"Error creating heatmap: {str(e)}")
+        st.write(f"Data shape: {bucketed_data.shape}")
+        st.write(f"Consensus column: {consensus_col}")
+        st.write(f"Selected metric: {selected_heatmap_metric}")
+
+
+def render_distribution_analysis(data: pd.DataFrame, metrics: List[str]):
+    """Render distribution analysis section."""
+    st.write("### Distribution Analysis")
+    
+    # Box plot comparison
+    if 'consensus_implementations' in data.columns:
+        st.write("#### Performance Distribution by Consensus Implementation")
+        
+        box_metric = st.selectbox(
+            "Select metric for box plot:",
+            metrics,
+            key="box_metric"
+        )
+        
+        fig = create_box_plot_comparison(
+            data, 
+            box_metric,
+            title_suffix=" - Distribution Analysis"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Gas binned analysis
+    st.write("#### Performance vs Gas Usage Analysis")
+    
+    gas_metrics = [m for m in metrics if 'gas' in m.lower()]
+    perf_metrics = [m for m in metrics if 'time' in m.lower() or 'gossip' in m.lower()]
+    
+    if gas_metrics and perf_metrics:
+        gas_metric = st.selectbox("Gas metric:", gas_metrics, key="gas_bin_metric")
+        perf_metric = st.selectbox("Performance metric:", perf_metrics, key="perf_bin_metric")
+        
+        # Calculate gas binned analysis
+        binned_analysis = calculate_gas_binned_analysis(data, gas_metric, perf_metric)
+        
+        if not binned_analysis.empty:
+            fig = create_gas_binned_performance_plot(
+                binned_analysis,
+                f"{perf_metric}_mean",
+                title_suffix=" - Gas Binned Analysis"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+
+def render_geographic_analysis(data: pd.DataFrame, metrics: List[str]):
+    """Render geographic analysis section."""
+    st.write("### Geographic Performance Analysis")
+    
+    if 'continents' not in data.columns:
+        st.warning("No geographic data available")
+        return
+    
+    geo_metric = st.selectbox(
+        "Select metric for geographic analysis:",
+        metrics,
+        key="geo_metric"
+    )
+    
+    fig = create_geographic_performance_plot(
+        data, 
+        geo_metric,
+        title_suffix=" - Geographic Analysis"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_statistical_summary(data: pd.DataFrame, metrics: List[str]):
+    """Render statistical summary section."""
+    st.subheader("📋 Statistical Summary")
+    
+    # Percentile analysis
+    percentiles = calculate_percentile_analysis(data, metrics)
+    
+    if not percentiles.empty:
+        st.write("#### Percentile Analysis")
+        st.dataframe(percentiles, use_container_width=True)
+    
+    # Comparison analysis if multiple periods
+    if 'period2' in st.session_state.analysis_data:
+        period2_data = st.session_state.analysis_data['period2']['combined_data']
+        if not period2_data.empty:
+            st.write("#### Period Comparison")
+            comparison = calculate_comparative_analysis(data, period2_data, metrics)
+            
+            if comparison:
+                comp_data = []
+                for metric, comp_info in comparison.items():
+                    if comp_info:
+                        comp_data.append({
+                            'Metric': get_metric_info(metric)['title'],
+                            'Period 1 Mean': f"{comp_info['period1_mean']:.2f}",
+                            'Period 2 Mean': f"{comp_info['period2_mean']:.2f}",
+                            'Change (%)': f"{comp_info['percent_change']:.1f}%",
+                            'Significant': "Yes" if comp_info['significant_difference'] else "No"
+                        })
+                
+                if comp_data:
+                    st.dataframe(pd.DataFrame(comp_data), use_container_width=True)
+
+
+def main():
+    """Main dashboard function."""
+    apply_ethPandaOps_styling()
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Page title
+    st.markdown('<h1 class="main-header">⛽ Gas Usage Performance Analysis</h1>', unsafe_allow_html=True)
+    
+    # Sidebar configuration
+    config = render_sidebar_configuration()
+    
+    # Cache management
+    render_cache_management()
+    
+    # Check if configuration changed
+    current_config = (
+        config['network'], 
+        str(config['period1_start']), 
+        str(config['period1_end']),
+        config['enable_comparison'],
+        str(config.get('period2_start', '')),
+        str(config.get('period2_end', '')),
+        config['time_buckets']
+    )
+    config_changed = st.session_state.last_config != current_config
+    
+    if config_changed and st.session_state.data_loaded:
+        st.sidebar.warning("⚠️ Configuration changed. Click 'Load Data' to refresh.")
+        st.session_state.data_loaded = False
+    
+    # Data loading
+    if st.sidebar.button("🔄 Load Analysis Data", type="primary"):
+        if load_and_validate_data(config):
+            st.session_state.last_config = current_config
+    
+    # Main analysis display
+    if st.session_state.data_loaded:
+        render_analysis_dashboard()
+    else:
+        # Show information when no data is loaded
+        st.info("👆 Configure analysis parameters and click 'Load Analysis Data' to begin.")
+        
+        st.markdown("### 📊 What This Analysis Provides")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+            **🔗 Correlation Analysis**
+            - Gas usage vs block propagation correlation
+            - Statistical significance testing
+            - Trend line analysis with confidence intervals
+            
+            **📈 Temporal Analysis**
+            - Performance changes over time buckets
+            - Trend detection and significance testing
+            - Multi-metric time series comparison
+            """)
+        
+        with col2:
+            st.markdown("""
+            **🔥 Performance Comparison**
+            - Consensus implementation rankings
+            - Performance heatmaps over time
+            - Geographic performance variations
+            
+            **📊 Statistical Insights**
+            - Percentile analysis for all metrics
+            - Period-over-period comparisons
+            - Distribution analysis and outlier detection
+            """)
+        
+        # Show example metric information
+        st.markdown("### 📋 Available Metrics")
+        example_metrics = ['gas_used', 'block_gossip_time', 'head_time', 'gas_utilization']
+        
+        metric_info_data = []
+        for metric in example_metrics:
+            info = get_metric_info(metric)
+            metric_info_data.append({
+                'Metric': info['title'],
+                'Description': info['subtitle'],
+                'Unit': info['unit']
+            })
+        
+        st.dataframe(pd.DataFrame(metric_info_data), use_container_width=True)
+
+
+if __name__ == "__main__":
+    main()
