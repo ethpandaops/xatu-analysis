@@ -324,7 +324,7 @@ def main():
         st.subheader("🎯 Analysis Configuration")
         
         # Grouping type selection
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
             grouping_type = st.selectbox(
                 "Group by",
@@ -333,23 +333,6 @@ def main():
             )
         
         with col2:
-            if grouping_type == "Entity":
-                top_n_entities = st.selectbox(
-                    "Top N Entities",
-                    [5, 10, 20, 50],
-                    index=1,  # Default to 10
-                    help="Select top N entities by block count to display"
-                )
-            else:
-                top_n_entities = None
-                st.selectbox(
-                    "Top N Entities",
-                    ["N/A"],
-                    disabled=True,
-                    help="Only available when grouping by entity"
-                )
-        
-        with col3:
             selected_metric = st.selectbox(
                 "Select Metric",
                 [
@@ -373,30 +356,143 @@ def main():
                 ]
             )
         
+        # Initialize default values
+        entity_selection_mode = "Top N Entities"
+        top_n_entities = 10
+        entities_to_show = []
+        
+        # Entity selection options (only shown when grouping by entity)
+        if grouping_type == "Entity" and 'entity' in data.columns:
+            st.subheader("🎯 Entity Selection")
+            
+            entity_selection_mode = st.radio(
+                "Entity Selection Mode",
+                ["Top N Entities", "Manual Selection"],
+                help="Choose how to select entities for analysis"
+            )
+            
+            if entity_selection_mode == "Top N Entities":
+                col1, col2 = st.columns(2)
+                with col1:
+                    top_n_entities = st.selectbox(
+                        "Top N Entities",
+                        [5, 10, 20, 50, 100],
+                        index=1,  # Default to 10
+                        help="Select top N entities by block count to display"
+                    )
+                with col2:
+                    # Show entity counts for reference
+                    entity_counts = data['entity'].value_counts()
+                    st.metric("📊 Total Entities", len(entity_counts), f"Available in dataset")
+            else:
+                # Manual selection mode
+                entity_counts = data['entity'].value_counts()
+                all_entities = entity_counts.index.tolist()
+                
+                # Search functionality
+                search_term = st.text_input(
+                    "🔍 Search Entities",
+                    placeholder="Type to search entity names...",
+                    help="Filter entities by name for easier selection"
+                )
+                
+                # Filter entities based on search
+                if search_term:
+                    filtered_entities = [e for e in all_entities if search_term.lower() in str(e).lower()]
+                else:
+                    filtered_entities = all_entities
+                
+                # Show filtered count
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.info(f"📋 Showing {len(filtered_entities)} of {len(all_entities)} entities")
+                with col2:
+                    if st.button("🔄 Clear Search"):
+                        st.rerun()
+                
+                # Manual entity selection with search results
+                if len(filtered_entities) > 100:
+                    st.warning(f"⚠️ Showing first 100 entities. Use search to narrow down selection.")
+                    entities_to_show = filtered_entities[:100]
+                else:
+                    entities_to_show = filtered_entities
+        
         # Group selection based on grouping type
         if grouping_type == "Blockprint Client":
             available_groups = sorted([c for c in data['client'].unique() if pd.notna(c)])
             group_column = 'client'
             default_selection = available_groups[:5] if len(available_groups) > 5 else available_groups
+            
+            selected_groups = st.multiselect(
+                f"Select {grouping_type}s to Analyze",
+                available_groups,
+                default=default_selection,
+                help=f"Select which {grouping_type.lower()}s to include in the analysis"
+            )
         else:  # Entity grouping
             if 'entity' in data.columns:
-                # Get top N entities by block count
-                entity_counts = data['entity'].value_counts()
-                available_groups = entity_counts.head(top_n_entities).index.tolist()
                 group_column = 'entity'
-                default_selection = available_groups
+                
+                if entity_selection_mode == "Top N Entities":
+                    # Get top N entities by block count
+                    entity_counts = data['entity'].value_counts()
+                    available_groups = entity_counts.head(top_n_entities).index.tolist()
+                    default_selection = available_groups
+                    
+                    selected_groups = st.multiselect(
+                        f"Select {grouping_type}s to Analyze",
+                        available_groups,
+                        default=default_selection,
+                        help=f"Top {top_n_entities} entities by block count. Uncheck to exclude from analysis."
+                    )
+                else:  # Manual selection
+                    # Show entity counts for better selection
+                    st.write("**Entity Selection with Block Counts:**")
+                    
+                    # Quick selection helpers
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("📈 Select Top 10"):
+                            top_10_entities = entity_counts.head(10).index.tolist()
+                            st.session_state.manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_10_entities if entity in entities_to_show]
+                    with col2:
+                        if st.button("🎯 Select Top 20"):
+                            top_20_entities = entity_counts.head(20).index.tolist()
+                            st.session_state.manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_20_entities if entity in entities_to_show]
+                    with col3:
+                        if st.button("🗑️ Clear Selection"):
+                            st.session_state.manual_entity_selection = []
+                    
+                    # Create a more informative list with counts
+                    entity_info = []
+                    for entity in entities_to_show:
+                        count = entity_counts[entity]
+                        entity_info.append(f"{entity} ({count:,} blocks)")
+                    
+                    # Get current selection from session state
+                    current_selection = getattr(st.session_state, 'manual_entity_selection', [])
+                    
+                    # Multiple selection with checkboxes
+                    selected_entity_info = st.multiselect(
+                        f"Select {grouping_type}s to Analyze",
+                        entity_info,
+                        default=current_selection,
+                        help="Select specific entities for analysis. Numbers show block counts. Use buttons above for quick selection."
+                    )
+                    
+                    # Store selection in session state for quick selection buttons
+                    st.session_state.manual_entity_selection = selected_entity_info
+                    
+                    # Extract entity names from the selected info
+                    selected_groups = []
+                    for info in selected_entity_info:
+                        entity_name = info.split(' (')[0]  # Extract name before the count
+                        selected_groups.append(entity_name)
             else:
                 st.warning("Entity data not available. Loading entity data...")
                 available_groups = []
                 group_column = 'entity'
-                default_selection = []
-        
-        selected_groups = st.multiselect(
-            f"Select {grouping_type}s to Analyze",
-            available_groups,
-            default=default_selection,
-            help=f"Select which {grouping_type.lower()}s to include in the analysis"
-        )
+                selected_groups = []
         
         if selected_groups:
             # Plot selection
