@@ -34,7 +34,9 @@ from shared.filesystem import get_cache_dir
 # Additional imports needed for main functionality
 import shutil
 import traceback
-from datetime import timedelta, time
+from datetime import datetime, timedelta, time
+import pandas as pd
+import numpy as np
 
 def main():
     # Apply consistent styling
@@ -200,11 +202,11 @@ def main():
                 
                 # Load attestation data from parquet files (cached)
                 st.info("Loading attestation data from parquet files...")
-                all_attestations = load_attestation_data_parquet(str(time_ranges), network)
+                all_attestations = load_attestation_data_parquet(str(time_ranges), network, progress_callback=st.info)
                 
                 # Load proposer indices from parquet files (cached)
                 st.info("Loading proposer indices from parquet files...")
-                proposer_indices = fetch_proposer_indices_parquet(str(time_ranges), network)
+                proposer_indices = fetch_proposer_indices_parquet(str(time_ranges), network, progress_callback=st.info)
                 
                 # Add client information to proposer indices
                 proposer_indices['client'] = proposer_indices['proposer_index'].apply(

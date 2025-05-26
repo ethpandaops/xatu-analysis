@@ -4,6 +4,10 @@ Database connection utilities for EthPandaOps Analysis Dashboard
 import os
 import streamlit as st
 from sqlalchemy import create_engine
+import dotenv
+
+# Load environment variables
+dotenv.load_dotenv()
 
 
 def get_database_connection():
