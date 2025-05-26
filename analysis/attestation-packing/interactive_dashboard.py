@@ -33,6 +33,18 @@ import traceback
 
 def main():
     
+    # Initialize session state variables
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+    if 'last_config' not in st.session_state:
+        st.session_state.last_config = None
+    if 'slot_metrics_df' not in st.session_state:
+        st.session_state.slot_metrics_df = None
+    if 'validators' not in st.session_state:
+        st.session_state.validators = {}
+    if 'entities' not in st.session_state:
+        st.session_state.entities = {}
+    
     # Header
     st.markdown('<h1 class="main-header">🔍 Attestation Packing Analysis Dashboard</h1>', unsafe_allow_html=True)
     
@@ -328,8 +340,8 @@ def main():
         with col1:
             grouping_type = st.selectbox(
                 "Group by",
-                ["Blockprint Client", "Entity"],
-                help="Choose whether to group by blockprint client or entity"
+                ["Blockprint Client", "Entity", "None"],
+                help="Choose whether to group by blockprint client, entity, or view all data without grouping"
             )
         
         with col2:
@@ -418,7 +430,11 @@ def main():
                     entities_to_show = filtered_entities
         
         # Group selection based on grouping type
-        if grouping_type == "Blockprint Client":
+        if grouping_type == "None":
+            # When no grouping is selected, we'll use all data
+            selected_groups = ["All Data"]
+            group_column = None
+        elif grouping_type == "Blockprint Client":
             available_groups = sorted([c for c in data['client'].unique() if pd.notna(c)])
             group_column = 'client'
             default_selection = available_groups[:5] if len(available_groups) > 5 else available_groups
@@ -506,8 +522,10 @@ def main():
             # Use the appropriate column for plotting
             if grouping_type == "Blockprint Client":
                 plot_group_column = 'client'
-            else:  # Entity grouping
+            elif grouping_type == "Entity":
                 plot_group_column = 'entity'
+            else:  # No grouping
+                plot_group_column = None
             
             if plot_type == "Before/After Comparison":
                 fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
@@ -528,12 +546,35 @@ def main():
             # Statistics table
             st.subheader("📋 Statistics Summary")
             
-            filtered_data = data[data[group_column].isin(selected_groups)]
+            # Add period information for before/after analysis
+            temp_df = data.copy()
+            temp_df['datetime'] = pd.to_datetime(temp_df['block_slot_start_date_time'])
+            event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
+            temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
             
-            # Calculate statistics by group
-            stats = filtered_data.groupby(group_column)[selected_metric].agg([
-                'count', 'mean', 'median', 'std', 'min', 'max'
-            ]).round(3)
+            if grouping_type == "None":
+                # Show stats for all data without grouping, but with before/after
+                filtered_data = temp_df
+                stats = filtered_data.groupby('period')[selected_metric].agg([
+                    'count', 'mean', 'median', 'std', 'min', 'max'
+                ]).round(3)
+                # Reindex to ensure Before comes before After
+                stats = stats.reindex(['Before', 'After'])
+                # Transpose so periods are columns
+                stats = stats.T
+            else:
+                filtered_data = temp_df[temp_df[group_column].isin(selected_groups)]
+                # Calculate statistics by group and period
+                stats = filtered_data.groupby([group_column, 'period'])[selected_metric].agg([
+                    'count', 'mean', 'median', 'std', 'min', 'max'
+                ]).round(3)
+                # Unstack to get periods as columns, ensuring Before comes before After
+                stats = stats.unstack('period')
+                # Reorder columns to ensure Before comes before After
+                if 'Before' in stats.columns.get_level_values(1) and 'After' in stats.columns.get_level_values(1):
+                    stats = stats.reindex(['Before', 'After'], axis=1, level=1)
+                # Flatten column names
+                stats.columns = [f"{stat}_{period}" for stat, period in stats.columns]
             
             st.dataframe(stats, use_container_width=True)
             
@@ -541,7 +582,10 @@ def main():
             st.subheader("🔍 Raw Data Explorer")
             
             if st.checkbox("Show raw data"):
-                columns_to_show = [group_column, 'block_slot_start_date_time', selected_metric]
+                if grouping_type == "None":
+                    columns_to_show = ['block_slot_start_date_time', selected_metric]
+                else:
+                    columns_to_show = [group_column, 'block_slot_start_date_time', selected_metric]
                 st.dataframe(
                     filtered_data[columns_to_show].head(100),
                     use_container_width=True

@@ -11,7 +11,12 @@ def add_ethpandaops_logo(fig):
 def create_before_after_comparison(data, metric, clients, event_date, group_column='client'):
     """Create a before/after comparison plot using Plotly."""
     temp_df = data.copy()
-    temp_df = temp_df[temp_df[group_column].isin(clients)]
+    
+    if group_column is None:
+        # No grouping - show aggregate data
+        pass  # Use all data
+    else:
+        temp_df = temp_df[temp_df[group_column].isin(clients)]
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
@@ -21,20 +26,39 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
     event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
     temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
     
-    # Calculate mean for each group and period
-    client_metrics = temp_df.groupby([group_column, 'period'])[metric].mean().reset_index()
-    
-    # Create the plot with simple styling
-    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
-    fig = px.bar(
-        client_metrics, 
-        x=group_column, 
-        y=metric, 
-        color='period',
-        barmode='group',
-        title=f'{metric_info["title"]} - Before vs After Comparison<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={group_column: group_label, metric: metric_info["title"]}
-    )
+    if group_column is None:
+        # No grouping - calculate aggregate metrics by period only
+        client_metrics = temp_df.groupby('period')[metric].mean().reset_index()
+        client_metrics['group'] = 'All Data'
+        
+        fig = px.bar(
+            client_metrics, 
+            x='group', 
+            y=metric, 
+            color='period',
+            barmode='group',
+            title=f'{metric_info["title"]} - Before vs After Comparison (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={'group': 'Data', metric: metric_info["title"]},
+            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'},  # Blue and Green
+            category_orders={'period': ['Before', 'After']}  # Ensure Before is left, After is right
+        )
+    else:
+        # Calculate mean for each group and period
+        client_metrics = temp_df.groupby([group_column, 'period'])[metric].mean().reset_index()
+        
+        # Create the plot with simple styling
+        group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
+        fig = px.bar(
+            client_metrics, 
+            x=group_column, 
+            y=metric, 
+            color='period',
+            barmode='group',
+            title=f'{metric_info["title"]} - Before vs After Comparison<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={group_column: group_label, metric: metric_info["title"]},
+            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'},  # Blue and Green
+            category_orders={'period': ['Before', 'After']}  # Ensure Before is left, After is right
+        )
     
     # Minimal layout updates
     fig.update_layout(
@@ -49,7 +73,10 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
 
 def create_distribution_plot(data, metric, clients, event_date, group_column='client'):
     """Create a before/after distribution plot using Plotly."""
-    temp_df = data[data[group_column].isin(clients)].copy()
+    if group_column is None:
+        temp_df = data.copy()
+    else:
+        temp_df = data[data[group_column].isin(clients)].copy()
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
@@ -59,15 +86,29 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
     event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
     temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
     
-    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
-    fig = px.box(
-        temp_df, 
-        x=group_column, 
-        y=metric,
-        color='period',
-        title=f'{metric_info["title"]} - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={group_column: group_label, metric: metric_info["title"]}
-    )
+    if group_column is None:
+        # No grouping - show distribution by period only
+        temp_df['group'] = 'All Data'
+        fig = px.box(
+            temp_df, 
+            x='group', 
+            y=metric,
+            color='period',
+            title=f'{metric_info["title"]} - Distribution Analysis (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={'group': 'Data', metric: metric_info["title"]},
+            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+        )
+    else:
+        group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
+        fig = px.box(
+            temp_df, 
+            x=group_column, 
+            y=metric,
+            color='period',
+            title=f'{metric_info["title"]} - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={group_column: group_label, metric: metric_info["title"]},
+            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+        )
     
     # Minimal layout updates
     fig.update_layout(
@@ -81,21 +122,34 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
 
 def create_time_series_plot(data, metric, clients, event_date, group_column='client'):
     """Create a time series plot using Plotly."""
-    temp_df = data[data[group_column].isin(clients)].copy()
+    if group_column is None:
+        temp_df = data.copy()
+    else:
+        temp_df = data[data[group_column].isin(clients)].copy()
     temp_df['datetime'] = pd.to_datetime(temp_df['block_slot_start_date_time'])
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
     
-    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
-    fig = px.scatter(
-        temp_df, 
-        x='datetime', 
-        y=metric, 
-        color=group_column,
-        title=f'{metric_info["title"]} - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={'datetime': 'Date/Time', metric: metric_info["title"], group_column: group_label}
-    )
+    if group_column is None:
+        # No grouping - show all data points without color grouping
+        fig = px.scatter(
+            temp_df, 
+            x='datetime', 
+            y=metric, 
+            title=f'{metric_info["title"]} - Time Series Analysis (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={'datetime': 'Date/Time', metric: metric_info["title"]}
+        )
+    else:
+        group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
+        fig = px.scatter(
+            temp_df, 
+            x='datetime', 
+            y=metric, 
+            color=group_column,
+            title=f'{metric_info["title"]} - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
+            labels={'datetime': 'Date/Time', metric: metric_info["title"], group_column: group_label}
+        )
     
     # Add vertical line for event date
     # Convert to datetime object that plotly can handle
@@ -124,7 +178,10 @@ def create_time_series_plot(data, metric, clients, event_date, group_column='cli
 
 def create_inclusion_distance_distribution(data, clients, event_date, group_column='client'):
     """Create an inclusion distance distribution plot similar to the blog post."""
-    temp_df = data[data[group_column].isin(clients)].copy()
+    if group_column is None:
+        temp_df = data.copy()
+    else:
+        temp_df = data[data[group_column].isin(clients)].copy()
     
     # Add period information
     temp_df['datetime'] = pd.to_datetime(temp_df['block_slot_start_date_time'])
@@ -145,7 +202,8 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
             color='period',
             nbins=20,
             title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
-            labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'}
+            labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'},
+            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
         )
     else:
         # Create a more detailed delay distribution
@@ -171,7 +229,8 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
                 color='period',
                 barmode='group',
                 title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
-                labels={'inclusion_delay': 'Inclusion Delay (slots)', 'count': 'Number of Attestations'}
+                labels={'inclusion_delay': 'Inclusion Delay (slots)', 'count': 'Number of Attestations'},
+                color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
             )
         else:
             # Fallback to simple histogram
@@ -181,7 +240,8 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
                 color='period',
                 nbins=20,
                 title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
-                labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'}
+                labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'},
+                color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
             )
     
     # Minimal layout updates
