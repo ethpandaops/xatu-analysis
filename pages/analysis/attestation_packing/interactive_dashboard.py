@@ -30,6 +30,7 @@ from plot_generators import (
 # Additional imports needed for main functionality
 import shutil
 import traceback
+from datetime import timedelta, time
 
 def main():
     
@@ -85,14 +86,21 @@ def main():
             col1, col2 = st.sidebar.columns(2)
             with col1:
                 start_date = st.date_input("Start Date")
-                start_time = st.time_input("Start Time")
+                start_time = st.time_input("Start Time", help="Daily start time - applied to each day in range")
             with col2:
                 end_date = st.date_input("End Date")
-                end_time = st.time_input("End Time")
+                end_time = st.time_input("End Time", help="Daily end time - applied to each day in range", value=time(14, 30))
             
-            start_datetime = datetime.combine(start_date, start_time).strftime("%Y-%m-%dT%H:%M:%SZ")
-            end_datetime = datetime.combine(end_date, end_time).strftime("%Y-%m-%dT%H:%M:%SZ")
-            time_ranges = [(start_datetime, end_datetime)]
+            # Generate time ranges for each day in the date range
+            time_ranges = []
+            current_date = start_date
+            while current_date <= end_date:
+                day_start = datetime.combine(current_date, start_time).strftime("%Y-%m-%dT%H:%M:%SZ")
+                day_end = datetime.combine(current_date, end_time).strftime("%Y-%m-%dT%H:%M:%SZ")
+                time_ranges.append((day_start, day_end))
+                current_date += timedelta(days=1)
+            
+            st.sidebar.info(f"📅 Will analyze {start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')} for each day from {start_date} to {end_date} ({len(time_ranges)} day periods)")
             
             event_date_input = st.sidebar.date_input("Event Date (for Before/After)")
             event_time_input = st.sidebar.time_input("Event Time")
@@ -377,6 +385,12 @@ def main():
                 index=0,  # Default to mean
                 help="Choose which statistical aggregate to display in visualizations"
             )
+        with col2:
+            show_network_average = st.checkbox(
+                "Show Network Average",
+                value=False,
+                help="Add a baseline showing the network-wide average (all entities/clients combined) using the selected aggregation"
+            )
         
         # Add annotation configuration
         st.subheader("📍 Chart Annotations")
@@ -562,19 +576,19 @@ def main():
                 plot_group_column = None
             
             if plot_type == "Before/After Comparison":
-                fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text)
+                fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text, show_network_average=show_network_average)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Distribution":
-                fig = create_distribution_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, annotation_date=annotation_datetime, annotation_text=annotation_text)
+                fig = create_distribution_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text, show_network_average=show_network_average)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Time Series":
-                fig = create_time_series_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text)
+                fig = create_time_series_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text, show_network_average=show_network_average)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Inclusion Distance Distribution":
-                fig = create_inclusion_distance_distribution(data, selected_groups, event_date, group_column=plot_group_column, annotation_date=annotation_datetime, annotation_text=annotation_text)
+                fig = create_inclusion_distance_distribution(data, selected_groups, event_date, group_column=plot_group_column, annotation_date=annotation_datetime, annotation_text=annotation_text, show_network_average=show_network_average)
                 st.plotly_chart(fig, use_container_width=True)
             
             # Add period information for before/after analysis

@@ -23,7 +23,7 @@ def add_ethpandaops_logo(fig):
     # Logo functionality disabled
     return fig
 
-def create_before_after_comparison(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text=""):
+def create_before_after_comparison(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a before/after comparison plot using Plotly."""
     # Note: annotation_date and annotation_text not used in bar charts (time-independent)
     _ = annotation_date, annotation_text  # Suppress unused parameter warnings
@@ -66,6 +66,19 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
         # Calculate aggregate for each group and period
         client_metrics = temp_df.groupby([group_column, 'period'])[metric].agg(agg_func).reset_index()
         
+        # Add network average if requested
+        if show_network_average:
+            # Calculate network average using all data (not just selected groups)
+            network_data = data.copy()
+            network_data['datetime'] = pd.to_datetime(network_data['block_slot_start_date_time'])
+            event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
+            network_data['period'] = np.where(network_data['datetime'] < event_date_naive, 'Before', 'After')
+            network_avg = network_data.groupby('period')[metric].agg(agg_func).reset_index()
+            network_avg[group_column] = f'Network {aggregate.upper()}'
+            
+            # Combine with client metrics
+            client_metrics = pd.concat([client_metrics, network_avg], ignore_index=True)
+        
         # Create the plot with simple styling
         group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
         fig = px.bar(
@@ -91,10 +104,10 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_distribution_plot(data, metric, clients, event_date, group_column='client', annotation_date=None, annotation_text=""):
+def create_distribution_plot(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a before/after distribution plot using Plotly."""
-    # Note: annotation_date and annotation_text not used in box plots (time-independent)
-    _ = annotation_date, annotation_text  # Suppress unused parameter warnings
+    # Note: annotation_date, annotation_text, and show_network_average not used in box plots
+    _ = annotation_date, annotation_text, show_network_average  # Suppress unused parameter warnings
     if group_column is None:
         temp_df = data.copy()
     else:
@@ -127,7 +140,7 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
             x=group_column, 
             y=metric,
             color='period',
-            title=f'{metric_info["title"]} - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
+            title=f'{metric_info["title"]} ({aggregate.upper()}) - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
             labels={group_column: group_label, metric: metric_info["title"]},
             color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
         )
@@ -142,10 +155,11 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_time_series_plot(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text=""):
+def create_time_series_plot(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a time series plot using Plotly."""
-    # Note: event_date and aggregate parameters not used in this implementation
-    _ = event_date, aggregate  # Suppress unused parameter warnings
+    # Note: event_date parameter not used in this implementation
+    _ = event_date  # Suppress unused parameter warnings
+    
     if group_column is None:
         temp_df = data.copy()
     else:
@@ -155,28 +169,67 @@ def create_time_series_plot(data, metric, clients, event_date, group_column='cli
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
     
-    # For time series, we'll show raw data points (scatter plot doesn't need aggregation)
-    # The aggregate parameter doesn't apply to scatter plots showing individual points
+    # Get the aggregate function
+    agg_func = get_aggregate_function(aggregate)
     
     if group_column is None:
-        # No grouping - show all data points without color grouping
-        fig = px.scatter(
-            temp_df, 
-            x='datetime', 
-            y=metric, 
-            title=f'{metric_info["title"]} - Time Series Analysis (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
-            labels={'datetime': 'Date/Time', metric: metric_info["title"]}
-        )
+        # No grouping - show aggregated data by time period
+        if show_network_average:
+            # When no grouping but network average requested, just show as "Network Average"
+            time_aggregated = temp_df.groupby('datetime')[metric].agg(agg_func).reset_index()
+            time_aggregated['group'] = 'Network Average'
+            
+            fig = px.line(
+                time_aggregated, 
+                x='datetime', 
+                y=metric, 
+                color='group',
+                title=f'{metric_info["title"]} ({aggregate.upper()}) - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
+                labels={'datetime': 'Date/Time', metric: metric_info["title"]}
+            )
+        else:
+            # Show raw data points without grouping
+            fig = px.scatter(
+                temp_df, 
+                x='datetime', 
+                y=metric, 
+                title=f'{metric_info["title"]} - Time Series Analysis (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
+                labels={'datetime': 'Date/Time', metric: metric_info["title"]}
+            )
     else:
+        # Use scatter plot to show individual data points
         group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
+        
         fig = px.scatter(
             temp_df, 
             x='datetime', 
             y=metric, 
             color=group_column,
-            title=f'{metric_info["title"]} - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
+            title=f'{metric_info["title"]} ({aggregate.upper()}) - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
             labels={'datetime': 'Date/Time', metric: metric_info["title"], group_column: group_label}
         )
+        
+        # Add network average if requested
+        if show_network_average:
+            # Calculate daily network average using all data (not just selected groups)
+            network_data = data.copy()
+            network_data['datetime'] = pd.to_datetime(network_data['block_slot_start_date_time'])
+            network_data['date'] = network_data['datetime'].dt.date
+            
+            # Group by date and calculate daily aggregate
+            daily_network_avg = network_data.groupby('date')[metric].agg(agg_func).reset_index()
+            daily_network_avg['datetime'] = pd.to_datetime(daily_network_avg['date'])
+            
+            # Add network average as a separate trace
+            fig.add_scatter(
+                x=daily_network_avg['datetime'],
+                y=daily_network_avg[metric],
+                mode='lines+markers',
+                name=f'Network Daily {aggregate.upper()}',
+                line=dict(dash='dash', width=3, color='black'),
+                marker=dict(size=8, color='black'),
+                opacity=0.8
+            )
     
     # Add custom annotation if provided
     if annotation_date and annotation_text:
@@ -214,10 +267,10 @@ def create_time_series_plot(data, metric, clients, event_date, group_column='cli
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_inclusion_distance_distribution(data, clients, event_date, group_column='client', annotation_date=None, annotation_text=""):
+def create_inclusion_distance_distribution(data, clients, event_date, group_column='client', annotation_date=None, annotation_text="", show_network_average=False):
     """Create an inclusion distance distribution plot similar to the blog post."""
-    # Note: annotation_date and annotation_text not used in histograms (time-independent)
-    _ = annotation_date, annotation_text  # Suppress unused parameter warnings
+    # Note: annotation_date, annotation_text, and show_network_average not used in histograms
+    _ = annotation_date, annotation_text, show_network_average  # Suppress unused parameter warnings
     if group_column is None:
         temp_df = data.copy()
     else:
