@@ -58,9 +58,11 @@ def main():
     st.sidebar.header("⚙️ Configuration")
     
     # Network selection
+    from shared.config import get_supported_networks
+    
     network = st.sidebar.selectbox(
         "Select Network",
-        ["mainnet", "holesky", "sepolia"],
+        get_supported_networks(),
         index=0
     )
     

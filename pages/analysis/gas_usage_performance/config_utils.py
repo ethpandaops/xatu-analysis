@@ -7,6 +7,7 @@ parameters for the gas usage vs performance dashboard.
 
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+from shared.config import get_supported_networks, get_network_config
 
 
 def get_metric_info(metric_name: str) -> Dict[str, str]:
@@ -105,7 +106,7 @@ def get_analysis_config() -> Dict[str, Any]:
         "default_gas_bin_size": 5_000_000,
         "min_samples_per_bin": 5,
         "min_samples_per_analysis": 100,
-        "supported_networks": ["mainnet", "holesky", "sepolia"],
+        "supported_networks": get_supported_networks(),
         "visualization_themes": ["viridis", "plasma", "inferno", "turbo"],
         "default_theme": "viridis",
         "cache_ttl_hours": 1,
