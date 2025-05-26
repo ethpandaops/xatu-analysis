@@ -368,6 +368,40 @@ def main():
                 ]
             )
         
+        # Add aggregate selection
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_aggregate = st.selectbox(
+                "Select Aggregate",
+                ["mean", "min", "p05", "p50", "p90", "p95", "p99", "max"],
+                index=0,  # Default to mean
+                help="Choose which statistical aggregate to display in visualizations"
+            )
+        
+        # Add annotation configuration
+        st.subheader("📍 Chart Annotations")
+        col1, col2 = st.columns(2)
+        with col1:
+            annotation_text = st.text_input(
+                "Annotation Text",
+                value="Pectra Fork",
+                help="Text to display on charts at the specified date"
+            )
+        with col2:
+            annotation_date = st.date_input(
+                "Annotation Date",
+                value=pd.to_datetime("2025-05-07").date(),
+                help="Date to place the annotation on time-based charts"
+            )
+            annotation_time = st.time_input(
+                "Annotation Time",
+                value=pd.to_datetime("10:00:00").time(),
+                help="Time to place the annotation"
+            )
+        
+        # Combine date and time for annotation
+        annotation_datetime = pd.to_datetime(datetime.combine(annotation_date, annotation_time), utc=True)
+        
         # Initialize default values
         entity_selection_mode = "Top N Entities"
         top_n_entities = 10
@@ -528,23 +562,20 @@ def main():
                 plot_group_column = None
             
             if plot_type == "Before/After Comparison":
-                fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
+                fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Distribution":
-                fig = create_distribution_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
+                fig = create_distribution_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, annotation_date=annotation_datetime, annotation_text=annotation_text)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Time Series":
-                fig = create_time_series_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
+                fig = create_time_series_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column, aggregate=selected_aggregate, annotation_date=annotation_datetime, annotation_text=annotation_text)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Inclusion Distance Distribution":
-                fig = create_inclusion_distance_distribution(data, selected_groups, event_date, group_column=plot_group_column)
+                fig = create_inclusion_distance_distribution(data, selected_groups, event_date, group_column=plot_group_column, annotation_date=annotation_datetime, annotation_text=annotation_text)
                 st.plotly_chart(fig, use_container_width=True)
-            
-            # Statistics table
-            st.subheader("📋 Statistics Summary")
             
             # Add period information for before/after analysis
             temp_df = data.copy()
@@ -552,31 +583,93 @@ def main():
             event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
             temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
             
+            # Map p-values to pandas quantile functions
+            agg_functions = {
+                'count': 'count',
+                'mean': 'mean', 
+                'median': 'median',
+                'std': 'std',
+                'min': 'min',
+                'max': 'max',
+                'p05': lambda x: x.quantile(0.05),
+                'p50': lambda x: x.quantile(0.50),
+                'p90': lambda x: x.quantile(0.90),
+                'p95': lambda x: x.quantile(0.95),
+                'p99': lambda x: x.quantile(0.99)
+            }
+            
+            # Helper function to make column names human-friendly
+            def humanize_stat_name(stat_name):
+                name_map = {
+                    'count': 'Count',
+                    'mean': 'Mean',
+                    'median': 'Median',
+                    'std': 'Std Dev',
+                    'min': 'Min',
+                    'max': 'Max',
+                    'p05': 'P05',
+                    'p50': 'P50',
+                    'p90': 'P90',
+                    'p95': 'P95',
+                    'p99': 'P99'
+                }
+                return name_map.get(stat_name, stat_name.title())
+            
             if grouping_type == "None":
                 # Show stats for all data without grouping, but with before/after
                 filtered_data = temp_df
-                stats = filtered_data.groupby('period')[selected_metric].agg([
-                    'count', 'mean', 'median', 'std', 'min', 'max'
-                ]).round(3)
+                stats = filtered_data.groupby('period')[selected_metric].agg(list(agg_functions.values()))
+                stats.columns = list(agg_functions.keys())
                 # Reindex to ensure Before comes before After
                 stats = stats.reindex(['Before', 'After'])
                 # Transpose so periods are columns
                 stats = stats.T
+                # Apply rounding and format to 2 decimal places
+                stats = stats.round(2)
+                # Format all values to 2 decimal places
+                stats = stats.applymap(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+                # Rename columns to be more human-friendly
+                stats.columns = [f"{period}" for period in stats.columns]
+                # Rename index to be more human-friendly
+                stats.index = [humanize_stat_name(stat) for stat in stats.index]
             else:
                 filtered_data = temp_df[temp_df[group_column].isin(selected_groups)]
                 # Calculate statistics by group and period
-                stats = filtered_data.groupby([group_column, 'period'])[selected_metric].agg([
-                    'count', 'mean', 'median', 'std', 'min', 'max'
-                ]).round(3)
+                stats = filtered_data.groupby([group_column, 'period'])[selected_metric].agg(list(agg_functions.values()))
+                stats.columns = list(agg_functions.keys())
                 # Unstack to get periods as columns, ensuring Before comes before After
                 stats = stats.unstack('period')
                 # Reorder columns to ensure Before comes before After
                 if 'Before' in stats.columns.get_level_values(1) and 'After' in stats.columns.get_level_values(1):
                     stats = stats.reindex(['Before', 'After'], axis=1, level=1)
-                # Flatten column names
-                stats.columns = [f"{stat}_{period}" for stat, period in stats.columns]
+                # Apply rounding and format to 2 decimal places
+                stats = stats.round(2)
+                # Format all values to 2 decimal places
+                stats = stats.applymap(lambda x: f"{x:.2f}" if pd.notna(x) else "")
+                # Flatten column names and make them human-friendly
+                stats.columns = [f"{humanize_stat_name(stat)} ({period.lower()})" for stat, period in stats.columns]
             
-            st.dataframe(stats, use_container_width=True)
+            # Style the dataframe to highlight the selected aggregate
+            def highlight_selected_aggregate(styler):
+                # Get the human-friendly name for the selected aggregate
+                selected_human_name = humanize_stat_name(selected_aggregate)
+                
+                if grouping_type == "None":
+                    # For ungrouped data, highlight the exact row matching the selected aggregate
+                    return styler.apply(lambda x: ['font-weight: bold' if x.name == selected_human_name else '' for _ in x], axis=1)
+                else:
+                    # For grouped data, highlight columns that start with the selected aggregate
+                    def highlight_cells(_):
+                        return 'font-weight: bold'
+                    
+                    # Apply highlighting to columns that contain the selected aggregate
+                    selected_columns = [col for col in stats.columns if selected_human_name.lower() in col.lower()]
+                    if selected_columns:
+                        return styler.applymap(highlight_cells, subset=selected_columns)
+                    else:
+                        return styler
+            
+            st.dataframe(stats.style.pipe(highlight_selected_aggregate), use_container_width=True)
             
             # Raw data explorer
             st.subheader("🔍 Raw Data Explorer")
