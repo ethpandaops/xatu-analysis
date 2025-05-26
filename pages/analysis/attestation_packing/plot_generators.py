@@ -5,7 +5,7 @@ import plotly.express as px
 
 
 from shared.data_utils import get_aggregate_function
-from shared.ui_components import add_ethpandaops_logo
+from shared.ui_components import add_ethPandaOps_logo
 
 def create_before_after_comparison(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a before/after comparison plot using Plotly."""
@@ -43,7 +43,7 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
             barmode='group',
             title=f'{metric_info["title"]} ({aggregate.upper()}) - Before vs After Comparison (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
             labels={'group': 'Data', metric: f'{metric_info["title"]} ({aggregate.upper()})'},
-            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'},  # Blue and Green
+            color_discrete_map=None,  # Use default Plotly colors
             category_orders={'period': ['Before', 'After']}  # Ensure Before is left, After is right
         )
     else:
@@ -73,7 +73,7 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
             barmode='group',
             title=f'{metric_info["title"]} ({aggregate.upper()}) - Before vs After Comparison<br><sub>{metric_info["subtitle"]}</sub>',
             labels={group_column: group_label, metric: f'{metric_info["title"]} ({aggregate.upper()})'},
-            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'},  # Blue and Green
+            color_discrete_map=None,  # Use default Plotly colors
             category_orders={'period': ['Before', 'After']}  # Ensure Before is left, After is right
         )
     
@@ -85,8 +85,8 @@ def create_before_after_comparison(data, metric, clients, event_date, group_colu
         title={'font': {'size': 16}}
     )
     
-    # Add EthPandaOps logo
-    return add_ethpandaops_logo(fig)
+    # Add ethPandaOps logo
+    return add_ethPandaOps_logo(fig)
 
 def create_distribution_plot(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a before/after distribution plot using Plotly."""
@@ -115,7 +115,7 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
             color='period',
             title=f'{metric_info["title"]} - Distribution Analysis (All Data)<br><sub>{metric_info["subtitle"]}</sub>',
             labels={'group': 'Data', metric: metric_info["title"]},
-            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+            color_discrete_map=None  # Use default Plotly colors
         )
     else:
         group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
@@ -126,7 +126,7 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
             color='period',
             title=f'{metric_info["title"]} ({aggregate.upper()}) - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
             labels={group_column: group_label, metric: metric_info["title"]},
-            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+            color_discrete_map=None  # Use default Plotly colors
         )
     
     # Minimal layout updates
@@ -136,8 +136,8 @@ def create_distribution_plot(data, metric, clients, event_date, group_column='cl
         title={'font': {'size': 16}}
     )
     
-    # Add EthPandaOps logo
-    return add_ethpandaops_logo(fig)
+    # Add ethPandaOps logo
+    return add_ethPandaOps_logo(fig)
 
 def create_time_series_plot(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a time series plot using Plotly."""
@@ -248,8 +248,8 @@ def create_time_series_plot(data, metric, clients, event_date, group_column='cli
         title={'font': {'size': 16}}
     )
     
-    # Add EthPandaOps logo
-    return add_ethpandaops_logo(fig)
+    # Add ethPandaOps logo
+    return add_ethPandaOps_logo(fig)
 
 def create_inclusion_distance_distribution(data, clients, event_date, group_column='client', annotation_date=None, annotation_text="", show_network_average=False):
     """Create an inclusion distance distribution plot similar to the blog post."""
@@ -280,7 +280,7 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
             nbins=20,
             title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
             labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'},
-            color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+            color_discrete_map=None  # Use default Plotly colors
         )
     else:
         # Create a more detailed delay distribution
@@ -307,7 +307,7 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
                 barmode='group',
                 title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
                 labels={'inclusion_delay': 'Inclusion Delay (slots)', 'count': 'Number of Attestations'},
-                color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+                color_discrete_map=None  # Use default Plotly colors
             )
         else:
             # Fallback to simple histogram
@@ -318,7 +318,7 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
                 nbins=20,
                 title=f'Attestation Inclusion Delay Distribution<br><sub>{delay_description}</sub>',
                 labels={'avg_attestation_inclusion_delay': 'Average Inclusion Delay (slots)'},
-                color_discrete_map={'Before': '#1f77b4', 'After': '#2ca02c'}  # Blue and Green
+                color_discrete_map=None  # Use default Plotly colors
             )
     
     # Minimal layout updates
@@ -327,8 +327,8 @@ def create_inclusion_distance_distribution(data, clients, event_date, group_colu
         title={'font': {'size': 16}}
     )
     
-    # Add EthPandaOps logo
-    return add_ethpandaops_logo(fig)
+    # Add ethPandaOps logo
+    return add_ethPandaOps_logo(fig)
 
 def get_metric_info(metric_name):
     """Get human-readable title and description for metrics."""

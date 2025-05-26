@@ -199,7 +199,7 @@ def calculate_grouped_metrics(group):
 Visualization functions for {analysis_name} analysis
 
 IMPORTANT: Leverage existing shared plotting patterns:
-1. Always use shared.ui_components.add_ethpandaops_logo() for consistent branding
+1. Always use shared.ui_components.add_ethPandaOps_logo() for consistent branding
 2. Check other analysis pages for similar plot types that could be generalized
 3. For reusable plotting utilities, consider adding them to shared/ui_components.py
 4. Follow established patterns for plot styling and layout
@@ -210,7 +210,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from shared.ui_components import add_ethpandaops_logo  # Always use for consistent branding
+from shared.ui_components import add_ethPandaOps_logo  # Always use for consistent branding
 from config_utils import get_metric_info
 
 def create_time_series_plot(data, metric, groups, **kwargs):
@@ -233,7 +233,7 @@ def create_time_series_plot(data, metric, groups, **kwargs):
     )
     
     # Always add branding
-    return add_ethpandaops_logo(fig)
+    return add_ethPandaOps_logo(fig)
 
 def create_comparison_plot(data, metric, groups, **kwargs):
     """Create a comparison visualization."""
@@ -262,11 +262,11 @@ from metrics_calculators import calculate_primary_metrics
 from plot_generators import create_time_series_plot, create_comparison_plot
 
 # Import shared components
-from shared.ui_components import apply_ethpandaops_styling
+from shared.ui_components import apply_ethPandaOps_styling
 
 def main():
     # Apply consistent styling
-    apply_ethpandaops_styling()
+    apply_ethPandaOps_styling()
     
     # Initialize session state
     if 'data_loaded' not in st.session_state:

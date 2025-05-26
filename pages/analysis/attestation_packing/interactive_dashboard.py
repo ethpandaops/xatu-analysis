@@ -28,7 +28,7 @@ from plot_generators import (
 )
 
 # Import shared UI components
-from shared.ui_components import apply_ethpandaops_styling
+from shared.ui_components import apply_ethPandaOps_styling
 from shared.filesystem import get_cache_dir
 
 # Additional imports needed for main functionality
@@ -39,10 +39,6 @@ import pandas as pd
 import numpy as np
 
 def main():
-    # Apply consistent styling
-    apply_ethpandaops_styling()
-
-    
     # Initialize session state variables
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
@@ -56,7 +52,7 @@ def main():
         st.session_state.entities = {}
     
     # Header
-    st.markdown('<h1 class="main-header">🔍 Attestation Packing Analysis Dashboard</h1>', unsafe_allow_html=True)
+    st.title("🔍 Attestation Packing Analysis Dashboard")
     
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
@@ -84,8 +80,6 @@ def main():
         ]
         event_date = pd.to_datetime("2025-05-07T10:00:00Z", utc=True)
     elif time_range_option == "Custom":
-        st.sidebar.info("⚠️ Custom ranges download ALL days between start/end. For analysis, use 2 separate short periods.")
-        
         custom_type = st.sidebar.radio(
             "Custom Range Type",
             ["Single Period", "Before/After Analysis"]
@@ -309,7 +303,7 @@ def main():
         with col4:
             st.metric("📅 Duration", f"{date_range_days} days", "Analysis period")
         
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.write("")
         
         # Second row - analysis-specific metrics
         col1, col2, col3, col4 = st.columns(4)
@@ -327,7 +321,7 @@ def main():
             st.metric("📊 Block Rate", f"{avg_blocks_per_hour:.1f}/hr", "Average frequency")
         
         # Date range info
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.write("")
         
         # Handle potential NaT values in datetime columns
         min_date = data['block_slot_start_date_time'].dropna().min()
@@ -338,16 +332,11 @@ def main():
         else:
             date_range_str = "Date range unavailable"
         
-        st.markdown("""
-        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 4px solid #1f77b4;">
-            <strong>📅 Analysis Time Range:</strong> {} 
-            <br><strong>🔄 Data Coverage:</strong> {} blocks across {} days
-        </div>
-        """.format(
-            date_range_str,
-            len(data),
-            date_range_days
-        ), unsafe_allow_html=True)
+        st.info(f"""
+        📅 **Analysis Time Range:** {date_range_str}
+        
+        🔄 **Data Coverage:** {len(data):,} blocks across {date_range_days} days
+        """)
         
         # Analysis configuration
         st.subheader("🎯 Analysis Configuration")
@@ -724,7 +713,7 @@ def main():
         - **Clients**: Different consensus client implementations (lighthouse, prysm, teku, etc.)
         - **Metrics**: Comprehensive attestation packing and efficiency metrics
         
-        ### Key Metrics Available (based on [EthPandaOps blog analysis](https://ethpandaops.io/posts/hoodi-attestation-packing/)):
+        ### Key Metrics Available (based on [ethPandaOps blog analysis](https://ethPandaOps.io/posts/hoodi-attestation-packing/)):
         
         **🎯 Core Attestation Packing Metrics:**
         - **Unique Validator Indexes**: Number of unique validators per block (blog: "Unique Validators Per Block")

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "🐼 EthPandaOps Analysis Dashboard"
+echo "🐼 ethPandaOps Analysis Dashboard"
 echo "================================="
 
 # Install dependencies using uv

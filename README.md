@@ -13,7 +13,7 @@ A Streamlit-based data analysis dashboard for Ethereum data using Xatu.
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/ethpandaops/xatu-analysis.git
+git clone https://github.com/ethPandaOps/xatu-analysis.git
 cd xatu-analysis
 ```
 

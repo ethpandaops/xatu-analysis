@@ -23,8 +23,8 @@ def calculate_parquet_urls(start_date_str, end_date_str, network, table_name):
     st.info(f"📅 Will download {date_count} day(s) from {current_date} to {end_date_only}")
     
     while current_date <= end_date_only:
-        # Format: https://data.ethpandaops.io/xatu/NETWORK/databases/DATABASE/TABLE/YYYY/M/D.parquet
-        url = f"https://data.ethpandaops.io/xatu/{network}/databases/default/{table_name}/{current_date.year}/{current_date.month}/{current_date.day}.parquet"
+        # Format: https://data.ethPandaOps.io/xatu/NETWORK/databases/DATABASE/TABLE/YYYY/M/D.parquet
+        url = f"https://data.ethPandaOps.io/xatu/{network}/databases/default/{table_name}/{current_date.year}/{current_date.month}/{current_date.day}.parquet"
         urls.append((url, current_date))
         current_date += timedelta(days=1)
     

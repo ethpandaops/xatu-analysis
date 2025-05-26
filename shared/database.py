@@ -1,5 +1,5 @@
 """
-Database connection utilities for EthPandaOps Analysis Dashboard
+Database connection utilities for ethPandaOps Analysis Dashboard
 """
 import os
 import streamlit as st

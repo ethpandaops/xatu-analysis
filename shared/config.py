@@ -1,5 +1,5 @@
 """
-Shared configuration utilities for EthPandaOps Analysis Dashboard
+Shared configuration utilities for ethPandaOps Analysis Dashboard
 """
 import os
 from typing import Dict, Any

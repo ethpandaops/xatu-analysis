@@ -1,5 +1,5 @@
 """
-File system utilities for EthPandaOps Analysis Dashboard
+File system utilities for ethPandaOps Analysis Dashboard
 """
 from pathlib import Path
 

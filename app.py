@@ -1,11 +1,11 @@
 """
-EthPandaOps Analysis Dashboard
+ethPandaOps Analysis Dashboard
 Main application entry point using modern Streamlit st.navigation API
 """
 import streamlit as st
 
 st.set_page_config(
-    page_title="EthPandaOps Analysis Dashboard",
+    page_title="ethPandaOps Analysis Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
