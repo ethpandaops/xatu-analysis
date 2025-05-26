@@ -8,10 +8,10 @@ def add_ethpandaops_logo(fig):
     # Logo functionality disabled
     return fig
 
-def create_before_after_comparison(data, metric, clients, event_date):
+def create_before_after_comparison(data, metric, clients, event_date, group_column='client'):
     """Create a before/after comparison plot using Plotly."""
     temp_df = data.copy()
-    temp_df = temp_df[temp_df['client'].isin(clients)]
+    temp_df = temp_df[temp_df[group_column].isin(clients)]
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
@@ -21,18 +21,19 @@ def create_before_after_comparison(data, metric, clients, event_date):
     event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
     temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
     
-    # Calculate mean for each client and period
-    client_metrics = temp_df.groupby(['client', 'period'])[metric].mean().reset_index()
+    # Calculate mean for each group and period
+    client_metrics = temp_df.groupby([group_column, 'period'])[metric].mean().reset_index()
     
     # Create the plot with simple styling
+    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
     fig = px.bar(
         client_metrics, 
-        x='client', 
+        x=group_column, 
         y=metric, 
         color='period',
         barmode='group',
         title=f'{metric_info["title"]} - Before vs After Comparison<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={'client': 'Consensus Client', metric: metric_info["title"]}
+        labels={group_column: group_label, metric: metric_info["title"]}
     )
     
     # Minimal layout updates
@@ -46,9 +47,9 @@ def create_before_after_comparison(data, metric, clients, event_date):
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_distribution_plot(data, metric, clients, event_date):
+def create_distribution_plot(data, metric, clients, event_date, group_column='client'):
     """Create a before/after distribution plot using Plotly."""
-    temp_df = data[data['client'].isin(clients)].copy()
+    temp_df = data[data[group_column].isin(clients)].copy()
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
@@ -58,13 +59,14 @@ def create_distribution_plot(data, metric, clients, event_date):
     event_date_naive = pd.Timestamp(event_date).tz_localize(None) if hasattr(event_date, 'tzinfo') and event_date.tzinfo is not None else event_date
     temp_df['period'] = np.where(temp_df['datetime'] < event_date_naive, 'Before', 'After')
     
+    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
     fig = px.box(
         temp_df, 
-        x='client', 
+        x=group_column, 
         y=metric,
         color='period',
         title=f'{metric_info["title"]} - Distribution Analysis<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={'client': 'Consensus Client', metric: metric_info["title"]}
+        labels={group_column: group_label, metric: metric_info["title"]}
     )
     
     # Minimal layout updates
@@ -77,21 +79,22 @@ def create_distribution_plot(data, metric, clients, event_date):
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_time_series_plot(data, metric, clients, event_date):
+def create_time_series_plot(data, metric, clients, event_date, group_column='client'):
     """Create a time series plot using Plotly."""
-    temp_df = data[data['client'].isin(clients)].copy()
+    temp_df = data[data[group_column].isin(clients)].copy()
     temp_df['datetime'] = pd.to_datetime(temp_df['block_slot_start_date_time'])
     
     # Get metric info for better titles
     metric_info = get_metric_info(metric)
     
+    group_label = 'Entity' if group_column == 'entity' else 'Consensus Client'
     fig = px.scatter(
         temp_df, 
         x='datetime', 
         y=metric, 
-        color='client',
+        color=group_column,
         title=f'{metric_info["title"]} - Time Series Analysis<br><sub>{metric_info["subtitle"]}</sub>',
-        labels={'datetime': 'Date/Time', metric: metric_info["title"]}
+        labels={'datetime': 'Date/Time', metric: metric_info["title"], group_column: group_label}
     )
     
     # Add vertical line for event date
@@ -119,9 +122,9 @@ def create_time_series_plot(data, metric, clients, event_date):
     # Add EthPandaOps logo
     return add_ethpandaops_logo(fig)
 
-def create_inclusion_distance_distribution(data, clients, event_date):
+def create_inclusion_distance_distribution(data, clients, event_date, group_column='client'):
     """Create an inclusion distance distribution plot similar to the blog post."""
-    temp_df = data[data['client'].isin(clients)].copy()
+    temp_df = data[data[group_column].isin(clients)].copy()
     
     # Add period information
     temp_df['datetime'] = pd.to_datetime(temp_df['block_slot_start_date_time'])

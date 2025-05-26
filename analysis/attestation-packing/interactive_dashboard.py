@@ -12,6 +12,7 @@ Run with: streamlit run interactive_dashboard.py
 from config_utils import *
 from data_loaders import (
     load_blockprint_clients,
+    load_validators_from_ethseer,
     load_attestation_data_parquet, 
     fetch_proposer_indices_parquet
 )
@@ -165,6 +166,11 @@ def main():
                 validators = load_blockprint_clients(network)
                 st.session_state.validators = validators
                 
+                # Load ethseer validator entities (cached) - also uses ClickHouse
+                st.info("Loading ethseer validator entities...")
+                entities = load_validators_from_ethseer(network)
+                st.session_state.entities = entities
+                
                 # Load attestation data from parquet files (cached)
                 st.info("Loading attestation data from parquet files...")
                 all_attestations = load_attestation_data_parquet(str(time_ranges), network)
@@ -178,8 +184,14 @@ def main():
                     lambda x: validators.get(x, 'unknown')
                 )
                 
-                # Fill any remaining NaN values in client column
+                # Add entity information to proposer indices
+                proposer_indices['entity'] = proposer_indices['proposer_index'].apply(
+                    lambda x: entities.get(x, 'unknown')
+                )
+                
+                # Fill any remaining NaN values in client and entity columns
                 proposer_indices['client'] = proposer_indices['client'].fillna('unknown')
+                proposer_indices['entity'] = proposer_indices['entity'].fillna('unknown')
                 
                 # Calculate basic slot metrics
                 st.info("Calculating slot metrics...")
@@ -198,7 +210,7 @@ def main():
                 if len(proposer_indices) > 0:
                     slot_metrics_df = pd.merge(
                         slot_metrics_df,
-                        proposer_indices[['slot', 'proposer_index', 'client']],
+                        proposer_indices[['slot', 'proposer_index', 'client', 'entity']],
                         left_on='block_slot',
                         right_on='slot',
                         how='left'
@@ -210,11 +222,13 @@ def main():
                     # If no proposer indices, add default columns
                     slot_metrics_df['proposer_index'] = None
                     slot_metrics_df['client'] = 'unknown'
+                    slot_metrics_df['entity'] = 'unknown'
                 
                 slot_metrics_df = slot_metrics_df.set_index('block_slot')
                 
-                # Fill any NaN values in client column that might have resulted from the merge
+                # Fill any NaN values in client and entity columns that might have resulted from the merge
                 slot_metrics_df['client'] = slot_metrics_df['client'].fillna('unknown')
+                slot_metrics_df['entity'] = slot_metrics_df['entity'].fillna('unknown')
                 
                 # Store in session state
                 st.session_state.slot_metrics_df = slot_metrics_df
@@ -254,7 +268,11 @@ def main():
             st.metric("🏗️ Total Blocks", f"{len(data):,}", "Analyzed")
             
         with col2:
-            st.metric("⚡ Clients", data['client'].nunique(), "Unique consensus clients")
+            if 'entity' in data.columns:
+                entities_count = data['entity'].nunique()
+                st.metric("⚡ Clients/Entities", f"{data['client'].nunique()}/{entities_count}", "Unique clients/entities")
+            else:
+                st.metric("⚡ Clients", data['client'].nunique(), "Unique consensus clients")
             
         with col3:
             st.metric("🌐 Network", network.upper(), "Ethereum network")
@@ -302,20 +320,36 @@ def main():
             date_range_days
         ), unsafe_allow_html=True)
         
-        # Client selection
+        # Analysis configuration
         st.subheader("🎯 Analysis Configuration")
         
-        available_clients = sorted([c for c in data['client'].unique() if pd.notna(c)])
-        
-        col1, col2 = st.columns(2)
+        # Grouping type selection
+        col1, col2, col3 = st.columns(3)
         with col1:
-            selected_clients = st.multiselect(
-                "Select Clients to Analyze",
-                available_clients,
-                default=available_clients[:5] if len(available_clients) > 5 else available_clients
+            grouping_type = st.selectbox(
+                "Group by",
+                ["Blockprint Client", "Entity"],
+                help="Choose whether to group by blockprint client or entity"
             )
         
         with col2:
+            if grouping_type == "Entity":
+                top_n_entities = st.selectbox(
+                    "Top N Entities",
+                    [5, 10, 20, 50],
+                    index=1,  # Default to 10
+                    help="Select top N entities by block count to display"
+                )
+            else:
+                top_n_entities = None
+                st.selectbox(
+                    "Top N Entities",
+                    ["N/A"],
+                    disabled=True,
+                    help="Only available when grouping by entity"
+                )
+        
+        with col3:
             selected_metric = st.selectbox(
                 "Select Metric",
                 [
@@ -339,7 +373,32 @@ def main():
                 ]
             )
         
-        if selected_clients:
+        # Group selection based on grouping type
+        if grouping_type == "Blockprint Client":
+            available_groups = sorted([c for c in data['client'].unique() if pd.notna(c)])
+            group_column = 'client'
+            default_selection = available_groups[:5] if len(available_groups) > 5 else available_groups
+        else:  # Entity grouping
+            if 'entity' in data.columns:
+                # Get top N entities by block count
+                entity_counts = data['entity'].value_counts()
+                available_groups = entity_counts.head(top_n_entities).index.tolist()
+                group_column = 'entity'
+                default_selection = available_groups
+            else:
+                st.warning("Entity data not available. Loading entity data...")
+                available_groups = []
+                group_column = 'entity'
+                default_selection = []
+        
+        selected_groups = st.multiselect(
+            f"Select {grouping_type}s to Analyze",
+            available_groups,
+            default=default_selection,
+            help=f"Select which {grouping_type.lower()}s to include in the analysis"
+        )
+        
+        if selected_groups:
             # Plot selection
             st.subheader("📈 Visualizations")
             
@@ -348,29 +407,35 @@ def main():
                 ["Before/After Comparison", "Distribution", "Time Series", "Inclusion Distance Distribution"]
             )
             
+            # Use the appropriate column for plotting
+            if grouping_type == "Blockprint Client":
+                plot_group_column = 'client'
+            else:  # Entity grouping
+                plot_group_column = 'entity'
+            
             if plot_type == "Before/After Comparison":
-                fig = create_before_after_comparison(data, selected_metric, selected_clients, event_date)
+                fig = create_before_after_comparison(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Distribution":
-                fig = create_distribution_plot(data, selected_metric, selected_clients, event_date)
+                fig = create_distribution_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Time Series":
-                fig = create_time_series_plot(data, selected_metric, selected_clients, event_date)
+                fig = create_time_series_plot(data, selected_metric, selected_groups, event_date, group_column=plot_group_column)
                 st.plotly_chart(fig, use_container_width=True)
                 
             elif plot_type == "Inclusion Distance Distribution":
-                fig = create_inclusion_distance_distribution(data, selected_clients, event_date)
+                fig = create_inclusion_distance_distribution(data, selected_groups, event_date, group_column=plot_group_column)
                 st.plotly_chart(fig, use_container_width=True)
             
             # Statistics table
             st.subheader("📋 Statistics Summary")
             
-            filtered_data = data[data['client'].isin(selected_clients)]
+            filtered_data = data[data[group_column].isin(selected_groups)]
             
-            # Calculate statistics by client
-            stats = filtered_data.groupby('client')[selected_metric].agg([
+            # Calculate statistics by group
+            stats = filtered_data.groupby(group_column)[selected_metric].agg([
                 'count', 'mean', 'median', 'std', 'min', 'max'
             ]).round(3)
             
@@ -380,13 +445,14 @@ def main():
             st.subheader("🔍 Raw Data Explorer")
             
             if st.checkbox("Show raw data"):
+                columns_to_show = [group_column, 'block_slot_start_date_time', selected_metric]
                 st.dataframe(
-                    filtered_data[['client', 'block_slot_start_date_time', selected_metric]].head(100),
+                    filtered_data[columns_to_show].head(100),
                     use_container_width=True
                 )
         
         else:
-            st.warning("Please select at least one client to analyze.")
+            st.warning(f"Please select at least one {grouping_type.lower()} to analyze.")
     
     else:
         st.info("👆 Please configure your parameters in the sidebar and click 'Load Data' to begin analysis.")
