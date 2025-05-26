@@ -23,6 +23,8 @@ dependencies = [
     "sqlalchemy>=1.4.0",
     "clickhouse-sqlalchemy>=0.2.0",
     "requests>=2.25.0",
+    "watchdog>=6.0.0",
+    "scipy>=1.7.0",
 ]
 
 
