@@ -1,0 +1,27 @@
+---
+description: Streamlit pages layer - user-facing analysis interfaces and navigation
+globs: 
+  - "*.py"
+  - "analysis/**/*.py"
+alwaysApply: false
+---
+
+# Pages Layer - Streamlit UI Components
+
+Streamlit pages layer that provides user-facing interfaces for Ethereum data analysis tools.
+
+## Navigation Architecture
+- Uses modern Streamlit `st.navigation` API with structured sections
+- Home page serves as dashboard entry point with resource links
+- Analysis pages organized under `analysis/` subdirectory with modular structure
+
+## Page Structure Pattern
+Each analysis component follows consistent modular architecture:
+- `page.py` - Main Streamlit interface and user interaction logic
+- Leverages shared utilities from `../shared/` for data operations and UI components
+- Maintains separation between presentation layer and business logic
+
+## Key Constraints
+- Pages must be self-contained but leverage shared utilities for consistency
+- Use relative imports with proper path management for analysis subdirectories
+- Follow Streamlit session state management with prefixed keys for conflict prevention

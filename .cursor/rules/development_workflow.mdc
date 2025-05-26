@@ -1,0 +1,139 @@
+---
+description: Development workflow and processes for Xatu Analysis
+globs: 
+alwaysApply: false
+---
+
+# Development Workflow for Xatu Analysis
+
+## Development Environment Setup
+
+### Prerequisites
+- Python 3.13+ installed
+- [uv](https://docs.astral.sh/uv/) package manager
+- Git configured with appropriate credentials
+- Access to ClickHouse database (for data-dependent features)
+
+### Initial Setup
+```bash
+git clone https://github.com/ethPandaOps/xatu-analysis.git
+cd xatu-analysis
+cp example.env .env
+# Configure .env with your database settings
+uv sync
+```
+
+## Git Workflow
+
+### Branch Strategy
+- `master` - Main branch, always deployable
+- Feature branches: `feature/descriptive-name`
+- Bug fixes: `bugfix/issue-description`
+- Hotfixes: `hotfix/critical-issue`
+
+### Commit Standards
+- Use conventional commit format: `type(scope): description`
+- Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+- Examples:
+  - `feat(attestation): add packing efficiency metrics`
+  - `fix(database): handle connection timeout errors`
+  - `docs(readme): update installation instructions`
+
+### Pull Request Process
+1. Create feature branch from `master`
+2. Make changes following code standards
+3. Test changes locally
+4. Submit PR with descriptive title and summary
+5. Address review feedback
+6. Merge after approval
+
+## Development Commands
+
+### Core Commands
+```bash
+# Install dependencies
+uv sync
+
+# Run development server
+uv run streamlit run app.py
+
+# Run with specific port/host
+uv run streamlit run app.py --server.port=8502 --server.address=0.0.0.0
+
+# Add new dependencies
+uv add package-name
+
+# Add development dependencies
+uv add --dev package-name
+```
+
+### Environment Management
+- Use `.env` for local configuration (never commit)
+- Copy `example.env` as starting point
+- Document new environment variables in `example.env`
+- Use `python-dotenv` for loading environment variables
+
+## Testing Standards
+
+### Manual Testing
+- Test all new features in multiple browsers
+- Verify database connections and data loading
+- Test with different data ranges and edge cases
+- Ensure responsive design works on different screen sizes
+
+### Data Validation
+- Validate data integrity after database schema changes
+- Test with sample datasets before using production data
+- Verify data transformations produce expected results
+- Check handling of missing or malformed data
+
+## Code Quality
+
+### Before Committing
+1. Review code for adherence to standards
+2. Test functionality in local environment
+3. Check for hardcoded values or credentials
+4. Ensure proper error handling
+5. Update documentation if needed
+
+### Code Review Checklist
+- [ ] Code follows established patterns and conventions
+- [ ] Proper error handling implemented
+- [ ] Database queries are secure and efficient
+- [ ] UI components are responsive and accessible
+- [ ] Documentation updated for new features
+- [ ] No hardcoded credentials or sensitive data
+
+## Deployment and Release
+
+### Local Development
+- Use `./launch_dashboard.sh` for consistent local setup
+- Test with production-like data when possible
+- Verify all environment variables are properly configured
+
+### Adding New Analysis Pages
+1. Create directory under `pages/analysis/new_analysis/`
+2. Follow modular structure: `page.py`, `data_loaders.py`, etc.
+3. Add page to navigation in `app.py`
+4. Update shared utilities if needed
+5. Document page-specific requirements
+
+### Database Changes
+- Test schema changes on development database first
+- Ensure backward compatibility where possible
+- Document any required migration steps
+- Update example configurations as needed
+
+## Troubleshooting
+
+### Common Issues
+- **Database connection errors**: Check `.env` configuration and network access
+- **Module import errors**: Run `uv sync` to ensure dependencies are installed
+- **Streamlit caching issues**: Clear cache with `st.cache_data.clear()` or restart server
+- **Data loading problems**: Verify query syntax and data availability
+
+### Debug Mode
+- Use `st.write()` or `st.json()` for debugging data structures
+- Enable Streamlit development mode for detailed error messages
+- Use browser developer tools for frontend debugging
+- Check ClickHouse logs for database-related issues

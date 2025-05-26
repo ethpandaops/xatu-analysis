@@ -1,0 +1,21 @@
+---
+description: Shared Utilities - Reusable infrastructure for Ethereum data analysis
+globs: 
+  - "shared/**/*.py"
+  - "**/shared/**/*.py"
+alwaysApply: false
+---
+
+# Shared Utilities Component
+
+Provides reusable infrastructure utilities for Ethereum data analysis across all dashboard pages.
+
+## Key Integration Patterns
+- **Centralized Resource Management**: Database connections, file caching, and configuration through single entry points
+- **Lazy Loading with Caching**: Use `@st.cache_resource` for connections, `@st.cache_data` for expensive operations
+- **Environment-Driven Configuration**: All external dependencies configured via environment variables
+
+## Important Constraints
+- Maintain backwards compatibility - shared utilities are dependencies for all analysis pages
+- Keep error handling graceful with fallbacks (return None/empty DataFrames vs exceptions)
+- All file operations must use relative paths and cache management

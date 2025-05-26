@@ -1,0 +1,65 @@
+---
+description: Xatu Analysis Project Architecture
+globs: 
+alwaysApply: true
+---
+
+# Xatu Analysis Project Architecture
+
+This is a Streamlit-based data analysis dashboard for Ethereum data using Xatu. The project is structured as a modular dashboard application with shared utilities.
+
+## Core Technologies
+- **Python 3.13+** - Primary language
+- **Streamlit** - Web application framework with modern st.navigation API
+- **ClickHouse** - Primary database for Ethereum data storage
+- **Parquet** - File format for data analysis
+- **uv** - Package manager for dependency management
+- **Pandas/PyArrow** - Data manipulation and analysis
+- **Plotly/Matplotlib/Seaborn** - Data visualization
+
+## Project Structure
+
+```
+xatu-analysis/
+├── app.py                 # Main Streamlit application entry point
+├── pages/                 # Streamlit pages organized by functionality
+│   ├── home.py           # Home page
+│   └── analysis/         # Analysis-specific pages
+│       └── attestation_packing/  # Attestation analysis module
+├── shared/               # Shared utilities and components
+│   ├── config.py        # Configuration management
+│   ├── database.py      # Database connection utilities
+│   ├── data_utils.py    # Data processing utilities
+│   ├── parquet_utils.py # Parquet file operations
+│   ├── ui_components.py # Reusable UI components
+│   └── ethereum/        # Ethereum-specific utilities
+├── branding/            # Visual assets and branding
+└── static/              # Static assets (fonts, etc.)
+```
+
+## Navigation Architecture
+- Uses modern Streamlit `st.navigation` API with sections
+- Pages are organized into logical groups ("Main", "Analysis")
+- Each analysis component has its own subdirectory under `pages/analysis/`
+
+## Data Architecture
+- Primary data source: ClickHouse database for Ethereum data
+- Secondary: Parquet files for local analysis
+- Shared utilities handle database connections and data processing
+- Ethereum-specific data models in `shared/ethereum/`
+
+## Development Patterns
+- Each analysis page follows a modular structure with separate files for:
+  - `page.py` - Main page logic
+  - `data_loaders.py` - Data loading and processing
+  - `plot_generators.py` - Visualization generation
+  - `metrics_calculators.py` - Business logic calculations
+  - `config_utils.py` - Page-specific configuration
+- Shared utilities promote code reuse across analysis modules
+- Environment-based configuration using `.env` files
+
+## Key Architectural Principles
+1. **Modularity** - Each analysis is self-contained but uses shared utilities
+2. **Separation of Concerns** - Data, visualization, and business logic are separated
+3. **Reusability** - Common patterns are extracted to shared utilities
+4. **Configuration-Driven** - Behavior controlled through environment variables

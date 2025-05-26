@@ -1,0 +1,22 @@
+---
+description: Ethereum Beacon Chain Data Utilities - Provides standardized loading functions for Ethereum data from ClickHouse and parquet sources
+globs: 
+  - "shared/ethereum/**/*.py"
+  - "**/ethereum/**/*.py"
+alwaysApply: false
+---
+
+# Ethereum Beacon Chain Data Utilities
+
+Provides standardized loading functions for Ethereum consensus layer data from both ClickHouse and parquet sources.
+
+## Key Integration Patterns
+- **Dual Data Source Support**: All functions provide both ClickHouse (`load_*`) and parquet (`load_*_parquet`) implementations
+- **Consistent Function Signatures**: Both data source methods use identical parameters (time_ranges_str, network, optional progress_callback)
+- **Time Range Processing**: Uses `ast.literal_eval()` to parse time_ranges_str into list of (start_date, end_date) tuples
+
+## Important Constraints
+- All ClickHouse queries must include network filtering (`meta_network_name = :network`)
+- Parquet functions must handle both string and byte string network values for compatibility
+- Always apply time filtering using appropriate datetime columns (`slot_start_date_time`, `block_slot_start_date_time`)
+- Return consistent DataFrame schemas regardless of data source

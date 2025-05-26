@@ -1,0 +1,106 @@
+---
+description: Python and Streamlit coding standards for Xatu Analysis
+globs: ["*.py"]
+alwaysApply: false
+---
+
+# Code Standards for Xatu Analysis
+
+## Python Standards
+
+### Style and Formatting
+- Follow PEP 8 Python style guidelines
+- Use 4 spaces for indentation (no tabs)
+- Maximum line length of 88 characters (Black formatter standard)
+- Use double quotes for strings unless single quotes avoid escaping
+- Import organization: standard library → third party → local imports
+
+### Naming Conventions
+- `snake_case` for variables, functions, and module names
+- `PascalCase` for class names
+- `UPPER_CASE` for constants
+- Descriptive names that clearly indicate purpose
+- Prefix private methods with underscore: `_private_method()`
+
+### Function and Class Design
+- Functions should do one thing well (single responsibility)
+- Use type hints for function parameters and return values
+- Include docstrings for all public functions and classes
+- Keep functions under 50 lines when possible
+- Use dataclasses or Pydantic models for structured data
+
+### Error Handling
+- Use specific exception types rather than bare `except:`
+- Log errors with appropriate context
+- Fail fast with clear error messages
+- Use try/except blocks close to the source of potential errors
+
+## Streamlit-Specific Standards
+
+### Page Organization
+- Each analysis page should have a dedicated directory under `pages/analysis/`
+- Follow the modular pattern: `page.py`, `data_loaders.py`, `plot_generators.py`, `metrics_calculators.py`
+- Use `st.cache_data` for expensive data operations
+- Use `st.cache_resource` for database connections and persistent objects
+
+### UI Components
+- Create reusable components in `shared/ui_components.py`
+- Use consistent spacing with `st.columns()` and `st.container()`
+- Implement proper loading states with `st.spinner()` or progress bars
+- Use descriptive widget keys to prevent conflicts
+
+### Session State Management
+- Prefix session state keys with page/component name: `attestation_packing_data`
+- Initialize session state variables in component initialization
+- Use session state for user inputs that should persist across reruns
+
+## Data Handling Standards
+
+### Database Operations
+- Use connection pooling through `shared/database.py`
+- Always use parameterized queries to prevent SQL injection
+- Implement proper error handling for database operations
+- Cache query results when appropriate with `st.cache_data`
+
+### Data Processing
+- Use Pandas for data manipulation following vectorized operations
+- Validate data types and handle missing values explicitly
+- Use Pydantic models for data validation when interfacing with external systems
+- Document data transformations with clear comments
+
+### File Operations
+- Use `shared/parquet_utils.py` for Parquet file operations
+- Implement proper file path validation
+- Use context managers for file operations
+- Handle file not found and permission errors gracefully
+
+## Documentation Standards
+
+### Docstrings
+```python
+def calculate_packing_efficiency(attestations: pd.DataFrame) -> float:
+    """Calculate the packing efficiency for attestations.
+    
+    Args:
+        attestations: DataFrame containing attestation data with columns:
+                     'slot', 'committee_index', 'validator_index'
+    
+    Returns:
+        Packing efficiency as a percentage (0.0 to 100.0)
+        
+    Raises:
+        ValueError: If required columns are missing from DataFrame
+    """
+```
+
+### Comments
+- Explain "why" not "what" in comments
+- Use comments for complex business logic or algorithms
+- Update comments when code changes
+- Avoid obvious comments that restate the code
+
+### Configuration
+- Document all environment variables in `example.env`
+- Use type hints in configuration classes
+- Provide sensible defaults where possible
+- Group related configuration options together

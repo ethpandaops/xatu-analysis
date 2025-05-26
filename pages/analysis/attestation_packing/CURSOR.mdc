@@ -1,0 +1,21 @@
+---
+description: Attestation Packing Analysis - Interactive dashboard for analyzing Ethereum attestation packing efficiency patterns
+globs: 
+  - "*.py"
+  - "requirements.txt"
+alwaysApply: false
+---
+
+# Attestation Packing Analysis Component
+
+Interactive Streamlit dashboard for analyzing Ethereum attestation packing efficiency patterns across consensus clients and validator entities before/after network upgrades.
+
+## Key Integration Patterns
+- **Rolling Window Algorithm**: Uses 65-slot rolling window for accurate "first seen attestations" calculation
+- **Multi-Source Data Strategy**: Combines ClickHouse validator metadata with cached Parquet attestation data
+- **Before/After Analysis Focus**: Architecture optimized for pre/post-event comparison workflows (fork analysis)
+
+## Important Constraints
+- **Performance Critical**: Must use local Parquet caching with 1-hour TTL for expensive queries
+- **Session State Prefix**: All keys must use `attestation_packing_` prefix
+- **Dual Aggregation Support**: Handle both consensus client and validator entity groupings with percentile statistics

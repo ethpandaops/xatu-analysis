@@ -52,7 +52,7 @@ def main():
         st.session_state.entities = {}
     
     # Header
-    st.title("🔍 Attestation Packing Analysis Dashboard")
+    st.title("🔍 Attestation Packing")
     
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
@@ -700,34 +700,9 @@ def main():
             st.warning(f"Please select at least one {grouping_type.lower()} to analyze.")
     
     else:
-        st.info("👆 Please configure your parameters in the sidebar and click 'Load Data' to begin analysis.")
-        
-        # Show example/demo data structure
-        st.subheader("📝 About This Dashboard")
+        st.info("👈 Please configure your parameters in the sidebar and click 'Load Data' to begin analysis.")
         
         st.markdown("""
-        This interactive dashboard allows you to analyze Ethereum attestation packing metrics across different:
-        
-        - **Networks**: mainnet, holesky, sepolia
-        - **Time Ranges**: Custom or predefined ranges around key events (e.g., Electra fork)
-        - **Clients**: Different consensus client implementations (lighthouse, prysm, teku, etc.)
-        - **Metrics**: Comprehensive attestation packing and efficiency metrics
-        
-        ### Key Metrics Available (based on [ethPandaOps blog analysis](https://ethPandaOps.io/posts/hoodi-attestation-packing/)):
-        
-        **🎯 Core Attestation Packing Metrics:**
-        - **Unique Validator Indexes**: Number of unique validators per block (blog: "Unique Validators Per Block")
-        - **First Seen Attestations**: Fresh attestations not seen in previous blocks (blog: "Fresh Attestations")
-        - **Avg Attestation Inclusion Delay**: Average delay in slots (blog: "Inclusion Distance")
-        - **Optimal Inclusion Rate**: Percentage of validators included with 1-slot delay (blog: "Optimal Inclusion Distance")
-        
-        **📊 Additional Analysis Metrics:**
-        - **Aggregation Efficiency**: Ratio of unique validators to total attestations
-        - **Total Attestations**: Number of attestations per block
-        - **Avg Validators per Attestation**: Average aggregation size
-        - **Optimal Inclusion Validators**: Count of validators with 1-slot delay
-        
-        ### Getting Started:
         
         1. Configure your network and time range in the sidebar
         2. Click "Load Data" to fetch from ClickHouse
