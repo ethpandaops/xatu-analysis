@@ -3,6 +3,7 @@ Metrics calculation utilities for gas usage performance analysis.
 
 This module provides statistical analysis functions including time bucketing,
 correlation analysis, trend calculations, and consensus implementation ranking.
+Now includes Polars-optimized functions for better performance.
 """
 
 import pandas as pd
@@ -28,6 +29,27 @@ except ImportError:
 
 from config_utils import get_analysis_config, get_aggregation_functions
 
+# Import polars functions
+try:
+    from polars_metrics_calculators import (
+        create_time_buckets_polars,
+        create_gas_buckets_polars,
+        aggregate_data_polars,
+        calculate_bucket_metrics_polars,
+        calculate_correlation_analysis_polars,
+        calculate_temporal_trends_polars,
+        calculate_percentile_analysis_polars,
+        sample_large_dataset
+    )
+    POLARS_METRICS_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("Polars metrics calculators available")
+except ImportError as e:
+    POLARS_METRICS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Polars metrics calculators not available: {e}")
+    logger.info("Falling back to pandas-based metrics calculators")
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,6 +57,134 @@ logger = logging.getLogger(__name__)
 
 
 def create_time_buckets(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame:
+    """
+    Create time buckets using polars implementation with fallback.
+    
+    Args:
+        df: DataFrame with slot_start_date_time column
+        num_buckets: Number of time buckets to create
+        
+    Returns:
+        DataFrame with added time bucket columns
+    """
+    # Use polars version for large datasets
+    if POLARS_METRICS_AVAILABLE and len(df) > 50_000:
+        logger.info(f"Using polars time bucketing for {len(df):,} records")
+        try:
+            return create_time_buckets_polars(df, num_buckets)
+        except Exception as e:
+            logger.warning(f"Polars time bucketing failed: {e}, falling back to standard")
+    
+    return create_time_buckets_standard(df, num_buckets)
+
+
+def create_gas_buckets(df: pd.DataFrame, bucket_size: int = 2_000_000, gas_column: str = 'gas_used') -> pd.DataFrame:
+    """
+    Create gas buckets using polars implementation with fallback.
+    
+    Args:
+        df: DataFrame with gas usage data
+        bucket_size: Size of each gas bucket
+        gas_column: Column name containing gas usage values
+        
+    Returns:
+        DataFrame with added gas bucket columns
+    """
+    # Use polars version for large datasets
+    if POLARS_METRICS_AVAILABLE and len(df) > 30_000:
+        logger.info(f"Using polars gas bucketing for {len(df):,} records")
+        try:
+            return create_gas_buckets_polars(df, bucket_size, gas_column)
+        except Exception as e:
+            logger.warning(f"Polars gas bucketing failed: {e}, falling back to standard")
+    
+    return create_gas_buckets_standard(df, bucket_size, gas_column)
+
+
+def aggregate_data(
+    df: pd.DataFrame,
+    group_by: List[str] = None,
+    metrics: List[str] = None,
+    agg_function: str = 'mean'
+) -> pd.DataFrame:
+    """
+    Aggregate data using polars implementation with fallback.
+    
+    Args:
+        df: DataFrame with client-level data
+        group_by: Columns to group by
+        metrics: Metrics to aggregate
+        agg_function: Aggregation function
+        
+    Returns:
+        DataFrame with aggregated data
+    """
+    # Use polars version for large datasets
+    if POLARS_METRICS_AVAILABLE and len(df) > 25_000:
+        logger.info(f"Using polars aggregation for {len(df):,} records")
+        try:
+            return aggregate_data_polars(df, group_by, metrics, agg_function)
+        except Exception as e:
+            logger.warning(f"Polars aggregation failed: {e}, falling back to standard")
+    
+    return aggregate_data_standard(df, group_by, metrics, agg_function)
+
+
+def calculate_correlation_analysis(
+    df: pd.DataFrame, 
+    x_col: str, 
+    y_col: str,
+    method: str = 'pearson'
+) -> Optional[Dict[str, float]]:
+    """
+    Calculate correlation analysis using polars implementation with fallback.
+    
+    Args:
+        df: DataFrame containing the data
+        x_col: Column name for x-axis variable
+        y_col: Column name for y-axis variable  
+        method: Correlation method
+        
+    Returns:
+        Dictionary with correlation statistics
+    """
+    # Use polars version for large datasets
+    if POLARS_METRICS_AVAILABLE and len(df) > 10_000:
+        logger.info(f"Using polars correlation analysis for {len(df):,} records")
+        try:
+            return calculate_correlation_analysis_polars(df, x_col, y_col, method)
+        except Exception as e:
+            logger.warning(f"Polars correlation analysis failed: {e}, falling back to standard")
+    
+    return calculate_correlation_analysis_standard(df, x_col, y_col, method)
+
+
+def prepare_large_dataset(df: pd.DataFrame, max_rows: int = 100_000) -> pd.DataFrame:
+    """
+    Prepare large datasets for analysis by sampling if necessary.
+    
+    Args:
+        df: Input DataFrame
+        max_rows: Maximum rows to keep
+        
+    Returns:
+        Prepared DataFrame
+    """
+    if len(df) <= max_rows:
+        return df
+    
+    if POLARS_METRICS_AVAILABLE:
+        logger.info(f"Sampling large dataset from {len(df):,} to {max_rows:,} rows")
+        try:
+            return sample_large_dataset(df, max_rows, strategy='stratified')
+        except Exception as e:
+            logger.warning(f"Polars sampling failed: {e}, using simple random sample")
+    
+    # Fallback to simple random sampling
+    return df.sample(n=max_rows, random_state=42)
+
+
+def create_time_buckets_standard(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame:
     """
     Create equal-duration time buckets for temporal analysis.
     Fixes data type issues for temporal calculations.
@@ -107,7 +257,7 @@ def create_time_buckets(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame
     return df
 
 
-def create_gas_buckets(df: pd.DataFrame, bucket_size: int = 2_000_000, gas_column: str = 'gas_used') -> pd.DataFrame:
+def create_gas_buckets_standard(df: pd.DataFrame, bucket_size: int = 2_000_000, gas_column: str = 'gas_used') -> pd.DataFrame:
     """
     Create gas usage buckets for aggregation analysis.
     
@@ -199,7 +349,7 @@ def create_gas_buckets(df: pd.DataFrame, bucket_size: int = 2_000_000, gas_colum
     return result_df
 
 
-def calculate_correlation_analysis(
+def calculate_correlation_analysis_standard(
     df: pd.DataFrame, 
     x_col: str, 
     y_col: str,
@@ -258,7 +408,7 @@ def calculate_correlation_analysis(
         return None
 
 
-def aggregate_data(
+def aggregate_data_standard(
     df: pd.DataFrame,
     group_by: List[str] = None,
     metrics: List[str] = None,
@@ -705,3 +855,5 @@ def calculate_comparative_analysis(
     
     logger.info(f"Calculated comparative analysis for {len(comparison_results)} metrics")
     return comparison_results
+
+

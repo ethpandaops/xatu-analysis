@@ -22,7 +22,7 @@ from data_loaders import load_complete_analysis_data, validate_data_quality
 from metrics_calculators import (
     create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
     calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
-    calculate_comparative_analysis
+    calculate_comparative_analysis, prepare_large_dataset
 )
 from plot_generators import (
     create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
@@ -160,6 +160,22 @@ def render_sidebar_configuration() -> Dict[str, Any]:
             help="Maximum propagation time to include in analysis"
         )
     
+    # Performance optimization controls
+    st.sidebar.subheader("🚀 Performance Settings")
+    
+    enable_chunking = st.sidebar.checkbox(
+        "Enable Data Chunking",
+        value=True,
+        help="Split large time ranges into smaller chunks to prevent memory issues"
+    )
+    
+    chunk_size_days = st.sidebar.selectbox(
+        "Chunk Size (Days)",
+        options=[3, 7, 14, 21],
+        index=1,  # Default to 7 days
+        help="Size of chunks when processing large datasets"
+    )
+    
     return {
         'network': network,
         'period1_start': period1_start,
@@ -169,7 +185,10 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         'enable_comparison': enable_comparison,
         'time_buckets': time_buckets,
         'min_samples': min_samples,
-        'max_propagation': max_propagation
+        'max_propagation': max_propagation,
+        'enable_chunking': enable_chunking,
+        'chunk_size_days': chunk_size_days,
+        'enable_sampling': True  # Always enable smart sampling
     }
 
 
@@ -462,22 +481,24 @@ def render_analysis_dashboard():
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🔗 Correlation Analysis", 
         "📈 Time Series", 
-        "🔥 Performance Heatmap",
+        "📋 Time Series Data",
         "📦 Distribution Analysis",
         "🌍 Geographic Analysis"
     ])
     
     with tab1:
         with st.spinner("Generating correlation analysis..."):
-            render_correlation_analysis(display_data, analysis_config['metrics'])
+            render_correlation_analysis(display_data, analysis_config['metrics'], analysis_config['agg_function'], 
+                                       analysis_config, st.session_state.analysis_data.get('period1', {}))
     
     with tab2:
         with st.spinner("Generating time series analysis..."):
-            render_time_series_analysis(period1_bucketed_agg, analysis_config['metrics'])
+            render_time_series_analysis(period1_bucketed_agg, analysis_config['metrics'], analysis_config['agg_function'],
+                                       analysis_config, st.session_state.analysis_data.get('period1', {}))
     
     with tab3:
-        with st.spinner("Generating performance heatmap..."):
-            render_performance_heatmap(period1_bucketed_agg)
+        with st.spinner("Generating time series data table..."):
+            render_time_series_data_table(period1_bucketed_agg, analysis_config['metrics'])
     
     with tab4:
         with st.spinner("Generating distribution analysis..."):
@@ -491,7 +512,31 @@ def render_analysis_dashboard():
     render_statistical_summary(display_data, analysis_config['metrics'])
 
 
-def render_correlation_analysis(data: pd.DataFrame, metrics: List[str]):
+def create_chart_metadata(analysis_config: Dict[str, Any], period_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Create metadata dictionary for chart annotations."""
+    metadata = {}
+    
+    # Extract time range
+    if 'start_date' in period_data and 'end_date' in period_data:
+        start_str = period_data['start_date'].strftime('%Y-%m-%d')
+        end_str = period_data['end_date'].strftime('%Y-%m-%d')
+        metadata['time_range'] = f"{start_str} to {end_str}"
+    
+    # Extract network
+    if 'network' in period_data:
+        metadata['network'] = period_data['network']
+    
+    # Extract block counts
+    if 'combined_data' in period_data and not period_data['combined_data'].empty:
+        # Count unique blocks (slots)
+        unique_blocks = period_data['combined_data']['slot'].nunique() if 'slot' in period_data['combined_data'].columns else len(period_data['combined_data'])
+        metadata['total_blocks'] = unique_blocks
+    
+    return metadata
+
+
+def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_function: str = "mean", 
+                               analysis_config: Dict[str, Any] = None, period_data: Dict[str, Any] = None):
     """Render correlation analysis section."""
     st.write("### Gas Usage vs Performance Correlation")
     
@@ -532,17 +577,30 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str]):
     
     if x_metric and y_metric:
         try:
+            # Prepare data for visualization (sample if too large)
+            config = get_analysis_config()
+            viz_data = data
+            if len(data) > config.get('max_visualization_points', 100_000):
+                viz_data = prepare_large_dataset(data, max_rows=config.get('max_visualization_points', 100_000))
+            
+            # Create chart metadata
+            chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
+            
             # Create scatter plot with intelligent coloring
             fig = create_gas_vs_arrival_scatter(
-                data, x_metric, y_metric,
-                title_suffix=" - Correlation Analysis"
+                viz_data, x_metric, y_metric,
+                title_suffix=" - Correlation Analysis",
+                agg_function=agg_function,
+                network=chart_metadata.get('network'),
+                time_range=chart_metadata.get('time_range'),
+                metadata=chart_metadata
             )
             st.plotly_chart(fig, use_container_width=True)
             
             # Show correlation matrix if multiple metrics
             if len(available_metrics) > 2:
                 st.write("#### Correlation Matrix")
-                corr_fig = create_correlation_matrix(data, available_metrics)
+                corr_fig = create_correlation_matrix(viz_data, available_metrics)
                 st.plotly_chart(corr_fig, use_container_width=True)
                 
         except Exception as e:
@@ -552,7 +610,8 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str]):
             st.write(f"Y metric ({y_metric}) stats: {data[y_metric].describe()}")
 
 
-def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str]):
+def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str], agg_function: str = "mean",
+                               analysis_config: Dict[str, Any] = None, period_data: Dict[str, Any] = None):
     """Render time series analysis section."""
     st.write("### Temporal Analysis Over Time Buckets")
     
@@ -609,11 +668,18 @@ def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str])
             # Sort by bucket number
             bucket_metrics_sorted = bucket_metrics.sort_values('bucket_number')
             
+            # Create chart metadata
+            chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
+            
             # Create time series plot
             fig = create_time_series_comparison(
                 bucket_metrics_sorted.set_index('bucket_number'),
                 selected_ts_metrics,
-                title_suffix=" - Temporal Analysis"
+                title_suffix=" - Temporal Analysis",
+                agg_function=agg_function,
+                network=chart_metadata.get('network'),
+                time_range=chart_metadata.get('time_range'),
+                metadata=chart_metadata
             )
             st.plotly_chart(fig, use_container_width=True)
             
@@ -644,69 +710,118 @@ def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str])
         st.code(traceback.format_exc())
 
 
-def render_performance_heatmap(bucketed_data: pd.DataFrame):
-    """Render performance heatmap section."""
-    st.write("### Consensus Implementation Performance Heatmap")
+def render_time_series_data_table(bucketed_data: pd.DataFrame, metrics: List[str]):
+    """Render time series data table with gas bucket information."""
+    st.write("### Time Series Data Explorer")
     
     if bucketed_data.empty:
-        st.warning("No data available for heatmap")
+        st.warning("No data available for time series data table")
         return
-    
-    # Check for consensus implementation column
-    consensus_col = None
-    for col in ['meta_consensus_implementation', 'consensus_implementations']:
-        if col in bucketed_data.columns:
-            consensus_col = col
-            break
-    
-    if not consensus_col:
-        st.warning("No consensus implementation data available for heatmap")
-        st.write(f"Available columns: {list(bucketed_data.columns)}")
-        return
-    
-    # Metric selection for heatmap  
-    heatmap_metrics = ['block_gossip_time', 'head_time', 'gas_utilization', 'gas_used']
-    available_heatmap_metrics = [m for m in heatmap_metrics if m in bucketed_data.columns and bucketed_data[m].notna().sum() > 0]
-    
-    if not available_heatmap_metrics:
-        st.warning(f"No suitable metrics available for heatmap. Available columns: {list(bucketed_data.columns)}")
-        return
-    
-    selected_heatmap_metric = st.selectbox(
-        "Select metric for heatmap:",
-        available_heatmap_metrics,
-        key="heatmap_metric"
-    )
     
     try:
-        # Create heatmap data manually for better control
-        if 'bucket_number' in bucketed_data.columns:
-            # Aggregate by consensus implementation and bucket
-            heatmap_data = bucketed_data.groupby(['bucket_number', consensus_col])[selected_heatmap_metric].mean().reset_index()
+        # Check if we have gas bucket data
+        if 'gas_bucket' in bucketed_data.columns and 'gas_bucket_label' in bucketed_data.columns:
+            st.write("#### Gas Usage Bucket Analysis")
             
-            if not heatmap_data.empty:
-                pivot_data = heatmap_data.pivot(index=consensus_col, columns='bucket_number', values=selected_heatmap_metric)
+            # Create readable gas bucket labels if they don't exist
+            if bucketed_data['gas_bucket_label'].isna().all():
+                # Generate labels from gas_bucket_start and gas_bucket_end if available
+                if 'gas_bucket_start' in bucketed_data.columns and 'gas_bucket_end' in bucketed_data.columns:
+                    bucketed_data['gas_bucket_label'] = bucketed_data.apply(
+                        lambda row: f"{int(row['gas_bucket_start']/1_000_000)}M-{int(row['gas_bucket_end']/1_000_000)}M" 
+                        if pd.notna(row['gas_bucket_start']) and pd.notna(row['gas_bucket_end'])
+                        else f"Bucket {row['gas_bucket']}", 
+                        axis=1
+                    )
+                else:
+                    # Fallback to simple bucket numbers
+                    bucketed_data['gas_bucket_label'] = bucketed_data['gas_bucket'].apply(
+                        lambda x: f"Bucket {x}" if pd.notna(x) else "Unknown"
+                    )
+            
+            # Group by gas bucket and aggregate
+            gas_bucket_metrics = bucketed_data.groupby('gas_bucket_label').agg({
+                metric: ['mean', 'count'] for metric in metrics if metric in bucketed_data.columns
+            }).round(2)
+            
+            # Flatten column names
+            gas_bucket_metrics.columns = ['_'.join(col).strip('_') for col in gas_bucket_metrics.columns]
+            
+            # Add sample count column
+            sample_counts = bucketed_data.groupby('gas_bucket_label').size()
+            gas_bucket_metrics['sample_count'] = sample_counts
+            
+            # Sort by gas bucket order
+            gas_bucket_metrics = gas_bucket_metrics.sort_index()
+            
+            st.write(f"**Data grouped by gas usage buckets** (showing {len(gas_bucket_metrics)} buckets)")
+            st.dataframe(gas_bucket_metrics, use_container_width=True)
+            
+            # Allow users to select specific gas buckets
+            bucket_options = sorted(bucketed_data['gas_bucket_label'].dropna().unique())
+            selected_buckets = st.multiselect(
+                "Select gas buckets to highlight in charts:",
+                bucket_options,
+                default=bucket_options[:3] if len(bucket_options) >= 3 else bucket_options,
+                key="selected_gas_buckets"
+            )
+            
+            if selected_buckets:
+                filtered_data = bucketed_data[bucketed_data['gas_bucket_label'].isin(selected_buckets)]
+                st.write(f"**Filtered data:** {len(filtered_data)} records from selected buckets")
                 
-                # Create simple heatmap using plotly
-                import plotly.graph_objects as go
-                fig = go.Figure(data=go.Heatmap(
-                    z=pivot_data.values,
-                    x=pivot_data.columns,
-                    y=pivot_data.index,
-                    colorscale='RdYlBu_r'
-                ))
-                fig.update_layout(title=f"{get_metric_info(selected_heatmap_metric)['title']} by Implementation Over Time")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("No data available after grouping")
+                # Show summary of selected buckets
+                selected_summary = filtered_data.groupby('gas_bucket_label')[metrics].mean().round(2)
+                st.dataframe(selected_summary, use_container_width=True)
+        
+        elif 'bucket_number' in bucketed_data.columns:
+            st.write("#### Time Bucket Analysis")
+            
+            # Group by time bucket
+            time_bucket_metrics = bucketed_data.groupby('bucket_number').agg({
+                metric: ['mean', 'count'] for metric in metrics if metric in bucketed_data.columns
+            }).round(2)
+            
+            # Flatten column names
+            time_bucket_metrics.columns = ['_'.join(col).strip('_') for col in time_bucket_metrics.columns]
+            
+            st.write(f"**Data grouped by time buckets** (showing {len(time_bucket_metrics)} buckets)")
+            st.dataframe(time_bucket_metrics, use_container_width=True)
+            
+            # Allow users to select specific time ranges
+            bucket_options = sorted(bucketed_data['bucket_number'].dropna().unique())
+            selected_time_buckets = st.multiselect(
+                "Select time buckets to highlight:",
+                bucket_options,
+                default=bucket_options[:5] if len(bucket_options) >= 5 else bucket_options,
+                key="selected_time_buckets"
+            )
+            
+            if selected_time_buckets:
+                filtered_data = bucketed_data[bucketed_data['bucket_number'].isin(selected_time_buckets)]
+                st.write(f"**Filtered data:** {len(filtered_data)} records from selected time buckets")
+                
+                selected_summary = filtered_data.groupby('bucket_number')[metrics].mean().round(2)
+                st.dataframe(selected_summary, use_container_width=True)
+        
         else:
-            st.warning("Time bucket data not available for heatmap")
+            # Show raw data table with sampling if too large
+            st.write("#### Raw Data Table")
+            display_data = bucketed_data[metrics + ['slot'] if 'slot' in bucketed_data.columns else metrics]
+            
+            if len(display_data) > 1000:
+                sample_size = 1000
+                display_data = display_data.sample(n=sample_size)
+                st.write(f"**Showing sample of {sample_size} records** (total: {len(bucketed_data)})")
+            
+            st.dataframe(display_data, use_container_width=True)
             
     except Exception as e:
-        st.error(f"Error creating heatmap: {str(e)}")
+        st.error(f"Error creating time series data table: {str(e)}")
         st.write(f"Data shape: {bucketed_data.shape}")
-        st.write(f"Consensus column: {consensus_col}")
-        st.write(f"Selected metric: {selected_heatmap_metric}")
+        st.write(f"Available columns: {list(bucketed_data.columns)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 def render_distribution_analysis(data: pd.DataFrame, metrics: List[str]):

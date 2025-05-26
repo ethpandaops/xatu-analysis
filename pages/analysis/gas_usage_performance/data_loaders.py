@@ -2,7 +2,8 @@
 Data loading utilities for gas usage performance analysis.
 
 This module handles loading and caching data from ClickHouse databases
-for gas usage vs performance analysis.
+for gas usage vs performance analysis. Now includes Polars-optimized functions
+for better performance with large datasets.
 """
 
 import pandas as pd
@@ -13,6 +14,25 @@ import logging
 
 from shared.database import get_database_connection
 from config_utils import get_analysis_config
+
+# Import polars functions
+try:
+    from polars_data_loaders import (
+        load_complete_analysis_data_polars,
+        load_block_gossip_data_polars,
+        load_head_time_data_polars,
+        load_canonical_block_data_polars,
+        combine_performance_data_polars,
+        calculate_summary_stats_polars
+    )
+    POLARS_LOADERS_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("Polars data loaders available")
+except ImportError as e:
+    POLARS_LOADERS_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Polars loaders not available: {e}")
+    logger.info("Falling back to pandas-based data loaders")
 
 
 # Configure logging
@@ -390,7 +410,6 @@ def combine_performance_data(
     return combined_df
 
 
-@st.cache_data(ttl=3600)  # 1 hour cache
 def load_complete_analysis_data(
     network: str,
     start_date: datetime,
@@ -398,7 +417,7 @@ def load_complete_analysis_data(
     period_name: str = "Analysis Period"
 ) -> Dict[str, Any]:
     """
-    Load complete dataset for gas usage performance analysis.
+    Load complete analysis data using Polars-based implementation.
     
     Args:
         network: Network name
@@ -409,7 +428,41 @@ def load_complete_analysis_data(
     Returns:
         Dictionary containing all loaded data and metadata
     """
-    logger.info(f"Loading complete analysis data for {period_name}: {network} {start_date} to {end_date}")
+    time_diff = end_date - start_date
+    
+    # Use polars loaders if available, fallback to standard if needed
+    if POLARS_LOADERS_AVAILABLE:
+        logger.info(f"Using Polars data loading ({time_diff.days} days)")
+        try:
+            return load_complete_analysis_data_polars(network, start_date, end_date, period_name)
+        except Exception as e:
+            logger.error(f"Polars loading failed: {e}, falling back to standard loading")
+            # Fall through to standard loading
+    
+    logger.info(f"Using standard pandas data loading ({time_diff.days} days)")
+    return load_complete_analysis_data_standard(network, start_date, end_date, period_name)
+
+
+@st.cache_data(ttl=3600)  # 1 hour cache
+def load_complete_analysis_data_standard(
+    network: str,
+    start_date: datetime,
+    end_date: datetime,
+    period_name: str = "Analysis Period"
+) -> Dict[str, Any]:
+    """
+    Load complete dataset using standard pandas approach (original function).
+    
+    Args:
+        network: Network name
+        start_date: Analysis start date
+        end_date: Analysis end date
+        period_name: Human-readable period name
+        
+    Returns:
+        Dictionary containing all loaded data and metadata
+    """
+    logger.info(f"Loading complete analysis data (standard) for {period_name}: {network} {start_date} to {end_date}")
     
     # Load all data sources
     gossip_df = load_block_gossip_data(network, start_date, end_date)
@@ -444,8 +497,11 @@ def load_complete_analysis_data(
         'period_name': period_name,
         'network': network,
         'start_date': start_date,
-        'end_date': end_date
+        'end_date': end_date,
+        'optimization_used': 'standard_pandas'
     }
+
+
 
 
 def validate_data_quality(df: pd.DataFrame) -> Dict[str, Any]:

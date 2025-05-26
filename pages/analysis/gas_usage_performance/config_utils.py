@@ -15,7 +15,7 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
     Get human-readable information for metrics used in gas performance analysis.
     
     Args:
-        metric_name: The internal metric name
+        metric_name: The internal metric name (may include aggregation suffix like _mean, _p95)
         
     Returns:
         Dictionary containing title, subtitle, unit, and format information
@@ -23,13 +23,13 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
     metric_info = {
         "block_gossip_time": {
             "title": "Block Gossip Time",
-            "subtitle": "Time for block gossip to propagate to client (milliseconds)",
+            "subtitle": "Time for block gossip event to propagate from slot start to client reception",
             "unit": "ms",
             "format": ".2f"
         },
         "head_time": {
             "title": "Head Time", 
-            "subtitle": "Maximum time across all event types (head, block, blob) to reach client",
+            "subtitle": "Maximum propagation time across head, block, and blob events to reach client",
             "unit": "ms",
             "format": ".2f"
         },
@@ -80,15 +80,71 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
             "subtitle": "Beacon chain epoch number",
             "unit": "",
             "format": ".0f"
+        },
+        "meta_consensus_implementation": {
+            "title": "Consensus Implementation",
+            "subtitle": "Beacon chain client software implementation",
+            "unit": "",
+            "format": "s"
+        },
+        "meta_client_name": {
+            "title": "Client Name",
+            "subtitle": "Individual client instance identifier",
+            "unit": "",
+            "format": "s"
+        },
+        "meta_client_geo_continent_code": {
+            "title": "Continent",
+            "subtitle": "Geographic continent of the client location",
+            "unit": "",
+            "format": "s"
         }
     }
     
-    return metric_info.get(metric_name, {
-        "title": metric_name.replace('_', ' ').title(),
+    # Handle aggregated metrics (e.g., block_gossip_time_mean, gas_used_p95)
+    base_metric = metric_name
+    agg_suffix = ""
+    agg_description = ""
+    
+    # Check for aggregation suffixes
+    for suffix in ['_mean', '_median', '_p95', '_p99', '_min', '_max', '_std', '_count']:
+        if metric_name.endswith(suffix):
+            base_metric = metric_name.replace(suffix, '')
+            agg_suffix = suffix[1:]  # Remove the underscore
+            
+            # Map aggregation functions to descriptions
+            agg_descriptions = {
+                'mean': 'average',
+                'median': 'median (50th percentile)',
+                'p95': '95th percentile',
+                'p99': '99th percentile',
+                'min': 'minimum',
+                'max': 'maximum',
+                'std': 'standard deviation',
+                'count': 'count'
+            }
+            agg_description = agg_descriptions.get(agg_suffix, agg_suffix)
+            break
+    
+    # Get base metric info
+    info = metric_info.get(base_metric, {
+        "title": base_metric.replace('_', ' ').title(),
         "subtitle": "No description available",
         "unit": "",
         "format": ".2f"
-    })
+    }).copy()
+    
+    # Modify title and subtitle for aggregated metrics
+    if agg_suffix:
+        info["title"] = f"{info['title']} ({agg_description.title()})"
+        info["subtitle"] = f"{agg_description.title()} of {info['subtitle'].lower()}"
+        info["agg_function"] = agg_suffix
+        info["base_metric"] = base_metric
+    else:
+        info["agg_function"] = None
+        info["base_metric"] = metric_name
+    
+    return info
 
 
 def get_analysis_config() -> Dict[str, Any]:
@@ -110,7 +166,20 @@ def get_analysis_config() -> Dict[str, Any]:
         "visualization_themes": ["viridis", "plasma", "inferno", "turbo"],
         "default_theme": "viridis",
         "cache_ttl_hours": 1,
-        "max_query_timeout_seconds": 300
+        "max_query_timeout_seconds": 300,
+        # Performance optimization settings
+        "default_chunk_days": 7,
+        "max_days_per_chunk": 21,
+        "large_dataset_threshold": 50_000,
+        "enable_polars_optimization": True,
+        "memory_efficient_mode": True,
+        "max_visualization_points": 100_000,
+        "enable_data_sampling": True,
+        "sampling_strategy": "stratified",
+        # Data size warning thresholds
+        "medium_dataset_threshold": 100_000,
+        "large_dataset_threshold_records": 500_000,
+        "huge_dataset_threshold": 1_000_000
     }
 
 

@@ -29,7 +29,11 @@ def create_gas_vs_arrival_scatter(
     y_metric: str = 'block_gossip_time_mean',
     color_by: Optional[str] = None,
     size_by: Optional[str] = None,
-    title_suffix: str = ""
+    title_suffix: str = "",
+    agg_function: str = "mean",
+    network: str = None,
+    time_range: str = None,
+    metadata: Dict[str, Any] = None
 ) -> go.Figure:
     """
     Create interactive scatter plot of gas usage vs arrival times.
@@ -60,31 +64,37 @@ def create_gas_vs_arrival_scatter(
         logger.warning(f"Correlation analysis not available: {e}")
         correlation_data = None
     
-    # Create correlation info for title
-    corr_text = ""
-    if correlation_data:
-        corr_text = f"<br><sub>Correlation: {correlation_data['correlation']:.4f}, R²: {correlation_data['r_squared']:.4f}"
-        if correlation_data['significant']:
-            corr_text += " *"
-        corr_text += "</sub>"
+    # Create enhanced title with clean subtitles and metadata
+    main_title = f'{x_info["title"]} vs {y_info["title"]}{title_suffix}'
     
-    title = f'{x_info["title"]} vs {y_info["title"]}{title_suffix}{corr_text}'
+    # Add metadata line
+    metadata_parts = []
+    if network:
+        metadata_parts.append(f"Network: {network.title()}")
+    if time_range:
+        metadata_parts.append(f"Period: {time_range}")
     
-    # Intelligently choose color column based on data structure
-    if color_by is None:
-        if 'gas_bucket' in data.columns:
-            color_by = 'gas_bucket'
-        elif 'bucket_number' in data.columns:
-            color_by = 'bucket_number'
-        elif 'meta_consensus_implementation' in data.columns:
-            color_by = 'meta_consensus_implementation'
-        elif 'slot_start_date_time' in data.columns:
-            color_by = 'slot_start_date_time'
-        elif 'slot' in data.columns:
-            color_by = 'slot'
-        else:
-            # Use the x_metric as color if no other options
-            color_by = x_metric
+    # Add data point count
+    data_count = len(data)
+    if metadata and 'total_blocks' in metadata:
+        metadata_parts.append(f"Points: {data_count:,} (from {metadata['total_blocks']:,} blocks)")
+    else:
+        metadata_parts.append(f"Data Points: {data_count:,}")
+    
+    metadata_line = f"<br><sub>{' | '.join(metadata_parts)}</sub>" if metadata_parts else ""
+    
+    # Add axis description lines
+    subtitle1 = ""
+    subtitle2 = ""
+    
+    if x_info.get("subtitle"):
+        subtitle1 = f"<br><sub>X-axis: {x_info['subtitle']}</sub>"
+    
+    if y_info.get("subtitle"):
+        subtitle2 = f"<br><sub>Y-axis: {y_info['subtitle']}</sub>"
+    
+    title = main_title + metadata_line + subtitle1 + subtitle2
+    
     
     # Prepare hover data - adapt to available columns
     hover_data = []
@@ -110,22 +120,42 @@ def create_gas_vs_arrival_scatter(
     elif 'meta_client_geo_continent_code' in data.columns:
         hover_data.append('meta_client_geo_continent_code')
     
-    # Create scatter plot
-    fig = px.scatter(
-        data,
-        x=x_metric,
-        y=y_metric,
-        color=color_by,
-        size=size_by,
-        title=title,
-        labels={
-            x_metric: f'{x_info["title"]} ({x_info["unit"]})',
-            y_metric: f'{y_info["title"]} ({y_info["unit"]})',
-            color_by: color_by.replace('_', ' ').title()
-        },
-        hover_data=hover_data,
-        color_continuous_scale='viridis'
-    )
+    # Choose grouping for discrete series (avoid continuous scales)
+    color_column = None
+    if 'meta_consensus_implementation' in data.columns:
+        color_column = 'meta_consensus_implementation'
+    elif 'meta_client_geo_continent_code' in data.columns:
+        color_column = 'meta_client_geo_continent_code'
+    
+    # Create scatter plot with discrete color grouping if available
+    if color_column and data[color_column].nunique() <= 10:  # Limit to reasonable number of groups
+        fig = px.scatter(
+            data,
+            x=x_metric,
+            y=y_metric,
+            color=color_column,
+            title=title,
+            labels={
+                x_metric: f'{x_info["title"]} ({x_info["unit"]})',
+                y_metric: f'{y_info["title"]} ({y_info["unit"]})',
+                color_column: color_column.replace('_', ' ').title()
+            },
+            hover_data=hover_data,
+            color_discrete_sequence=px.colors.qualitative.Set1
+        )
+    else:
+        # Single series if no good grouping column
+        fig = px.scatter(
+            data,
+            x=x_metric,
+            y=y_metric,
+            title=title,
+            labels={
+                x_metric: f'{x_info["title"]} ({x_info["unit"]})',
+                y_metric: f'{y_info["title"]} ({y_info["unit"]})'
+            },
+            hover_data=hover_data
+        )
     
     # Add trend line if correlation data available
     if correlation_data and len(data) > 10:
@@ -136,20 +166,39 @@ def create_gas_vs_arrival_scatter(
             x=x_range,
             y=y_trend,
             mode='lines',
-            name=f'Trend Line (slope: {correlation_data["slope"]:.2e})',
+            name='Trend Line',
             line=dict(dash='dash', color='red', width=2),
-            hovertemplate='Trend Line<br>Slope: %{customdata:.2e}<extra></extra>',
-            customdata=[correlation_data["slope"]] * len(x_range)
+            hovertemplate='Trend Line<extra></extra>'
         ))
     
-    # Update layout
+    # Update layout with clean axis lines and interactive legend
     fig.update_layout(
         height=600,
         showlegend=True,
         title={'font': {'size': 16}},
         xaxis_title_font_size=14,
         yaxis_title_font_size=14,
-        hovermode='closest'
+        hovermode='closest',
+        legend=dict(
+            itemclick="toggle",
+            itemdoubleclick="toggleothers"
+        ),
+        xaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,  # Only bottom line
+            ticks='outside',
+            rangemode='tozero'  # Start from zero or data minimum
+        ),
+        yaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,  # Only left line
+            ticks='outside',
+            rangemode='tozero'  # Start from zero or data minimum
+        )
     )
     
     return add_ethPandaOps_logo(fig)
@@ -158,7 +207,11 @@ def create_gas_vs_arrival_scatter(
 def create_time_series_comparison(
     time_metrics: pd.DataFrame,
     metrics_to_plot: List[str],
-    title_suffix: str = ""
+    title_suffix: str = "",
+    agg_function: str = "mean",
+    network: str = None,
+    time_range: str = None,
+    metadata: Dict[str, Any] = None
 ) -> go.Figure:
     """
     Create multi-axis time series plot for temporal analysis.
@@ -224,10 +277,76 @@ def create_time_series_comparison(
     fig.update_yaxes(title_text="Arrival Time (ms)", secondary_y=True)
     fig.update_xaxes(title_text="Time Bucket")
     
+    # Create enhanced title with aggregation info and metadata
+    main_title = f"Gas Usage and Arrival Times Over Time{title_suffix}"
+    
+    # Add metadata line
+    metadata_parts = []
+    if network:
+        metadata_parts.append(f"Network: {network.title()}")
+    if time_range:
+        metadata_parts.append(f"Period: {time_range}")
+    
+    # Add bucket and data point information
+    num_buckets = len(time_metrics)
+    if metadata and 'total_blocks' in metadata:
+        metadata_parts.append(f"Buckets: {num_buckets} (from {metadata['total_blocks']:,} blocks)")
+    else:
+        metadata_parts.append(f"Time Buckets: {num_buckets}")
+    
+    metadata_line = f"<br><sub>{' | '.join(metadata_parts)}</sub>" if metadata_parts else ""
+    
+    # Add subtitle describing the aggregation
+    agg_descriptions = {
+        'mean': 'average',
+        'median': 'median (50th percentile)',
+        'p95': '95th percentile',
+        'p99': '99th percentile',
+        'min': 'minimum',
+        'max': 'maximum'
+    }
+    agg_desc = agg_descriptions.get(agg_function, agg_function)
+    agg_subtitle = f"<br><sub>Showing {agg_desc} values aggregated by time buckets</sub>"
+    
+    title_with_subtitle = main_title + metadata_line + agg_subtitle
+    
     fig.update_layout(
-        title=f"Gas Usage and Arrival Times Over Time{title_suffix}",
+        title=title_with_subtitle,
         height=500,
-        hovermode='x unified'
+        hovermode='x unified',
+        showlegend=True,
+        legend=dict(
+            itemclick="toggle",
+            itemdoubleclick="toggleothers"
+        ),
+        xaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,
+            ticks='outside',
+            rangemode='tozero'
+        )
+    )
+    
+    # Update y-axis styling for both primary and secondary axes
+    fig.update_yaxes(
+        showline=True,
+        linewidth=1,
+        linecolor='black',
+        mirror=False,
+        ticks='outside',
+        rangemode='tozero',
+        secondary_y=False
+    )
+    fig.update_yaxes(
+        showline=True,
+        linewidth=1,
+        linecolor='black',
+        mirror=False,
+        ticks='outside',
+        rangemode='tozero',
+        secondary_y=True
     )
     
     return add_ethPandaOps_logo(fig)
