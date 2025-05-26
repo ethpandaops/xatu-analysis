@@ -7,6 +7,7 @@ between gas usage and block arrival times in Ethereum networks.
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 import logging
@@ -15,11 +16,11 @@ from shared.ui_components import apply_ethPandaOps_styling
 from shared.filesystem import get_cache_dir
 from config_utils import (
     get_metric_info, get_analysis_config, get_default_periods,
-    validate_analysis_config, get_visualization_types
+    validate_analysis_config
 )
 from data_loaders import load_complete_analysis_data, validate_data_quality
 from metrics_calculators import (
-    create_time_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
+    create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
     calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
     calculate_comparative_analysis
 )
@@ -341,7 +342,9 @@ def render_analysis_controls() -> Dict[str, Any]:
             'Slot Level': ['slot'],
             'Consensus Implementation': ['meta_consensus_implementation'],
             'Time Bucket': ['bucket_number'],
+            'Gas Bucket': ['gas_bucket'],
             'Implementation + Time': ['meta_consensus_implementation', 'bucket_number'],
+            'Implementation + Gas': ['meta_consensus_implementation', 'gas_bucket'],
             'Continent': ['meta_client_geo_continent_code'],
             'Continent + Time': ['meta_client_geo_continent_code', 'bucket_number']
         }
@@ -349,7 +352,7 @@ def render_analysis_controls() -> Dict[str, Any]:
         aggregation_level = st.selectbox(
             "Group data by:",
             list(aggregation_options.keys()),
-            index=1,  # Default to Slot Level
+            index=4,  # Default to Gas Bucket
             key="aggregation_level"
         )
         
@@ -396,41 +399,64 @@ def render_analysis_dashboard():
     
     # Apply user-controlled aggregation
     if analysis_config['group_by'] is not None:
+        # Check if time bucket aggregation is requested
+        needs_time_bucketed_data = any('bucket_number' in str(col) for col in analysis_config['group_by'])
+        
+        # Check if gas bucket aggregation is requested
+        needs_gas_bucketed_data = any('gas_bucket' in str(col) for col in analysis_config['group_by'])
+        
+        if needs_time_bucketed_data and not period1_bucketed.empty:
+            # Use pre-bucketed data for time bucket aggregations
+            source_data = period1_bucketed
+            st.info(f"🕒 Using time-bucketed data with {period1_bucketed['bucket_number'].nunique()} time buckets")
+        elif needs_gas_bucketed_data:
+            # Create gas buckets for gas-based aggregations
+            source_data = create_gas_buckets(period1_data, bucket_size=2_000_000)
+            if 'gas_bucket' in source_data.columns:
+                st.info(f"⛽ Using gas-bucketed data with {source_data['gas_bucket'].nunique()} gas usage buckets (2M gas increments)")
+            else:
+                st.warning("⚠️ Could not create gas buckets - using original data")
+                source_data = period1_data
+        else:
+            # Use original data for non-bucket aggregations
+            source_data = period1_data
+        
         # Aggregate the data according to user selection
-        with st.spinner(f"Aggregating {len(period1_data):,} records..."):
+        with st.spinner(f"Aggregating {len(source_data):,} records..."):
             aggregated_data = aggregate_data(
-                period1_data,
+                source_data,
                 group_by=analysis_config['group_by'],
                 metrics=analysis_config['metrics'],
                 agg_function=analysis_config['agg_function']
             )
-        display_data = aggregated_data
-        st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records)")
+        
+        # If aggregated data is still too large, suggest higher-level aggregation
+        max_chart_points = 5000  # Optimal for interactive charts
+        if len(aggregated_data) > max_chart_points:
+            st.warning(f"⚠️ Aggregated dataset still large ({len(aggregated_data):,} records). Consider using higher-level aggregation (Time Bucket, Implementation, etc.) for better performance.")
+            # Don't sample - use all data but warn about performance
+            display_data = aggregated_data
+            st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records) - Large dataset may affect chart performance")
+        else:
+            display_data = aggregated_data
+            st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records)")
     else:
-        # Use raw client-level data (sample for performance if too large)
-        if len(period1_data) > 100000:
-            st.warning(f"⚠️ Dataset is large ({len(period1_data):,} records). Consider using aggregation for better performance.")
-            # Sample for visualization performance
-            display_data = period1_data.sample(n=min(50000, len(period1_data)), random_state=42)
-            st.info(f"📊 Showing sample of {len(display_data):,} records from {len(period1_data):,} total client-level records")
+        # Use raw client-level data - strongly encourage aggregation for large datasets
+        max_raw_points = 50000  # Increased since we're not sampling
+        if len(period1_data) > max_raw_points:
+            st.error(f"❌ Dataset too large ({len(period1_data):,} records). Please select an aggregation level to analyze this data effectively.")
+            st.info("💡 Try 'Slot Level' aggregation to reduce ~200K client records to ~7K slot records")
+            return  # Don't render charts with massive datasets
         else:
             display_data = period1_data
             st.info(f"📊 Showing {len(display_data):,} raw client-level records")
     
-    # Update bucketed data for time series analysis
-    if not period1_bucketed.empty and analysis_config['group_by'] is not None:
-        period1_bucketed_agg = aggregate_data(
-            period1_bucketed,
-            group_by=analysis_config['group_by'],
-            metrics=analysis_config['metrics'],
-            agg_function=analysis_config['agg_function']
-        )
-    else:
-        period1_bucketed_agg = period1_bucketed
+    # For time series analysis, use the same aggregated data for consistency
+    # Time series will work with any aggregated data that has time information
+    period1_bucketed_agg = display_data if 'slot_start_date_time' in display_data.columns else period1_bucketed
     
     # Visualization type selection
     st.subheader("📈 Visualization Options")
-    viz_types = get_visualization_types()
     
     # Create tabs for different analysis types
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -506,7 +532,7 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str]):
     
     if x_metric and y_metric:
         try:
-            # Create scatter plot
+            # Create scatter plot with intelligent coloring
             fig = create_gas_vs_arrival_scatter(
                 data, x_metric, y_metric,
                 title_suffix=" - Correlation Analysis"

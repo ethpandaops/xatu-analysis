@@ -320,6 +320,13 @@ def combine_performance_data(
         logger.warning("One or more data sources are empty")
         return pd.DataFrame()
     
+    # Sort all input data by slot and time BEFORE combining
+    gossip_df = gossip_df.sort_values(['slot', 'slot_start_date_time']).reset_index(drop=True)
+    head_df = head_df.sort_values(['slot', 'slot_start_date_time']).reset_index(drop=True) 
+    block_df = block_df.sort_values(['slot', 'slot_start_date_time']).reset_index(drop=True)
+    if blob_df is not None and not blob_df.empty:
+        blob_df = blob_df.sort_values('slot').reset_index(drop=True)
+    
     # Start with gossip data as the base (most granular - client level)
     combined_df = gossip_df.copy()
     
@@ -368,6 +375,9 @@ def combine_performance_data(
     
     # Add derived columns for analysis
     combined_df['has_gas_data'] = combined_df['gas_used'].notna() & (combined_df['gas_used'] > 0)
+    
+    # Final sort by time to ensure proper temporal ordering
+    combined_df = combined_df.sort_values(['slot', 'slot_start_date_time', 'meta_client_name']).reset_index(drop=True)
     
     logger.info(f"Combined client-level dataset created with {len(combined_df)} records")
     

@@ -55,6 +55,9 @@ def create_time_buckets(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame
     # Convert to datetime if not already
     df['slot_start_date_time'] = pd.to_datetime(df['slot_start_date_time'])
     
+    # CRITICAL: Sort by time BEFORE creating buckets to ensure proper temporal ordering
+    df = df.sort_values(['slot_start_date_time', 'slot']).reset_index(drop=True)
+    
     min_time = df['slot_start_date_time'].min()
     max_time = df['slot_start_date_time'].max()
     time_range = max_time - min_time
@@ -102,6 +105,98 @@ def create_time_buckets(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame
     
     logger.info(f"Created time buckets with {bucket_size} duration each")
     return df
+
+
+def create_gas_buckets(df: pd.DataFrame, bucket_size: int = 2_000_000, gas_column: str = 'gas_used') -> pd.DataFrame:
+    """
+    Create gas usage buckets for aggregation analysis.
+    
+    Args:
+        df: DataFrame with gas usage data
+        bucket_size: Size of each gas bucket (default: 2M gas)
+        gas_column: Column name containing gas usage values
+        
+    Returns:
+        DataFrame with added gas bucket columns
+    """
+    if df.empty or gas_column not in df.columns:
+        logger.warning(f"Cannot create gas buckets: empty DataFrame or missing {gas_column} column")
+        return df
+    
+    df = df.copy()
+    
+    # Remove records without gas data
+    gas_df = df[df[gas_column].notna() & (df[gas_column] > 0)].copy()
+    
+    if gas_df.empty:
+        logger.warning("No valid gas usage data found for bucketing")
+        return df
+    
+    # Calculate gas bucket ranges
+    min_gas = int(gas_df[gas_column].min())
+    max_gas = int(gas_df[gas_column].max())
+    
+    # Create bucket edges aligned to bucket_size boundaries
+    start_bucket = (min_gas // bucket_size) * bucket_size
+    end_bucket = ((max_gas // bucket_size) + 1) * bucket_size
+    
+    bucket_edges = list(range(start_bucket, end_bucket + bucket_size, bucket_size))
+    
+    logger.info(f"Creating gas buckets from {min_gas:,} to {max_gas:,} gas with {bucket_size:,} size")
+    logger.info(f"Bucket edges: {len(bucket_edges)-1} buckets from {bucket_edges[0]:,} to {bucket_edges[-1]:,}")
+    
+    # Create gas bucket assignments
+    gas_df['gas_bucket_range'] = pd.cut(
+        gas_df[gas_column],
+        bins=bucket_edges,
+        include_lowest=True,
+        precision=0
+    )
+    
+    # Create numeric bucket numbers for easier aggregation
+    gas_df['gas_bucket'] = pd.cut(
+        gas_df[gas_column],
+        bins=bucket_edges,
+        labels=False,
+        include_lowest=True
+    ) + 1  # Make 1-based
+    
+    # Add bucket metadata - extract numeric values from intervals
+    # Use the bucket_edges directly for accurate start/end values
+    bucket_start_map = {i: bucket_edges[i] for i in range(len(bucket_edges) - 1)}
+    bucket_end_map = {i: bucket_edges[i + 1] for i in range(len(bucket_edges) - 1)}
+    
+    # Map bucket numbers (0-based from pd.cut) to actual gas values
+    gas_df['gas_bucket_start'] = (gas_df['gas_bucket'] - 1).map(bucket_start_map)
+    gas_df['gas_bucket_end'] = (gas_df['gas_bucket'] - 1).map(bucket_end_map)
+    gas_df['gas_bucket_midpoint'] = (gas_df['gas_bucket_start'] + gas_df['gas_bucket_end']) / 2
+    
+    # Create readable labels
+    gas_df['gas_bucket_label'] = gas_df.apply(
+        lambda row: f"{row['gas_bucket_start']:,}-{row['gas_bucket_end']:,}" 
+        if pd.notna(row['gas_bucket_start']) and pd.notna(row['gas_bucket_end']) 
+        else f"Bucket {row['gas_bucket']}", 
+        axis=1
+    )
+    
+    # Merge back with original data (records without gas data will have NaN buckets)
+    result_df = df.merge(
+        gas_df[['gas_bucket', 'gas_bucket_range', 'gas_bucket_start', 'gas_bucket_end', 
+                'gas_bucket_midpoint', 'gas_bucket_label'] + [gas_column]],
+        on=gas_column,
+        how='left',
+        suffixes=('', '_temp')
+    )
+    
+    # Sort by gas bucket to maintain logical ordering
+    result_df = result_df.sort_values(['gas_bucket', 'slot_start_date_time'], na_position='last').reset_index(drop=True)
+    
+    gas_buckets_created = result_df['gas_bucket'].nunique()
+    records_with_buckets = result_df['gas_bucket'].notna().sum()
+    
+    logger.info(f"Created {gas_buckets_created} gas buckets for {records_with_buckets:,}/{len(df):,} records")
+    
+    return result_df
 
 
 def calculate_correlation_analysis(
@@ -226,6 +321,16 @@ def aggregate_data(
                 # Take the first value for metadata columns
                 metadata = df.groupby(available_group_cols)[col].first().reset_index()
                 aggregated = aggregated.merge(metadata, on=available_group_cols, how='left')
+        
+        # Sort aggregated data to maintain logical ordering
+        if 'slot' in aggregated.columns:
+            aggregated = aggregated.sort_values('slot').reset_index(drop=True)
+        elif 'bucket_number' in aggregated.columns:
+            aggregated = aggregated.sort_values('bucket_number').reset_index(drop=True)
+        elif 'gas_bucket' in aggregated.columns:
+            aggregated = aggregated.sort_values('gas_bucket').reset_index(drop=True)
+        elif 'slot_start_date_time' in aggregated.columns:
+            aggregated = aggregated.sort_values('slot_start_date_time').reset_index(drop=True)
         
         logger.info(f"Aggregated data: {len(df)} -> {len(aggregated)} records using {agg_function}")
         return aggregated
@@ -385,10 +490,18 @@ def calculate_gas_binned_analysis(
     bin_metrics.columns = ['_'.join(col).strip('_') if col[1] else col[0] 
                           for col in bin_metrics.columns]
     
-    # Add bin metadata
-    bin_metrics['gas_bin_start'] = bin_metrics['gas_bin'].apply(lambda x: x.left if pd.notna(x) else np.nan)
-    bin_metrics['gas_bin_end'] = bin_metrics['gas_bin'].apply(lambda x: x.right if pd.notna(x) else np.nan)
-    bin_metrics['gas_bin_midpoint'] = (bin_metrics['gas_bin_start'] + bin_metrics['gas_bin_end']) / 2
+    # Add bin metadata - convert to numeric to avoid categorical arithmetic errors
+    try:
+        bin_metrics['gas_bin_start'] = bin_metrics['gas_bin'].apply(lambda x: float(x.left) if pd.notna(x) and hasattr(x, 'left') else np.nan)
+        bin_metrics['gas_bin_end'] = bin_metrics['gas_bin'].apply(lambda x: float(x.right) if pd.notna(x) and hasattr(x, 'right') else np.nan)
+        # Ensure numeric types before arithmetic
+        bin_metrics['gas_bin_start'] = pd.to_numeric(bin_metrics['gas_bin_start'], errors='coerce')
+        bin_metrics['gas_bin_end'] = pd.to_numeric(bin_metrics['gas_bin_end'], errors='coerce')
+        bin_metrics['gas_bin_midpoint'] = (bin_metrics['gas_bin_start'] + bin_metrics['gas_bin_end']) / 2
+    except Exception as e:
+        logger.warning(f"Could not calculate bin midpoints: {e}")
+        # Fallback: use bin labels as approximations
+        bin_metrics['gas_bin_midpoint'] = range(len(bin_metrics))
     
     # Filter bins with sufficient data
     min_samples = get_analysis_config()['min_samples_per_bin']

@@ -27,7 +27,7 @@ def create_gas_vs_arrival_scatter(
     data: pd.DataFrame,
     x_metric: str = 'gas_used',
     y_metric: str = 'block_gossip_time_mean',
-    color_by: str = 'slot_start_date_time',
+    color_by: Optional[str] = None,
     size_by: Optional[str] = None,
     title_suffix: str = ""
 ) -> go.Figure:
@@ -70,12 +70,45 @@ def create_gas_vs_arrival_scatter(
     
     title = f'{x_info["title"]} vs {y_info["title"]}{title_suffix}{corr_text}'
     
-    # Prepare hover data
-    hover_data = ['slot']
+    # Intelligently choose color column based on data structure
+    if color_by is None:
+        if 'gas_bucket' in data.columns:
+            color_by = 'gas_bucket'
+        elif 'bucket_number' in data.columns:
+            color_by = 'bucket_number'
+        elif 'meta_consensus_implementation' in data.columns:
+            color_by = 'meta_consensus_implementation'
+        elif 'slot_start_date_time' in data.columns:
+            color_by = 'slot_start_date_time'
+        elif 'slot' in data.columns:
+            color_by = 'slot'
+        else:
+            # Use the x_metric as color if no other options
+            color_by = x_metric
+    
+    # Prepare hover data - adapt to available columns
+    hover_data = []
+    
+    # Add identifier column based on what's available
+    if 'slot' in data.columns:
+        hover_data.append('slot')
+    elif 'bucket_number' in data.columns:
+        hover_data.append('bucket_number')
+    elif 'gas_bucket' in data.columns:
+        hover_data.append('gas_bucket')
+        if 'gas_bucket_label' in data.columns:
+            hover_data.append('gas_bucket_label')
+    
+    # Add categorical columns if available
     if 'consensus_implementations' in data.columns:
         hover_data.append('consensus_implementations')
+    elif 'meta_consensus_implementation' in data.columns:
+        hover_data.append('meta_consensus_implementation')
+        
     if 'continents' in data.columns:
         hover_data.append('continents')
+    elif 'meta_client_geo_continent_code' in data.columns:
+        hover_data.append('meta_client_geo_continent_code')
     
     # Create scatter plot
     fig = px.scatter(
