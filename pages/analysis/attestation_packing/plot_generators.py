@@ -3,25 +3,9 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-def get_aggregate_function(aggregate):
-    """Convert aggregate string to pandas function."""
-    agg_map = {
-        'mean': 'mean',
-        'min': 'min',
-        'max': 'max',
-        'median': 'median',
-        'p05': lambda x: x.quantile(0.05),
-        'p50': lambda x: x.quantile(0.50),
-        'p90': lambda x: x.quantile(0.90),
-        'p95': lambda x: x.quantile(0.95),
-        'p99': lambda x: x.quantile(0.99)
-    }
-    return agg_map.get(aggregate, 'mean')
 
-def add_ethpandaops_logo(fig):
-    """Add EthPandaOps logo to a plotly figure."""
-    # Logo functionality disabled
-    return fig
+from shared.data_utils import get_aggregate_function
+from shared.ui_components import add_ethpandaops_logo
 
 def create_before_after_comparison(data, metric, clients, event_date, group_column='client', aggregate='mean', annotation_date=None, annotation_text="", show_network_average=False):
     """Create a before/after comparison plot using Plotly."""

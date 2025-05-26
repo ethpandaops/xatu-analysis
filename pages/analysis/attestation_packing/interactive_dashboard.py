@@ -27,12 +27,19 @@ from plot_generators import (
     create_inclusion_distance_distribution
 )
 
+# Import shared UI components
+from shared.ui_components import apply_ethpandaops_styling
+from shared.filesystem import get_cache_dir
+
 # Additional imports needed for main functionality
 import shutil
 import traceback
 from datetime import timedelta, time
 
 def main():
+    # Apply consistent styling
+    apply_ethpandaops_styling()
+
     
     # Initialize session state variables
     if 'data_loaded' not in st.session_state:
