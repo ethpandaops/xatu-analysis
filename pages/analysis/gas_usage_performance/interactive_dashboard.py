@@ -376,12 +376,44 @@ def render_analysis_controls() -> Dict[str, Any]:
     
     with col3:
         st.write("**Aggregation Function**")
-        agg_function = st.selectbox(
-            "How to aggregate:",
-            ['mean', 'median', 'p90', 'p95', 'p99', 'min', 'max'],
-            index=0,
-            key="agg_function"
+        
+        # Check if two-stage aggregation is enabled
+        enable_two_stage = st.checkbox(
+            "Enable two-stage aggregation",
+            value=False,
+            key="enable_two_stage",
+            help="First aggregate by slot, then apply a second aggregation to the results"
         )
+        
+        if enable_two_stage:
+            # Two-stage aggregation
+            st.info("Two-stage: First aggregate per slot, then aggregate the results")
+            
+            first_stage_agg = st.selectbox(
+                "First stage (per slot):",
+                ['mean', 'median', 'p90', 'p95', 'p99', 'min', 'max'],
+                index=5,  # Default to min
+                key="first_stage_agg",
+                help="How to aggregate multiple node values for each slot"
+            )
+            
+            second_stage_agg = st.selectbox(
+                "Second stage (overall):",
+                ['mean', 'median', 'p90', 'p95', 'p99', 'min', 'max'],
+                index=2,  # Default to p90
+                key="second_stage_agg",
+                help="How to aggregate the per-slot values"
+            )
+            
+            agg_function = first_stage_agg  # Used for first stage
+        else:
+            # Regular single-stage aggregation
+            agg_function = st.selectbox(
+                "How to aggregate:",
+                ['mean', 'median', 'p90', 'p95', 'p99', 'min', 'max'],
+                index=0,
+                key="agg_function"
+            )
         
         st.write("**Gas Bucket Size**")
         gas_bucket_size = st.selectbox(
@@ -425,7 +457,7 @@ def render_analysis_controls() -> Dict[str, Any]:
     
     # Don't store widget values in session state - they're already managed by the widgets
     # Just return the configuration
-    return {
+    config = {
         'metrics': selected_metrics,
         'group_by': group_by,
         'agg_function': agg_function,
@@ -436,6 +468,16 @@ def render_analysis_controls() -> Dict[str, Any]:
         'extrapolate_to_deadline': extrapolate_to_deadline,
         'show_reference_line': show_reference_line
     }
+    
+    # Add two-stage aggregation settings if enabled
+    if enable_two_stage:
+        config['enable_two_stage'] = True
+        config['first_stage_agg'] = first_stage_agg
+        config['second_stage_agg'] = second_stage_agg
+    else:
+        config['enable_two_stage'] = False
+        
+    return config
 
 
 def render_analysis_dashboard():
@@ -489,16 +531,121 @@ def render_analysis_dashboard():
             # Use original data for non-bucket aggregations
             source_data = period1_data
         
-        # Aggregate the data according to user selection using Polars
-        with st.spinner(f"Aggregating {len(source_data):,} records using Polars..."):
-            if USING_POLARS_METRICS:
-                logger.info(f"Using Polars aggregation for {len(source_data):,} records")
-            aggregated_data = aggregate_data(
-                source_data,
-                group_by=analysis_config['group_by'],
-                metrics=analysis_config['metrics'],
-                agg_function=analysis_config['agg_function']
-            )
+        # Handle two-stage aggregation if enabled
+        if analysis_config.get('enable_two_stage', False):
+            # Two-stage aggregation: first by slot, then by the selected grouping
+            with st.spinner(f"Two-stage aggregation: First stage ({analysis_config['first_stage_agg']} per slot)..."):
+                # First stage: aggregate by slot AND any other grouping columns
+                # This preserves categories like gas buckets, implementations, etc.
+                first_stage_group_by = ['slot']
+                if analysis_config['group_by']:
+                    # Add the other grouping columns (e.g., gas_bucket, implementation)
+                    for col in analysis_config['group_by']:
+                        if col != 'slot' and col in source_data.columns:
+                            first_stage_group_by.append(col)
+                
+                first_stage_data = aggregate_data(
+                    source_data,
+                    group_by=first_stage_group_by,
+                    metrics=analysis_config['metrics'],
+                    agg_function=analysis_config['first_stage_agg']
+                )
+                
+                # Update column names to reflect first stage aggregation
+                # This is important for the second stage to work correctly
+                metric_cols_to_rename = {}
+                for metric in analysis_config['metrics']:
+                    if metric in first_stage_data.columns:
+                        # Column might already have aggregation suffix
+                        metric_cols_to_rename[metric] = metric
+                    else:
+                        # Look for aggregated column
+                        for col in first_stage_data.columns:
+                            if col.startswith(metric) and col.endswith(f"_{analysis_config['first_stage_agg']}"):
+                                metric_cols_to_rename[col] = metric
+                                break
+                
+            with st.spinner(f"Two-stage aggregation: Second stage ({analysis_config['second_stage_agg']} per group)..."):
+                # Second stage: aggregate by the non-slot grouping columns
+                # Remove 'slot' from grouping to aggregate across slots
+                second_stage_group_by = [col for col in first_stage_group_by if col != 'slot']
+                
+                if second_stage_group_by:
+                    # Group by the remaining columns (e.g., gas_bucket)
+                    # and apply the second aggregation function
+                    aggregated_data = aggregate_data(
+                        first_stage_data,
+                        group_by=second_stage_group_by,
+                        metrics=list(metric_cols_to_rename.keys()),
+                        agg_function=analysis_config['second_stage_agg']
+                    )
+                    
+                    # Rename columns back to original metric names
+                    rename_dict = {}
+                    for col in aggregated_data.columns:
+                        for agg_col, orig_metric in metric_cols_to_rename.items():
+                            if col.startswith(agg_col):
+                                rename_dict[col] = orig_metric
+                                break
+                    
+                    if rename_dict:
+                        aggregated_data = aggregated_data.rename(columns=rename_dict)
+                    
+                    st.info(f"📊 Two-stage: {analysis_config['first_stage_agg']} per slot → {analysis_config['second_stage_agg']} per {', '.join(second_stage_group_by)}")
+                    
+                else:
+                    # No grouping columns left, calculate single overall value
+                    agg_results = {}
+                    for col, orig_metric in metric_cols_to_rename.items():
+                        if col in first_stage_data.columns:
+                            values = first_stage_data[col].dropna()
+                            if len(values) > 0:
+                                if analysis_config['second_stage_agg'] == 'mean':
+                                    agg_results[orig_metric] = values.mean()
+                                elif analysis_config['second_stage_agg'] == 'median':
+                                    agg_results[orig_metric] = values.median()
+                                elif analysis_config['second_stage_agg'] == 'p90':
+                                    agg_results[orig_metric] = values.quantile(0.90)
+                                elif analysis_config['second_stage_agg'] == 'p95':
+                                    agg_results[orig_metric] = values.quantile(0.95)
+                                elif analysis_config['second_stage_agg'] == 'p99':
+                                    agg_results[orig_metric] = values.quantile(0.99)
+                                elif analysis_config['second_stage_agg'] == 'min':
+                                    agg_results[orig_metric] = values.min()
+                                elif analysis_config['second_stage_agg'] == 'max':
+                                    agg_results[orig_metric] = values.max()
+                    
+                    # Create a single-row DataFrame with the results
+                    aggregated_data = pd.DataFrame([agg_results])
+                    
+                    st.info(f"📊 Two-stage result: {analysis_config['first_stage_agg']} per slot → {analysis_config['second_stage_agg']} overall")
+                    
+                    # Show the actual values
+                    if not aggregated_data.empty:
+                        st.write("**Final aggregated values:**")
+                        display_data = {}
+                        for col in aggregated_data.columns:
+                            if col in analysis_config['metrics']:
+                                info = get_metric_info(col)
+                                display_data[info['title']] = f"{aggregated_data[col].iloc[0]:.2f} {info['unit']}"
+                        
+                        # Display in columns
+                        cols = st.columns(len(display_data))
+                        for idx, (metric, value) in enumerate(display_data.items()):
+                            with cols[idx]:
+                                st.metric(metric, value)
+                
+        else:
+            # Regular single-stage aggregation
+            with st.spinner(f"Aggregating {len(source_data):,} records using Polars..."):
+                if USING_POLARS_METRICS:
+                    logger.info(f"Using Polars aggregation for {len(source_data):,} records")
+                aggregated_data = aggregate_data(
+                    source_data,
+                    group_by=analysis_config['group_by'],
+                    metrics=analysis_config['metrics'],
+                    agg_function=analysis_config['agg_function']
+                )
         
         # Show aggregation results for debugging
         with st.expander("🔍 Aggregation Details", expanded=False):
@@ -674,11 +821,34 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
             actual_x_metric = metric_mapping.get(x_metric, x_metric)
             actual_y_metrics = [metric_mapping.get(y, y) for y in y_metrics]
             
+            # Build aggregation description for plot title
+            if analysis_config.get('enable_two_stage', False):
+                # Create descriptive aggregation string for two-stage
+                grouping_desc = ""
+                if analysis_config.get('group_by'):
+                    group_names = []
+                    for g in analysis_config['group_by']:
+                        if g == 'gas_bucket':
+                            group_names.append('gas bucket')
+                        elif g == 'bucket_number':
+                            group_names.append('time bucket')
+                        elif g == 'meta_consensus_implementation':
+                            group_names.append('implementation')
+                        elif g == 'meta_client_geo_continent_code':
+                            group_names.append('continent')
+                        else:
+                            group_names.append(g)
+                    grouping_desc = f" by {', '.join(group_names)}"
+                
+                agg_desc = f"{analysis_config['second_stage_agg'].upper()}({analysis_config['first_stage_agg']} per slot) grouped{grouping_desc}"
+            else:
+                agg_desc = agg_function if agg_function else analysis_config.get('agg_function', 'mean')
+            
             # Always use multi y-axis chart for consistency
             fig = create_multi_y_correlation_plot(
                 viz_data, actual_x_metric, actual_y_metrics,
                 title_suffix="",
-                agg_function=agg_function,
+                agg_function=agg_desc,
                 network=chart_metadata.get('network'),
                 time_range=chart_metadata.get('time_range'),
                 metadata=chart_metadata,
