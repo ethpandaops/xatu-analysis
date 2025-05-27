@@ -395,7 +395,9 @@ def create_multi_y_correlation_plot(
     agg_function: str = "mean",
     network: str = None,
     time_range: str = None,
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = None,
+    start_y_from_zero: bool = True,
+    show_attestation_deadline: bool = True
 ) -> go.Figure:
     """
     Create scatter plot with multiple y-axis metrics against one x-metric.
@@ -409,6 +411,8 @@ def create_multi_y_correlation_plot(
         network: Network name
         time_range: Time range string
         metadata: Additional metadata
+        start_y_from_zero: Whether to force Y-axis to start from 0
+        show_attestation_deadline: Whether to show 4s attestation deadline reference line
         
     Returns:
         Plotly figure object with multiple y-metrics
@@ -419,35 +423,43 @@ def create_multi_y_correlation_plot(
     
     x_info = get_metric_info(x_metric)
     
-    # Create enhanced title with aggregation info
+    # Create concise main title
     agg_suffix = f" ({agg_function.title()})" if agg_function and agg_function != "mean" else ""
-    main_title = f'{x_info["title"]} vs Multiple Performance Metrics{agg_suffix}{title_suffix}'
+    main_title = f'{x_info["title"]} vs Performance Metrics{agg_suffix}{title_suffix}'
     
-    # Create clean metadata for annotation
-    metadata_parts = []
+    # Create subtitle with network, time range, and block count
+    subtitle_parts = []
     if network:
-        metadata_parts.append(f"Network: {network.title()}")
+        subtitle_parts.append(f"Network: {network.title()}")
     if time_range:
-        metadata_parts.append(f"Period: {time_range}")
-    
-    # Add data point count
-    data_count = len(data)
+        subtitle_parts.append(f"Period: {time_range}")
     if metadata and 'total_blocks' in metadata:
-        metadata_parts.append(f"Points: {data_count:,} (from {metadata['total_blocks']:,} blocks)")
-    else:
-        metadata_parts.append(f"Data Points: {data_count:,}")
+        subtitle_parts.append(f"{metadata['total_blocks']:,} blocks")
+    subtitle = ' | '.join(subtitle_parts) if subtitle_parts else ""
     
     # Create figure
     fig = go.Figure()
     
-    colors = px.colors.qualitative.Set1
+    # Use custom harsh colors that avoid red/orange to prevent conflict with attestation deadline
+    colors = [
+        '#0066CC',  # Strong blue
+        '#006600',  # Dark green
+        '#6600CC',  # Purple
+        '#000066',  # Navy blue
+        '#CC6600',  # Dark orange (if needed)
+        '#666666',  # Dark gray
+        '#CC0066',  # Magenta
+        '#003366'   # Dark teal
+    ]
     color_idx = 0
     
-    # Plot each y-metric as a separate trace
+    # Plot each y-metric as a separate trace with trend lines
     for y_metric in y_metrics:
         if y_metric in data.columns:
             y_info = get_metric_info(y_metric)
+            current_color = colors[color_idx % len(colors)]
             
+            # Add scatter plot
             fig.add_trace(
                 go.Scatter(
                     x=data[x_metric],
@@ -455,7 +467,7 @@ def create_multi_y_correlation_plot(
                     mode='markers',
                     name=y_info["title"],
                     marker=dict(
-                        color=colors[color_idx % len(colors)],
+                        color=current_color,
                         size=6,
                         opacity=0.7
                     ),
@@ -464,7 +476,80 @@ def create_multi_y_correlation_plot(
                     showlegend=True
                 )
             )
+            
+            # Add trend line if we have enough data points
+            if len(data) > 10:
+                try:
+                    correlation_data = calculate_correlation_analysis(data, x_metric, y_metric)
+                    if correlation_data and 'slope' in correlation_data and 'intercept' in correlation_data:
+                        x_range = np.linspace(data[x_metric].min(), data[x_metric].max(), 100)
+                        y_trend = correlation_data['slope'] * x_range + correlation_data['intercept']
+                        
+                        # Add trend line with same color but more transparent
+                        fig.add_trace(
+                            go.Scatter(
+                                x=x_range,
+                                y=y_trend,
+                                mode='lines',
+                                name=f'{y_info["title"]} Trend',
+                                line=dict(
+                                    color=current_color,
+                                    width=2,
+                                    dash='dash'
+                                ),
+                                opacity=0.8,
+                                showlegend=True,  # Show trend lines in legend
+                                hovertemplate=f'Trend: {y_info["title"]}<br>' +
+                                             f'R² = {correlation_data.get("r_squared", 0):.3f}<extra></extra>'
+                            )
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not calculate trend line for {y_metric}: {e}")
+            
             color_idx += 1
+    
+    # Create annotations list
+    annotations = []
+    
+    # Add subtitle annotation
+    if subtitle:
+        annotations.append(dict(
+            text=subtitle,
+            showarrow=False,
+            xref="paper", yref="paper",
+            x=0.5, y=1.02,
+            xanchor='center', yanchor='bottom',
+            font=dict(size=12, color="gray")
+        ))
+    
+    
+    # Determine y-axis title based on metric units
+    y_metric_units = []
+    for y_metric in y_metrics:
+        if y_metric in data.columns:
+            y_info = get_metric_info(y_metric)
+            y_metric_units.append(y_info.get("unit", ""))
+    
+    # Check if all units are the same and not empty
+    unique_units = list(set(y_metric_units))
+    if len(unique_units) == 1 and unique_units[0]:
+        # All metrics have the same unit
+        y_axis_title = f"Performance Metrics ({unique_units[0]})"
+    elif len(unique_units) > 1:
+        # Mixed units
+        y_axis_title = "Performance Metrics (mixed units)"
+    else:
+        # No units or empty units
+        y_axis_title = "Performance Metrics"
+    
+    # Add ethPandaOps logo using add_layout_image (will be added after layout update)
+    logo_config = dict(
+        source="https://ethpandaops.io/img/logo-slim.png",
+        xref="paper", yref="paper",
+        x=0.99, y=1.05,  # Top right, slightly above chart
+        sizex=0.15, sizey=0.15,
+        xanchor="right", yanchor="bottom"
+    )
     
     # Update layout
     fig.update_layout(
@@ -477,11 +562,11 @@ def create_multi_y_correlation_plot(
             itemdoubleclick="toggleothers",
             orientation="v",
             yanchor="top",
-            y=1,
-            xanchor="left",
-            x=1.02,
-            bgcolor="rgba(255,255,255,0.8)",
-            bordercolor="rgba(0,0,0,0.2)",
+            y=0.98,
+            xanchor="right",
+            x=0.98,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="rgba(0,0,0,0.3)",
             borderwidth=1
         ),
         xaxis=dict(
@@ -498,22 +583,50 @@ def create_multi_y_correlation_plot(
             linecolor='black',
             mirror=False,
             ticks='outside',
-            title="Performance Metrics"
+            title=y_axis_title,
+            rangemode='tozero' if start_y_from_zero else 'normal'
         ),
-        margin=dict(r=200),  # Add right margin for legend
-        annotations=[
-            dict(
-                text=' | '.join(metadata_parts),
-                showarrow=False,
-                xref="paper", yref="paper",
-                x=0, y=-0.1,
-                xanchor='left', yanchor='top',
-                font=dict(size=10, color="gray")
-            )
-        ] if metadata_parts else None
+        margin=dict(r=0, t=120),  # Reduced right margin since legend is inside chart
+        annotations=annotations if annotations else None
     )
     
-    return add_ethPandaOps_logo(fig)
+    # Add 4s attestation deadline reference line if requested and we have timing metrics
+    if show_attestation_deadline:
+        # Check if any y-metrics are timing-related (have "ms" unit)
+        has_timing_metrics = any("ms" in get_metric_info(y_metric).get("unit", "") 
+                                for y_metric in y_metrics if y_metric in data.columns)
+        
+        if has_timing_metrics:
+            fig.add_hline(
+                y=4000,  # 4 seconds in milliseconds
+                line_dash="dot",
+                line_color="red",
+                line_width=2,
+                opacity=0.7,
+                annotation_text="4s Attestation Deadline",
+                annotation_position="top left",
+                annotation_font_size=10,
+                annotation_font_color="red"
+            )
+            
+            # Set minimum y-axis max to 5000ms to provide buffer above 4s deadline
+            # But allow chart to extend beyond if data requires it
+            y_data_max = 0
+            for y_metric in y_metrics:
+                if y_metric in data.columns:
+                    y_max = data[y_metric].max()
+                    if pd.notna(y_max):
+                        y_data_max = max(y_data_max, y_max)
+            
+            # Set y-axis range with minimum top of 5000ms for buffer
+            y_axis_max = max(5000, y_data_max * 1.05)  # 5% padding above data max
+            
+            fig.update_yaxes(range=[0 if start_y_from_zero else None, y_axis_max])
+    
+    # Add ethPandaOps logo using add_layout_image
+    fig.add_layout_image(logo_config)
+    
+    return fig
 
 
 def create_consensus_performance_heatmap(

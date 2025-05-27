@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from shared.ui_components import apply_ethPandaOps_styling
-from shared.filesystem import get_cache_dir
 from config_utils import (
     get_metric_info, get_analysis_config, get_default_periods,
     validate_analysis_config
@@ -104,7 +103,7 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     selected_period = st.sidebar.selectbox(
         "Quick Period Selection",
         period_options,
-        index=1,  # Default to "Last 7 Days"
+        index=period_options.index("Last 1 Day") if "Last 1 Day" in period_options else 1,
         help="Select a predefined period or choose Custom for manual selection"
     )
     
@@ -186,21 +185,9 @@ def render_sidebar_configuration() -> Dict[str, Any]:
             help="Maximum propagation time to include in analysis"
         )
     
-    # Performance optimization controls
-    st.sidebar.subheader("🚀 Performance Settings")
-    
-    enable_chunking = st.sidebar.checkbox(
-        "Enable Data Chunking",
-        value=True,
-        help="Split large time ranges into smaller chunks to prevent memory issues"
-    )
-    
-    chunk_size_days = st.sidebar.selectbox(
-        "Chunk Size (Days)",
-        options=[3, 7, 14, 21],
-        index=1,  # Default to 7 days
-        help="Size of chunks when processing large datasets"
-    )
+    # Set performance settings internally (removed from UI)
+    enable_chunking = True
+    chunk_size_days = 1  # Fixed to 1 day as requested
     
     return {
         'network': network,
@@ -214,35 +201,9 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         'max_propagation': max_propagation,
         'enable_chunking': enable_chunking,
         'chunk_size_days': chunk_size_days,
-        'enable_sampling': True  # Always enable smart sampling
     }
 
 
-def render_cache_management():
-    """Render cache management section in sidebar."""
-    st.sidebar.subheader("💾 Cache Management")
-    
-    cache_dir = get_cache_dir()
-    
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        if st.button("🗑️ Clear Cache"):
-            st.cache_data.clear()
-            # Also clear parquet file cache if it exists
-            import shutil
-            if cache_dir.exists():
-                shutil.rmtree(cache_dir)
-                cache_dir.mkdir(parents=True, exist_ok=True)
-            st.sidebar.success("Cache cleared!")
-    
-    with col2:
-        # Show cache size
-        cache_size = 0
-        if cache_dir.exists():
-            for file in cache_dir.glob("*.parquet"):
-                cache_size += file.stat().st_size
-        cache_size_mb = cache_size / (1024 * 1024)
-        st.write(f"💾 {cache_size_mb:.1f}MB")
 
 
 def load_and_validate_data(config: Dict[str, Any]) -> bool:
@@ -418,6 +379,33 @@ def render_analysis_controls() -> Dict[str, Any]:
             index=0,
             key="agg_function"
         )
+        
+        st.write("**Gas Bucket Size**")
+        gas_bucket_size = st.selectbox(
+            "Gas bucket size (gas units):",
+            [500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000],
+            index=2,  # Default to 2M
+            format_func=lambda x: f"{x/1_000_000:.1f}M",
+            key="gas_bucket_size"
+        )
+    
+    # Chart configuration options
+    st.write("**Chart Options**")
+    col4, col5 = st.columns(2)
+    with col4:
+        start_y_from_zero = st.checkbox(
+            "Start Y-axis from 0",
+            value=True,
+            key="start_y_from_zero",
+            help="Force Y-axis to start from zero for better comparison"
+        )
+    with col5:
+        show_attestation_deadline = st.checkbox(
+            "Show 4s attestation deadline",
+            value=True,
+            key="show_attestation_deadline",
+            help="Display a reference line at 4000ms for attestation timing analysis"
+        )
     
     # Don't store widget values in session state - they're already managed by the widgets
     # Just return the configuration
@@ -425,7 +413,10 @@ def render_analysis_controls() -> Dict[str, Any]:
         'metrics': selected_metrics,
         'group_by': group_by,
         'agg_function': agg_function,
-        'aggregation_level': aggregation_level
+        'aggregation_level': aggregation_level,
+        'gas_bucket_size': gas_bucket_size,
+        'start_y_from_zero': start_y_from_zero,
+        'show_attestation_deadline': show_attestation_deadline
     }
 
 
@@ -460,13 +451,10 @@ def render_analysis_dashboard():
         if needs_time_bucketed_data and not period1_bucketed.empty:
             # Use pre-bucketed data for time bucket aggregations
             source_data = period1_bucketed
-            st.info(f"🕒 Using time-bucketed data with {period1_bucketed['bucket_number'].nunique()} time buckets")
         elif needs_gas_bucketed_data:
             # Create gas buckets for gas-based aggregations
-            source_data = create_gas_buckets(period1_data, bucket_size=2_000_000)
-            if 'gas_bucket' in source_data.columns:
-                st.info(f"⛽ Using gas-bucketed data with {source_data['gas_bucket'].nunique()} gas usage buckets (2M gas increments)")
-            else:
+            source_data = create_gas_buckets(period1_data, bucket_size=analysis_config['gas_bucket_size'])
+            if 'gas_bucket' not in source_data.columns:
                 st.warning("⚠️ Could not create gas buckets - using original data")
                 source_data = period1_data
         else:
@@ -490,10 +478,8 @@ def render_analysis_dashboard():
             st.warning(f"⚠️ Aggregated dataset still large ({len(aggregated_data):,} records). Consider using higher-level aggregation (Time Bucket, Implementation, etc.) for better performance.")
             # Don't sample - use all data but warn about performance
             display_data = aggregated_data
-            st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records) - Large dataset may affect chart performance")
         else:
             display_data = aggregated_data
-            st.info(f"📊 Showing {analysis_config['aggregation_level']} aggregation using {analysis_config['agg_function']} ({len(display_data):,} aggregated records)")
     else:
         # Use raw client-level data - strongly encourage aggregation for large datasets
         max_raw_points = 50000  # Increased since we're not sampling
@@ -503,48 +489,12 @@ def render_analysis_dashboard():
             return  # Don't render charts with massive datasets
         else:
             display_data = period1_data
-            st.info(f"📊 Showing {len(display_data):,} raw client-level records")
     
-    # For time series analysis, use the same aggregated data for consistency
-    # Time series will work with any aggregated data that has time information
-    period1_bucketed_agg = display_data if 'slot_start_date_time' in display_data.columns else period1_bucketed
+    # Correlation Analysis (only visualization option)
+    with st.spinner("Generating correlation analysis..."):
+        render_correlation_analysis(display_data, analysis_config['metrics'], analysis_config['agg_function'], 
+                                   analysis_config, st.session_state.analysis_data.get('period1', {}))
     
-    # Visualization type selection
-    st.subheader("📈 Visualization Options")
-    
-    # Create tabs for different analysis types
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🔗 Correlation Analysis", 
-        "📈 Time Series", 
-        "📋 Time Series Data",
-        "📦 Distribution Analysis",
-        "🌍 Geographic Analysis"
-    ])
-    
-    with tab1:
-        with st.spinner("Generating correlation analysis..."):
-            render_correlation_analysis(display_data, analysis_config['metrics'], analysis_config['agg_function'], 
-                                       analysis_config, st.session_state.analysis_data.get('period1', {}))
-    
-    with tab2:
-        with st.spinner("Generating time series analysis..."):
-            render_time_series_analysis(period1_bucketed_agg, analysis_config['metrics'], analysis_config['agg_function'],
-                                       analysis_config, st.session_state.analysis_data.get('period1', {}))
-    
-    with tab3:
-        with st.spinner("Generating time series data table..."):
-            render_time_series_data_table(period1_bucketed_agg, analysis_config['metrics'])
-    
-    with tab4:
-        with st.spinner("Generating distribution analysis..."):
-            render_distribution_analysis(display_data, analysis_config['metrics'])
-    
-    with tab5:
-        with st.spinner("Generating geographic analysis..."):
-            render_geographic_analysis(display_data, analysis_config['metrics'])
-    
-    # Statistical summary
-    render_statistical_summary(display_data, analysis_config['metrics'])
 
 
 def create_chart_metadata(analysis_config: Dict[str, Any], period_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -573,7 +523,6 @@ def create_chart_metadata(analysis_config: Dict[str, Any], period_data: Dict[str
 def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_function: str = "mean", 
                                analysis_config: Dict[str, Any] = None, period_data: Dict[str, Any] = None):
     """Render correlation analysis section."""
-    st.write("### Gas Usage vs Performance Correlation")
     
     if data.empty:
         st.warning("No data available for correlation analysis")
@@ -625,14 +574,14 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
         if not gas_metrics:
             gas_metrics = available_metrics
         x_metric = st.selectbox(
-            "X-axis metric (typically gas):",
+            "X-axis metric:",
             gas_metrics,
             key="corr_x_metric"
         )
     with col2:
         perf_metrics = [m for m in available_metrics if m != x_metric]
         y_metrics = st.multiselect(
-            "Y-axis metrics (typically performance):",
+            "Y-axis metrics:",
             perf_metrics,
             default=perf_metrics[:2] if len(perf_metrics) >= 2 else perf_metrics,
             key="corr_y_metrics"
@@ -653,35 +602,18 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
             actual_x_metric = metric_mapping.get(x_metric, x_metric)
             actual_y_metrics = [metric_mapping.get(y, y) for y in y_metrics]
             
-            # Create combined scatter plot for all y-metrics
-            if len(y_metrics) == 1:
-                # Single metric - use existing function
-                y_metric = y_metrics[0]
-                actual_y_metric = actual_y_metrics[0]
-                st.write(f"#### {get_metric_info(x_metric)['title']} vs {get_metric_info(y_metric)['title']}")
-                
-                fig = create_gas_vs_arrival_scatter(
-                    viz_data, actual_x_metric, actual_y_metric,
-                    title_suffix=" - Correlation Analysis",
-                    agg_function=agg_function,
-                    network=chart_metadata.get('network'),
-                    time_range=chart_metadata.get('time_range'),
-                    metadata=chart_metadata
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                # Multiple metrics - create combined chart
-                st.write(f"#### {get_metric_info(x_metric)['title']} vs Multiple Performance Metrics")
-                
-                fig = create_multi_y_correlation_plot(
-                    viz_data, actual_x_metric, actual_y_metrics,
-                    title_suffix=" - Multi-Metric Correlation Analysis",
-                    agg_function=agg_function,
-                    network=chart_metadata.get('network'),
-                    time_range=chart_metadata.get('time_range'),
-                    metadata=chart_metadata
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            # Always use multi y-axis chart for consistency
+            fig = create_multi_y_correlation_plot(
+                viz_data, actual_x_metric, actual_y_metrics,
+                title_suffix="",
+                agg_function=agg_function,
+                network=chart_metadata.get('network'),
+                time_range=chart_metadata.get('time_range'),
+                metadata=chart_metadata,
+                start_y_from_zero=analysis_config.get('start_y_from_zero', True),
+                show_attestation_deadline=analysis_config.get('show_attestation_deadline', True)
+            )
+            st.plotly_chart(fig, use_container_width=True)
             
             # Show correlation matrix if multiple metrics
             if len(available_metrics) > 2:
@@ -1025,9 +957,6 @@ def main():
     
     # Sidebar configuration
     config = render_sidebar_configuration()
-    
-    # Cache management
-    render_cache_management()
     
     # Check if configuration changed
     current_config = (

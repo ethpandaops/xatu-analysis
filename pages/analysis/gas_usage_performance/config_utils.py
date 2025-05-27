@@ -115,9 +115,9 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
             # Map aggregation functions to descriptions
             agg_descriptions = {
                 'mean': 'average',
-                'median': 'median (50th percentile)',
-                'p95': '95th percentile',
-                'p99': '99th percentile',
+                'median': 'median (p50)',
+                'p95': 'p95',
+                'p99': 'p99',
                 'min': 'minimum',
                 'max': 'maximum',
                 'std': 'standard deviation',
@@ -136,7 +136,7 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
     
     # Modify title and subtitle for aggregated metrics
     if agg_suffix:
-        info["title"] = f"{info['title']} ({agg_description.title()})"
+        info["title"] = info['title']  # Keep original title without aggregation description
         info["subtitle"] = f"{agg_description.title()} of {info['subtitle'].lower()}"
         info["agg_function"] = agg_suffix
         info["base_metric"] = base_metric
@@ -302,9 +302,9 @@ def get_aggregation_functions() -> Dict[str, str]:
     """
     return {
         "mean": "Average",
-        "median": "Median (50th percentile)",
-        "p95": "95th percentile",
-        "p99": "99th percentile", 
+        "median": "Median (p50)",
+        "p95": "p95",
+        "p99": "p99", 
         "min": "Minimum",
         "max": "Maximum",
         "std": "Standard deviation",
