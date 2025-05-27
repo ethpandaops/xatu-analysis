@@ -12,6 +12,10 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 from shared.ui_components import apply_ethPandaOps_styling
 from shared.filesystem import get_cache_dir
 from config_utils import (
@@ -19,15 +23,37 @@ from config_utils import (
     validate_analysis_config
 )
 from data_loaders import load_complete_analysis_data, validate_data_quality
-from metrics_calculators import (
-    create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
-    calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
-    calculate_comparative_analysis, prepare_large_dataset
-)
+# Import polars-optimized functions first, fall back to pandas if needed
+try:
+    from polars_metrics_calculators import (
+        create_time_buckets_polars as create_time_buckets,
+        create_gas_buckets_polars as create_gas_buckets, 
+        calculate_bucket_metrics_polars as calculate_bucket_metrics,
+        aggregate_data_polars as aggregate_data,
+        calculate_correlation_analysis_polars,
+        calculate_temporal_trends_polars as calculate_temporal_trends,
+        calculate_percentile_analysis_polars as calculate_percentile_analysis,
+        sample_large_dataset as prepare_large_dataset
+    )
+    # Import pandas fallbacks for functions not yet in polars
+    from metrics_calculators import (
+        calculate_consensus_performance_ranking,
+        calculate_gas_binned_analysis,
+        calculate_comparative_analysis
+    )
+    USING_POLARS_METRICS = True
+except ImportError:
+    # Fallback to pandas versions
+    from metrics_calculators import (
+        create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
+        calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
+        calculate_comparative_analysis, prepare_large_dataset
+    )
+    USING_POLARS_METRICS = False
 from plot_generators import (
     create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
     create_box_plot_comparison, create_correlation_matrix, create_geographic_performance_plot,
-    create_gas_binned_performance_plot
+    create_gas_binned_performance_plot, create_multi_y_correlation_plot
 )
 
 
@@ -271,13 +297,20 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                 for warning in period1_quality['warnings']:
                     st.warning(f"• {warning}")
             
-            # Create time buckets
+            # Create time buckets using Polars-optimized functions
             if not period1_data['combined_data'].empty:
-                bucketed_data = create_time_buckets(
-                    period1_data['combined_data'], 
-                    config['time_buckets']
-                )
-                st.session_state.time_buckets_data['period1'] = bucketed_data
+                try:
+                    logger.info(f"Creating time buckets for {len(period1_data['combined_data']):,} records using Polars")
+                    bucketed_data = create_time_buckets(
+                        period1_data['combined_data'], 
+                        config['time_buckets']
+                    )
+                    st.session_state.time_buckets_data['period1'] = bucketed_data
+                    logger.info(f"Successfully created {config['time_buckets']} time buckets")
+                except Exception as e:
+                    logger.error(f"Error creating time buckets: {e}")
+                    st.error(f"Failed to create time buckets: {str(e)}")
+                    return False
                 
                 if config['enable_comparison'] and not st.session_state.analysis_data['period2']['combined_data'].empty:
                     bucketed_data2 = create_time_buckets(
@@ -341,14 +374,14 @@ def render_analysis_controls() -> Dict[str, Any]:
         gas_metrics = st.multiselect(
             "Gas metrics:",
             ['gas_used', 'gas_utilization', 'blob_count'],
-            default=['gas_used'],
+            default=['gas_used', 'gas_utilization', 'blob_count'],
             key="gas_metrics"
         )
         
         perf_metrics = st.multiselect(
             "Performance metrics:",
             ['block_gossip_time', 'head_time', 'time_difference'],
-            default=['block_gossip_time'],
+            default=['block_gossip_time', 'head_time', 'time_difference'],
             key="perf_metrics"
         )
         
@@ -440,8 +473,10 @@ def render_analysis_dashboard():
             # Use original data for non-bucket aggregations
             source_data = period1_data
         
-        # Aggregate the data according to user selection
-        with st.spinner(f"Aggregating {len(source_data):,} records..."):
+        # Aggregate the data according to user selection using Polars
+        with st.spinner(f"Aggregating {len(source_data):,} records using Polars..."):
+            if USING_POLARS_METRICS:
+                logger.info(f"Using Polars aggregation for {len(source_data):,} records")
             aggregated_data = aggregate_data(
                 source_data,
                 group_by=analysis_config['group_by'],
@@ -548,13 +583,40 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
         st.warning("Need at least 2 metrics for correlation analysis")
         return
     
-    # Filter metrics to only those that exist in the data
-    available_metrics = [m for m in metrics if m in data.columns and data[m].notna().sum() > 0]
+    # get_metric_info is already imported at the top
+    
+    # Handle aggregated data - map original metrics to their aggregated versions
+    available_metrics = []
+    metric_mapping = {}  # original -> aggregated column name
+    
+    for metric in metrics:
+        # Check for original metric name
+        if metric in data.columns and data[metric].notna().sum() > 0:
+            available_metrics.append(metric)
+            metric_mapping[metric] = metric
+        # Check for aggregated metric name (e.g., gas_used -> gas_used_mean)
+        else:
+            for agg_suffix in ['_mean', '_median', '_p95', '_p99', '_min', '_max']:
+                agg_metric = f"{metric}{agg_suffix}"
+                if agg_metric in data.columns and data[agg_metric].notna().sum() > 0:
+                    available_metrics.append(metric)  # Keep original name for UI
+                    metric_mapping[metric] = agg_metric  # Map to actual column
+                    break
     
     if len(available_metrics) < 2:
         st.warning(f"Need at least 2 metrics with data. Available metrics: {available_metrics}")
+        st.write(f"Selected metrics: {metrics}")
         st.write(f"Data columns: {list(data.columns)}")
         return
+    
+    # Clear session state for correlation selectors if the selected metrics are no longer available
+    if "corr_x_metric" in st.session_state and st.session_state.corr_x_metric not in available_metrics:
+        del st.session_state.corr_x_metric
+    if "corr_y_metrics" in st.session_state:
+        # Filter out metrics that are no longer available
+        valid_y_metrics = [m for m in st.session_state.corr_y_metrics if m in available_metrics]
+        if len(valid_y_metrics) != len(st.session_state.corr_y_metrics):
+            st.session_state.corr_y_metrics = valid_y_metrics
     
     # Metric pair selection
     col1, col2 = st.columns(2)
@@ -569,13 +631,14 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
         )
     with col2:
         perf_metrics = [m for m in available_metrics if m != x_metric]
-        y_metric = st.selectbox(
-            "Y-axis metric (typically performance):",
+        y_metrics = st.multiselect(
+            "Y-axis metrics (typically performance):",
             perf_metrics,
-            key="corr_y_metric"
+            default=perf_metrics[:2] if len(perf_metrics) >= 2 else perf_metrics,
+            key="corr_y_metrics"
         )
     
-    if x_metric and y_metric:
+    if x_metric and y_metrics:
         try:
             # Prepare data for visualization (sample if too large)
             config = get_analysis_config()
@@ -586,28 +649,55 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
             # Create chart metadata
             chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
             
-            # Create scatter plot with intelligent coloring
-            fig = create_gas_vs_arrival_scatter(
-                viz_data, x_metric, y_metric,
-                title_suffix=" - Correlation Analysis",
-                agg_function=agg_function,
-                network=chart_metadata.get('network'),
-                time_range=chart_metadata.get('time_range'),
-                metadata=chart_metadata
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            # Map selected metrics to actual column names in the data
+            actual_x_metric = metric_mapping.get(x_metric, x_metric)
+            actual_y_metrics = [metric_mapping.get(y, y) for y in y_metrics]
+            
+            # Create combined scatter plot for all y-metrics
+            if len(y_metrics) == 1:
+                # Single metric - use existing function
+                y_metric = y_metrics[0]
+                actual_y_metric = actual_y_metrics[0]
+                st.write(f"#### {get_metric_info(x_metric)['title']} vs {get_metric_info(y_metric)['title']}")
+                
+                fig = create_gas_vs_arrival_scatter(
+                    viz_data, actual_x_metric, actual_y_metric,
+                    title_suffix=" - Correlation Analysis",
+                    agg_function=agg_function,
+                    network=chart_metadata.get('network'),
+                    time_range=chart_metadata.get('time_range'),
+                    metadata=chart_metadata
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # Multiple metrics - create combined chart
+                st.write(f"#### {get_metric_info(x_metric)['title']} vs Multiple Performance Metrics")
+                
+                fig = create_multi_y_correlation_plot(
+                    viz_data, actual_x_metric, actual_y_metrics,
+                    title_suffix=" - Multi-Metric Correlation Analysis",
+                    agg_function=agg_function,
+                    network=chart_metadata.get('network'),
+                    time_range=chart_metadata.get('time_range'),
+                    metadata=chart_metadata
+                )
+                st.plotly_chart(fig, use_container_width=True)
             
             # Show correlation matrix if multiple metrics
             if len(available_metrics) > 2:
                 st.write("#### Correlation Matrix")
-                corr_fig = create_correlation_matrix(viz_data, available_metrics)
+                # Use actual column names for correlation matrix
+                actual_available_metrics = [metric_mapping.get(m, m) for m in available_metrics]
+                corr_fig = create_correlation_matrix(viz_data, actual_available_metrics)
                 st.plotly_chart(corr_fig, use_container_width=True)
                 
         except Exception as e:
             st.error(f"Error creating correlation plot: {str(e)}")
             st.write(f"Data shape: {data.shape}")
             st.write(f"X metric ({x_metric}) stats: {data[x_metric].describe()}")
-            st.write(f"Y metric ({y_metric}) stats: {data[y_metric].describe()}")
+            if y_metrics:
+                for y_metric in y_metrics:
+                    st.write(f"Y metric ({y_metric}) stats: {data[y_metric].describe()}")
 
 
 def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str], agg_function: str = "mean",

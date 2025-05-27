@@ -39,25 +39,21 @@ def memory_efficient_context():
         gc.collect()
 
 
-def normalize_time_range(start_date: datetime, end_date: datetime, max_days: int = 30) -> Tuple[datetime, datetime, bool]:
+def normalize_time_range(start_date: datetime, end_date: datetime, max_days: int = None) -> Tuple[datetime, datetime, bool]:
     """
-    Normalize time range to prevent OOM issues with large datasets.
+    No longer normalizes time range - just returns the original dates.
+    Users can request any amount of data, and if it's too much the system will error naturally.
     
     Args:
         start_date: Original start date
         end_date: Original end date
-        max_days: Maximum allowed days in a single query
+        max_days: Ignored parameter kept for compatibility
         
     Returns:
-        Tuple of (normalized_start, normalized_end, was_truncated)
+        Tuple of (start_date, end_date, False)
     """
-    time_diff = end_date - start_date
-    
-    if time_diff.days > max_days:
-        logger.warning(f"Time range {time_diff.days} days exceeds limit {max_days}, truncating")
-        normalized_end = start_date + timedelta(days=max_days)
-        return start_date, normalized_end, True
-    
+    # No longer limit time ranges - let user request what they want
+    _ = max_days  # Suppress unused parameter warning
     return start_date, end_date, False
 
 
@@ -103,10 +99,8 @@ def load_block_gossip_data_polars(
         DataFrame with optimized block gossip timing data
     """
     with memory_efficient_context():
-        # Normalize time range
-        norm_start, norm_end, truncated = normalize_time_range(start_date, end_date)
-        if truncated:
-            st.warning(f"Time range truncated to {norm_start.date()} - {norm_end.date()} to prevent memory issues")
+        # Normalize time range (no longer truncates)
+        norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
         conn = get_database_connection()
         config = get_analysis_config()
@@ -203,9 +197,7 @@ def load_head_time_data_polars(
     """
     with memory_efficient_context():
         # Normalize time range
-        norm_start, norm_end, truncated = normalize_time_range(start_date, end_date)
-        if truncated:
-            st.warning(f"Time range truncated to prevent memory issues")
+        norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
         conn = get_database_connection()
         config = get_analysis_config()
@@ -340,7 +332,7 @@ def load_canonical_block_data_polars(
     """
     with memory_efficient_context():
         # Normalize time range
-        norm_start, norm_end, truncated = normalize_time_range(start_date, end_date)
+        norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
         conn = get_database_connection()
         
@@ -476,6 +468,145 @@ def load_blob_sidecar_counts_polars(
             return pd.DataFrame()
 
 
+def load_raw_data_as_polars(
+    network: str,
+    start_date: datetime,
+    end_date: datetime
+) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, Optional[pl.DataFrame]]:
+    """
+    Load raw data directly as Polars DataFrames without pandas conversion.
+    
+    Returns:
+        Tuple of (gossip_pl, head_pl, block_pl, blob_pl)
+    """
+    conn = get_database_connection()
+    config = get_analysis_config()
+    
+    # Load gossip data
+    gossip_query = """
+        SELECT
+            slot,
+            slot_start_date_time,
+            propagation_slot_start_diff as block_gossip_time,
+            meta_client_name,
+            meta_consensus_implementation,
+            meta_client_geo_continent_code
+        FROM beacon_api_eth_v1_events_block_gossip FINAL
+        WHERE meta_network_name = %(network)s
+            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+            AND meta_client_name != '' AND meta_client_name IS NOT NULL
+            AND propagation_slot_start_diff < %(max_propagation)s
+            AND propagation_slot_start_diff >= 0
+        ORDER BY slot_start_date_time
+    """
+    
+    # Load head data
+    head_query = """
+        WITH head_events AS (
+            SELECT
+                slot, slot_start_date_time, propagation_slot_start_diff as arrival_time,
+                meta_client_name, meta_consensus_implementation, meta_client_geo_continent_code
+            FROM beacon_api_eth_v1_events_head FINAL
+            WHERE meta_network_name = %(network)s
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND meta_client_name != '' AND meta_client_name IS NOT NULL
+                AND propagation_slot_start_diff < %(max_propagation)s
+                AND propagation_slot_start_diff >= 0
+        ),
+        block_events AS (
+            SELECT
+                slot, slot_start_date_time, propagation_slot_start_diff as arrival_time,
+                meta_client_name, meta_consensus_implementation, meta_client_geo_continent_code
+            FROM beacon_api_eth_v1_events_block FINAL
+            WHERE meta_network_name = %(network)s
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND meta_client_name != '' AND meta_client_name IS NOT NULL
+                AND propagation_slot_start_diff < %(max_propagation)s
+                AND propagation_slot_start_diff >= 0
+        ),
+        blob_events AS (
+            SELECT
+                slot, slot_start_date_time, MAX(propagation_slot_start_diff) as arrival_time,
+                meta_client_name, meta_consensus_implementation, meta_client_geo_continent_code
+            FROM beacon_api_eth_v1_events_blob_sidecar FINAL
+            WHERE meta_network_name = %(network)s
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND meta_client_name != '' AND meta_client_name IS NOT NULL
+                AND propagation_slot_start_diff < %(max_propagation)s
+                AND propagation_slot_start_diff >= 0
+            GROUP BY slot, slot_start_date_time, meta_client_name, 
+                     meta_consensus_implementation, meta_client_geo_continent_code
+        ),
+        all_events AS (
+            SELECT * FROM head_events
+            UNION ALL SELECT * FROM block_events  
+            UNION ALL SELECT * FROM blob_events
+        )
+        SELECT
+            slot, slot_start_date_time, MAX(arrival_time) as head_time,
+            meta_client_name, meta_consensus_implementation, meta_client_geo_continent_code
+        FROM all_events
+        GROUP BY slot, slot_start_date_time, meta_client_name,
+                 meta_consensus_implementation, meta_client_geo_continent_code
+        ORDER BY slot_start_date_time
+    """
+    
+    # Load block data
+    block_query = """
+        SELECT
+            slot, slot_start_date_time, epoch, proposer_index,
+            execution_payload_gas_used as gas_used,
+            execution_payload_gas_limit as gas_limit,
+            execution_payload_blob_gas_used as blob_gas_used,
+            execution_payload_excess_blob_gas as excess_blob_gas,
+            execution_payload_transactions_count as transaction_count,
+            execution_payload_block_hash as block_hash
+        FROM canonical_beacon_block FINAL
+        WHERE meta_network_name = %(network)s
+            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+            AND execution_payload_gas_used IS NOT NULL
+            AND execution_payload_gas_limit IS NOT NULL
+            AND execution_payload_gas_used > 0
+        ORDER BY slot_start_date_time
+    """
+    
+    params = {
+        'network': network,
+        'start_date': start_date,
+        'end_date': end_date,
+        'max_propagation': config['max_propagation_time_ms']
+    }
+    
+    # Load as pandas first (required for SQL), then immediately convert to Polars
+    gossip_pd = pd.read_sql(gossip_query, conn, params=params)
+    head_pd = pd.read_sql(head_query, conn, params=params)
+    block_pd = pd.read_sql(block_query, conn, params=params)
+    
+    # Convert to Polars immediately after SQL load
+    gossip_pl = pl.from_pandas(gossip_pd)
+    head_pl = pl.from_pandas(head_pd)
+    block_pl = pl.from_pandas(block_pd)
+    
+    # Load blob data if needed
+    blob_pl = None
+    try:
+        blob_query = """
+            SELECT slot, COUNT(*) as blob_count
+            FROM beacon_api_eth_v1_events_blob_sidecar FINAL
+            WHERE meta_network_name = %(network)s
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+            GROUP BY slot
+            ORDER BY slot
+        """
+        blob_pd = pd.read_sql(blob_query, conn, params=params)
+        if not blob_pd.empty:
+            blob_pl = pl.from_pandas(blob_pd)
+    except Exception as e:
+        logger.warning(f"Could not load blob data: {e}")
+    
+    return gossip_pl, head_pl, block_pl, blob_pl
+
+
 def combine_performance_data_polars(
     gossip_df: pd.DataFrame,
     head_df: pd.DataFrame,
@@ -560,11 +691,102 @@ def combine_performance_data_polars(
             .sort(["slot", "slot_start_date_time", "meta_client_name"])
         )
         
-        # Convert back to pandas
+        # Convert back to pandas only at the very end
         result_df = combined_pl.to_pandas()
         
         logger.info(f"Combined polars dataset created with {len(result_df):,} records")
         return result_df
+
+
+def combine_performance_data_polars_native(
+    gossip_pl: pl.DataFrame,
+    head_pl: pl.DataFrame,
+    block_pl: pl.DataFrame,
+    blob_pl: Optional[pl.DataFrame] = None
+) -> pl.DataFrame:
+    """
+    Combine performance data staying in Polars throughout.
+    
+    Args:
+        gossip_pl: Block gossip timing data (Polars)
+        head_pl: Head timing data (Polars)
+        block_pl: Canonical block data with gas usage (Polars)
+        blob_pl: Optional blob sidecar count data (Polars)
+        
+    Returns:
+        Combined Polars DataFrame
+    """
+    logger.info("Combining performance data - pure Polars")
+    
+    with memory_efficient_context():
+        if gossip_pl.height == 0 or head_pl.height == 0 or block_pl.height == 0:
+            logger.warning("One or more data sources are empty")
+            return pl.DataFrame()
+        
+        # Efficient join strategy in pure Polars
+        logger.info(f"Dataset sizes: gossip={gossip_pl.height}, head={head_pl.height}, block={block_pl.height}")
+        
+        # Join gossip with head data
+        combined_pl = (
+            gossip_pl
+            .join(
+                head_pl.select(["slot", "meta_client_name", "head_time"]),
+                on=["slot", "meta_client_name"],
+                how="left"
+            )
+            .with_columns([
+                (pl.col("head_time") - pl.col("block_gossip_time")).alias("time_difference")
+            ])
+        )
+        
+        # Join with block data
+        block_cols = ["slot", "gas_used", "gas_limit", "proposer_index", "epoch"]
+        # Only select columns that exist
+        available_block_cols = [col for col in block_cols if col in block_pl.columns]
+        
+        combined_pl = combined_pl.join(
+            block_pl.select(available_block_cols),
+            on="slot",
+            how="left"
+        )
+        
+        # Calculate gas utilization if we have the required columns
+        if "gas_used" in combined_pl.columns and "gas_limit" in combined_pl.columns:
+            combined_pl = combined_pl.with_columns([
+                (pl.col("gas_used") / pl.col("gas_limit") * 100).round(2).alias("gas_utilization")
+            ])
+        
+        # Add blob data if available
+        if blob_pl is not None and blob_pl.height > 0:
+            combined_pl = combined_pl.join(blob_pl, on="slot", how="left")
+            combined_pl = combined_pl.with_columns(
+                pl.col("blob_count").fill_null(0)
+            )
+        else:
+            combined_pl = combined_pl.with_columns(
+                pl.lit(0).alias("blob_count")
+            )
+        
+        # Data type optimization and cleaning
+        combined_pl = (
+            combined_pl
+            .with_columns([
+                pl.col("block_gossip_time").cast(pl.Float64),
+                pl.col("head_time").cast(pl.Float64),
+                pl.col("time_difference").cast(pl.Float64),
+                pl.col("gas_used").cast(pl.Int64),
+                pl.col("gas_limit").cast(pl.Int64),
+                pl.col("gas_utilization").cast(pl.Float64),
+                pl.col("blob_count").cast(pl.Int32)
+            ])
+            .with_columns([
+                (pl.col("gas_used").is_not_null() & (pl.col("gas_used") > 0)).alias("has_gas_data")
+            ])
+            .sort(["slot", "slot_start_date_time", "meta_client_name"])
+        )
+        
+        logger.info(f"Combined polars dataset created with {combined_pl.height:,} records")
+        return combined_pl
 
 
 @st.cache_data(ttl=3600)
@@ -576,7 +798,7 @@ def load_complete_analysis_data_polars(
     use_chunking: bool = True
 ) -> Dict[str, Any]:
     """
-    Load complete dataset with memory optimization and chunking for large ranges.
+    Load complete dataset using pure Polars pipeline, converting to pandas only at the end.
     
     Args:
         network: Network name
@@ -586,9 +808,9 @@ def load_complete_analysis_data_polars(
         use_chunking: Whether to use chunking for large time ranges
         
     Returns:
-        Dictionary containing all loaded data and metadata
+        Dictionary containing all loaded data and metadata (pandas for compatibility)
     """
-    logger.info(f"Loading optimized analysis data for {period_name}: {network} {start_date} to {end_date}")
+    logger.info(f"Loading optimized Polars pipeline for {period_name}: {network} {start_date} to {end_date}")
     
     with memory_efficient_context():
         # Check if we need chunking
@@ -600,19 +822,23 @@ def load_complete_analysis_data_polars(
             logger.info(f"Large time range detected ({time_diff.days} days). Using chunked loading.")
             return load_chunked_analysis_data(network, start_date, end_date, period_name, max_days_per_chunk)
         
-        # Standard polars loading
-        gossip_df = load_block_gossip_data_polars(network, start_date, end_date)
-        head_df = load_head_time_data_polars(network, start_date, end_date) 
-        block_df = load_canonical_block_data_polars(network, start_date, end_date)
+        # Load raw data as Polars DataFrames
+        gossip_pl, head_pl, block_pl, blob_pl = load_raw_data_as_polars(network, start_date, end_date)
         
-        # Load blob data using polars approach
-        blob_df = load_blob_sidecar_counts_polars(network, start_date, end_date)
+        # Combine all data using pure Polars pipeline
+        combined_pl = combine_performance_data_polars_native(gossip_pl, head_pl, block_pl, blob_pl)
         
-        # Combine all data using polars
-        combined_df = combine_performance_data_polars(gossip_df, head_df, block_df, blob_df)
+        # Calculate summary statistics efficiently in Polars
+        summary_stats = calculate_summary_stats_polars_native(combined_pl, start_date, end_date)
         
-        # Calculate summary statistics efficiently
-        summary_stats = calculate_summary_stats_polars(combined_df, start_date, end_date)
+        # Convert to pandas ONLY at the very end for compatibility with existing UI
+        combined_df = combined_pl.to_pandas()
+        gossip_df = gossip_pl.to_pandas()
+        head_df = head_pl.to_pandas()
+        block_df = block_pl.to_pandas()
+        blob_df = blob_pl.to_pandas() if blob_pl is not None else pd.DataFrame()
+        
+        logger.info(f"Polars pipeline complete - converted {combined_pl.height:,} records to pandas for UI")
         
         return {
             'combined_data': combined_df,
@@ -625,8 +851,50 @@ def load_complete_analysis_data_polars(
             'network': network,
             'start_date': start_date,
             'end_date': end_date,
-            'optimization_used': 'polars'
+            'optimization_used': 'polars_native_pipeline'
         }
+
+
+def calculate_summary_stats_polars_native(df_pl: pl.DataFrame, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
+    """
+    Calculate summary statistics efficiently using pure Polars.
+    
+    Args:
+        df_pl: Combined Polars DataFrame
+        start_date: Analysis start date
+        end_date: Analysis end date
+        
+    Returns:
+        Dictionary with summary statistics
+    """
+    if df_pl.height == 0:
+        return {}
+    
+    with memory_efficient_context():
+        # Efficient aggregation with Polars
+        stats = df_pl.select([
+            pl.len().alias("total_records"),
+            pl.col("slot").n_unique().alias("unique_slots"),
+            pl.col("meta_client_name").n_unique().alias("unique_clients"),
+            pl.col("gas_used").mean().alias("avg_gas_used"),
+            pl.col("gas_utilization").mean().alias("avg_gas_utilization"),
+            pl.col("block_gossip_time").mean().alias("avg_block_gossip_time"),
+            pl.col("head_time").mean().alias("avg_head_time")
+        ]).to_pandas().iloc[0].to_dict()
+        
+        # Convert to regular Python types and handle NaN
+        summary_stats = {
+            'total_blocks': int(stats.get('total_records', 0)),
+            'date_range': f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}",
+            'avg_gas_used': float(stats.get('avg_gas_used', 0)) if pd.notna(stats.get('avg_gas_used')) else 0,
+            'avg_gas_utilization': float(stats.get('avg_gas_utilization', 0)) if pd.notna(stats.get('avg_gas_utilization')) else 0,
+            'avg_block_gossip_time': float(stats.get('avg_block_gossip_time', 0)) if pd.notna(stats.get('avg_block_gossip_time')) else 0,
+            'avg_head_time': float(stats.get('avg_head_time', 0)) if pd.notna(stats.get('avg_head_time')) else 0,
+            'unique_slots': int(stats.get('unique_slots', 0)),
+            'unique_clients': int(stats.get('unique_clients', 0))
+        }
+        
+        return summary_stats
 
 
 def load_chunked_analysis_data(

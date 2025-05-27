@@ -64,10 +64,11 @@ def create_gas_vs_arrival_scatter(
         logger.warning(f"Correlation analysis not available: {e}")
         correlation_data = None
     
-    # Create enhanced title with clean subtitles and metadata
-    main_title = f'{x_info["title"]} vs {y_info["title"]}{title_suffix}'
+    # Create enhanced title with aggregation info and better meta display
+    agg_suffix = f" ({agg_function.title()})" if agg_function and agg_function != "mean" else ""
+    main_title = f'{x_info["title"]} vs {y_info["title"]}{agg_suffix}{title_suffix}'
     
-    # Add metadata line
+    # Create clean metadata annotation instead of subtitle overflow
     metadata_parts = []
     if network:
         metadata_parts.append(f"Network: {network.title()}")
@@ -81,19 +82,8 @@ def create_gas_vs_arrival_scatter(
     else:
         metadata_parts.append(f"Data Points: {data_count:,}")
     
-    metadata_line = f"<br><sub>{' | '.join(metadata_parts)}</sub>" if metadata_parts else ""
-    
-    # Add axis description lines
-    subtitle1 = ""
-    subtitle2 = ""
-    
-    if x_info.get("subtitle"):
-        subtitle1 = f"<br><sub>X-axis: {x_info['subtitle']}</sub>"
-    
-    if y_info.get("subtitle"):
-        subtitle2 = f"<br><sub>Y-axis: {y_info['subtitle']}</sub>"
-    
-    title = main_title + metadata_line + subtitle1 + subtitle2
+    # Use annotations instead of title overflow
+    title = main_title
     
     
     # Prepare hover data - adapt to available columns
@@ -171,7 +161,7 @@ def create_gas_vs_arrival_scatter(
             hovertemplate='Trend Line<extra></extra>'
         ))
     
-    # Update layout with clean axis lines and interactive legend
+    # Update layout with clean axis lines, interactive legend, and metadata annotations
     fig.update_layout(
         height=600,
         showlegend=True,
@@ -181,24 +171,41 @@ def create_gas_vs_arrival_scatter(
         hovermode='closest',
         legend=dict(
             itemclick="toggle",
-            itemdoubleclick="toggleothers"
+            itemdoubleclick="toggleothers",
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
         ),
         xaxis=dict(
             showline=True,
             linewidth=1,
             linecolor='black',
-            mirror=False,  # Only bottom line
+            mirror=False,
             ticks='outside',
-            rangemode='tozero'  # Start from zero or data minimum
+            rangemode='tozero',
+            title=f'{x_info["title"]} ({x_info["unit"]})'
         ),
         yaxis=dict(
             showline=True,
             linewidth=1,
             linecolor='black',
-            mirror=False,  # Only left line
+            mirror=False,
             ticks='outside',
-            rangemode='tozero'  # Start from zero or data minimum
-        )
+            rangemode='tozero',
+            title=f'{y_info["title"]} ({y_info["unit"]})'
+        ),
+        annotations=[
+            dict(
+                text=' | '.join(metadata_parts),
+                showarrow=False,
+                xref="paper", yref="paper",
+                x=0, y=-0.1,
+                xanchor='left', yanchor='top',
+                font=dict(size=10, color="gray")
+            )
+        ] if metadata_parts else None
     )
     
     return add_ethPandaOps_logo(fig)
@@ -214,7 +221,7 @@ def create_time_series_comparison(
     metadata: Dict[str, Any] = None
 ) -> go.Figure:
     """
-    Create multi-axis time series plot for temporal analysis.
+    Create multi-axis time series plot for temporal analysis with visible legends.
     
     Args:
         time_metrics: DataFrame with time bucket metrics
@@ -222,7 +229,7 @@ def create_time_series_comparison(
         title_suffix: Additional text for plot title
         
     Returns:
-        Plotly figure with dual y-axes
+        Plotly figure with dual y-axes and visible legends
     """
     if time_metrics.empty:
         logger.warning("Cannot create time series: empty data")
@@ -238,18 +245,24 @@ def create_time_series_comparison(
     colors = px.colors.qualitative.Set1
     color_idx = 0
     
+    # Get x values for plotting
+    x_values = time_metrics.index if hasattr(time_metrics, 'index') else time_metrics.get('time_bucket', range(len(time_metrics)))
+    
     # Plot gas metrics on primary y-axis
     for metric in gas_metrics:
         if metric in time_metrics.columns:
             metric_info = get_metric_info(metric.replace('_mean', ''))
+            agg_suffix = f" ({agg_function.title()})" if agg_function != "mean" else ""
             fig.add_trace(
                 go.Scatter(
-                    x=time_metrics.index if hasattr(time_metrics, 'index') else time_metrics['time_bucket'],
+                    x=x_values,
                     y=time_metrics[metric],
-                    name=f'{metric_info["title"]} (Mean)',
-                    line=dict(color=colors[color_idx % len(colors)]),
+                    name=f'{metric_info["title"]}{agg_suffix}',
+                    line=dict(color=colors[color_idx % len(colors)], width=2),
                     mode='lines+markers',
-                    hovertemplate=f'{metric_info["title"]}: %{{y:.2f}} {metric_info["unit"]}<extra></extra>'
+                    marker=dict(size=6),
+                    hovertemplate=f'{metric_info["title"]}: %{{y:.2f}} {metric_info["unit"]}<br>Time Bucket: %{{x}}<extra></extra>',
+                    showlegend=True
                 ),
                 secondary_y=False
             )
@@ -259,28 +272,34 @@ def create_time_series_comparison(
     for metric in timing_metrics:
         if metric in time_metrics.columns:
             metric_info = get_metric_info(metric.replace('_mean', ''))
+            agg_suffix = f" ({agg_function.title()})" if agg_function != "mean" else ""
             fig.add_trace(
                 go.Scatter(
-                    x=time_metrics.index if hasattr(time_metrics, 'index') else time_metrics['time_bucket'],
+                    x=x_values,
                     y=time_metrics[metric],
-                    name=f'{metric_info["title"]} (Mean)',
-                    line=dict(color=colors[color_idx % len(colors)]),
+                    name=f'{metric_info["title"]}{agg_suffix}',
+                    line=dict(color=colors[color_idx % len(colors)], width=2, dash='dash'),
                     mode='lines+markers',
-                    hovertemplate=f'{metric_info["title"]}: %{{y:.2f}} {metric_info["unit"]}<extra></extra>'
+                    marker=dict(size=6, symbol='diamond'),
+                    hovertemplate=f'{metric_info["title"]}: %{{y:.2f}} {metric_info["unit"]}<br>Time Bucket: %{{x}}<extra></extra>',
+                    showlegend=True
                 ),
                 secondary_y=True
             )
             color_idx += 1
     
-    # Update axis labels
-    fig.update_yaxes(title_text="Gas Usage", secondary_y=False)
-    fig.update_yaxes(title_text="Arrival Time (ms)", secondary_y=True)
+    # Update axis labels with better titles
+    if gas_metrics:
+        fig.update_yaxes(title_text="Gas Metrics", secondary_y=False)
+    if timing_metrics:
+        fig.update_yaxes(title_text="Performance Metrics (ms)", secondary_y=True)
     fig.update_xaxes(title_text="Time Bucket")
     
     # Create enhanced title with aggregation info and metadata
-    main_title = f"Gas Usage and Arrival Times Over Time{title_suffix}"
+    agg_suffix = f" ({agg_function.title()})" if agg_function and agg_function != "mean" else ""
+    main_title = f"Time Series Analysis{agg_suffix}{title_suffix}"
     
-    # Add metadata line
+    # Create clean metadata for annotation
     metadata_parts = []
     if network:
         metadata_parts.append(f"Network: {network.title()}")
@@ -294,21 +313,19 @@ def create_time_series_comparison(
     else:
         metadata_parts.append(f"Time Buckets: {num_buckets}")
     
-    metadata_line = f"<br><sub>{' | '.join(metadata_parts)}</sub>" if metadata_parts else ""
-    
-    # Add subtitle describing the aggregation
+    # Add aggregation description to metadata
     agg_descriptions = {
         'mean': 'average',
         'median': 'median (50th percentile)',
-        'p95': '95th percentile',
+        'p95': '95th percentile', 
         'p99': '99th percentile',
         'min': 'minimum',
         'max': 'maximum'
     }
     agg_desc = agg_descriptions.get(agg_function, agg_function)
-    agg_subtitle = f"<br><sub>Showing {agg_desc} values aggregated by time buckets</sub>"
+    metadata_parts.append(f"Aggregation: {agg_desc}")
     
-    title_with_subtitle = main_title + metadata_line + agg_subtitle
+    title_with_subtitle = main_title
     
     fig.update_layout(
         title=title_with_subtitle,
@@ -317,16 +334,34 @@ def create_time_series_comparison(
         showlegend=True,
         legend=dict(
             itemclick="toggle",
-            itemdoubleclick="toggleothers"
+            itemdoubleclick="toggleothers",
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="rgba(0,0,0,0.2)",
+            borderwidth=1
         ),
         xaxis=dict(
             showline=True,
             linewidth=1,
             linecolor='black',
             mirror=False,
-            ticks='outside',
-            rangemode='tozero'
-        )
+            ticks='outside'
+        ),
+        margin=dict(r=150),  # Add right margin for legend
+        annotations=[
+            dict(
+                text=' | '.join(metadata_parts),
+                showarrow=False,
+                xref="paper", yref="paper",
+                x=0, y=-0.1,
+                xanchor='left', yanchor='top',
+                font=dict(size=10, color="gray")
+            )
+        ] if metadata_parts else None
     )
     
     # Update y-axis styling for both primary and secondary axes
@@ -347,6 +382,135 @@ def create_time_series_comparison(
         ticks='outside',
         rangemode='tozero',
         secondary_y=True
+    )
+    
+    return add_ethPandaOps_logo(fig)
+
+
+def create_multi_y_correlation_plot(
+    data: pd.DataFrame,
+    x_metric: str,
+    y_metrics: List[str],
+    title_suffix: str = "",
+    agg_function: str = "mean",
+    network: str = None,
+    time_range: str = None,
+    metadata: Dict[str, Any] = None
+) -> go.Figure:
+    """
+    Create scatter plot with multiple y-axis metrics against one x-metric.
+    
+    Args:
+        data: DataFrame with gas and performance data
+        x_metric: Column name for x-axis (gas metric)
+        y_metrics: List of column names for y-axis (performance metrics)
+        title_suffix: Additional text for plot title
+        agg_function: Aggregation function used
+        network: Network name
+        time_range: Time range string
+        metadata: Additional metadata
+        
+    Returns:
+        Plotly figure object with multiple y-metrics
+    """
+    if data.empty:
+        logger.warning("Cannot create multi-y correlation plot: empty data")
+        return go.Figure()
+    
+    x_info = get_metric_info(x_metric)
+    
+    # Create enhanced title with aggregation info
+    agg_suffix = f" ({agg_function.title()})" if agg_function and agg_function != "mean" else ""
+    main_title = f'{x_info["title"]} vs Multiple Performance Metrics{agg_suffix}{title_suffix}'
+    
+    # Create clean metadata for annotation
+    metadata_parts = []
+    if network:
+        metadata_parts.append(f"Network: {network.title()}")
+    if time_range:
+        metadata_parts.append(f"Period: {time_range}")
+    
+    # Add data point count
+    data_count = len(data)
+    if metadata and 'total_blocks' in metadata:
+        metadata_parts.append(f"Points: {data_count:,} (from {metadata['total_blocks']:,} blocks)")
+    else:
+        metadata_parts.append(f"Data Points: {data_count:,}")
+    
+    # Create figure
+    fig = go.Figure()
+    
+    colors = px.colors.qualitative.Set1
+    color_idx = 0
+    
+    # Plot each y-metric as a separate trace
+    for y_metric in y_metrics:
+        if y_metric in data.columns:
+            y_info = get_metric_info(y_metric)
+            
+            fig.add_trace(
+                go.Scatter(
+                    x=data[x_metric],
+                    y=data[y_metric],
+                    mode='markers',
+                    name=y_info["title"],
+                    marker=dict(
+                        color=colors[color_idx % len(colors)],
+                        size=6,
+                        opacity=0.7
+                    ),
+                    hovertemplate=f'{x_info["title"]}: %{{x:.2f}} {x_info["unit"]}<br>' +
+                                 f'{y_info["title"]}: %{{y:.2f}} {y_info["unit"]}<extra></extra>',
+                    showlegend=True
+                )
+            )
+            color_idx += 1
+    
+    # Update layout
+    fig.update_layout(
+        title=main_title,
+        height=600,
+        showlegend=True,
+        hovermode='closest',
+        legend=dict(
+            itemclick="toggle",
+            itemdoubleclick="toggleothers",
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="rgba(0,0,0,0.2)",
+            borderwidth=1
+        ),
+        xaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,
+            ticks='outside',
+            title=f'{x_info["title"]} ({x_info["unit"]})'
+        ),
+        yaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,
+            ticks='outside',
+            title="Performance Metrics"
+        ),
+        margin=dict(r=200),  # Add right margin for legend
+        annotations=[
+            dict(
+                text=' | '.join(metadata_parts),
+                showarrow=False,
+                xref="paper", yref="paper",
+                x=0, y=-0.1,
+                xanchor='left', yanchor='top',
+                font=dict(size=10, color="gray")
+            )
+        ] if metadata_parts else None
     )
     
     return add_ethPandaOps_logo(fig)
@@ -492,7 +656,7 @@ def create_box_plot_comparison(
     
     # Add mean markers
     means = plot_data.groupby(group_col)[metric].mean()
-    for i, (group, mean_val) in enumerate(means.items()):
+    for i, (_, mean_val) in enumerate(means.items()):
         fig.add_shape(
             type="line",
             x0=i-0.4, x1=i+0.4,

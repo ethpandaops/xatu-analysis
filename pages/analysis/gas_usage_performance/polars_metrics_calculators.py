@@ -45,7 +45,77 @@ def memory_efficient_context():
         gc.collect()
 
 
+def create_time_buckets_polars_native(df_pl: pl.DataFrame, num_buckets: int = 30) -> pl.DataFrame:
+    """
+    Create time buckets using pure Polars - no pandas conversion.
+    
+    Args:
+        df_pl: Polars DataFrame with slot_start_date_time column
+        num_buckets: Number of time buckets to create
+        
+    Returns:
+        Polars DataFrame with added time bucket columns
+    """
+    if df_pl.height == 0 or 'slot_start_date_time' not in df_pl.columns:
+        logger.warning("Cannot create time buckets: empty DataFrame or missing timestamp column")
+        return df_pl
+    
+    with memory_efficient_context():
+        # Ensure proper sorting
+        df_pl = df_pl.sort(["slot_start_date_time", "slot"])
+        
+        # Get time range
+        time_stats = df_pl.select([
+            pl.col("slot_start_date_time").min().alias("min_time"),
+            pl.col("slot_start_date_time").max().alias("max_time")
+        ])
+        
+        min_time = time_stats.select("min_time").item()
+        max_time = time_stats.select("max_time").item()
+        time_range_ns = (max_time - min_time).total_seconds() * 1e9
+        bucket_duration_ns = time_range_ns / num_buckets
+        
+        logger.info(f"Creating {num_buckets} time buckets from {min_time} to {max_time}")
+        
+        # Create bucket assignments efficiently in pure Polars
+        df_pl = df_pl.with_columns([
+            # Calculate bucket number (0-based, then make 1-based)
+            ((pl.col("slot_start_date_time") - pl.lit(min_time)).dt.total_nanoseconds() / 
+             pl.lit(bucket_duration_ns)).floor().cast(pl.Int32).alias("bucket_number_raw")
+        ]).with_columns([
+            # Clamp to valid range and make 1-based
+            pl.when(pl.col("bucket_number_raw") >= num_buckets)
+            .then(pl.lit(num_buckets - 1))
+            .otherwise(pl.col("bucket_number_raw"))
+            .alias("bucket_number_0_based")
+        ]).with_columns([
+            (pl.col("bucket_number_0_based") + 1).alias("bucket_number")
+        ])
+        
+        # Add bucket metadata with proper duration calculation
+        bucket_duration_seconds = bucket_duration_ns / 1e9
+        df_pl = df_pl.with_columns([
+            # Use simpler approach - add bucket info without complex datetime ops
+            pl.col("bucket_number").alias("time_bucket"),
+            # Store bucket duration as a reference
+            pl.lit(bucket_duration_seconds).alias("bucket_duration_seconds")
+        ])
+        
+        # Drop temporary columns
+        df_pl = df_pl.drop(["bucket_number_raw", "bucket_number_0_based"])
+        
+        logger.info(f"Created {num_buckets} time buckets for {df_pl.height:,} records")
+        return df_pl
+
+
 def create_time_buckets_polars(df: pd.DataFrame, num_buckets: int = 30) -> pd.DataFrame:
+    """
+    Create time buckets using Polars backend, return pandas for compatibility.
+    """
+    # Convert to polars, process, convert back
+    df_pl = pl.from_pandas(df)
+    bucketed_pl = create_time_buckets_polars_native(df_pl, num_buckets)
+    return bucketed_pl.to_pandas()
     """
     Create time buckets using Polars for optimal performance.
     
@@ -205,12 +275,99 @@ def create_gas_buckets_polars(df: pd.DataFrame, bucket_size: int = 2_000_000, ga
         return result_df
 
 
+def aggregate_data_polars_native(
+    df_pl: pl.DataFrame,
+    group_by: List[str] = None,
+    metrics: List[str] = None,
+    agg_function: str = 'mean'
+) -> pl.DataFrame:
+    """
+    Aggregate data staying in Polars format throughout.
+    
+    Args:
+        df_pl: Polars DataFrame to aggregate
+        group_by: List of columns to group by
+        metrics: List of metric columns to aggregate
+        agg_function: Aggregation function ('mean', 'median', 'p95', etc.)
+        
+    Returns:
+        Aggregated Polars DataFrame
+    """
+    if df_pl.height == 0:
+        logger.warning("Cannot aggregate: empty DataFrame")
+        return pl.DataFrame()
+    
+    if not group_by:
+        logger.warning("No grouping columns specified")
+        return df_pl
+    
+    if not metrics:
+        logger.warning("No metrics specified")
+        return df_pl
+    
+    with memory_efficient_context():
+        # Filter to available columns
+        available_group_by = [col for col in group_by if col in df_pl.columns]
+        available_metrics = [col for col in metrics if col in df_pl.columns]
+        
+        if not available_group_by or not available_metrics:
+            logger.warning(f"Missing required columns. Group by: {available_group_by}, Metrics: {available_metrics}")
+            return df_pl
+        
+        logger.info(f"Aggregating {df_pl.height:,} records by {available_group_by} using {agg_function}")
+        
+        # Create aggregation expressions based on function
+        agg_exprs = []
+        
+        for metric in available_metrics:
+            if agg_function == 'mean':
+                agg_exprs.append(pl.col(metric).mean().alias(f"{metric}_mean"))
+            elif agg_function == 'median':
+                agg_exprs.append(pl.col(metric).median().alias(f"{metric}_median"))
+            elif agg_function == 'p95':
+                agg_exprs.append(pl.col(metric).quantile(0.95).alias(f"{metric}_p95"))
+            elif agg_function == 'p99':
+                agg_exprs.append(pl.col(metric).quantile(0.99).alias(f"{metric}_p99"))
+            elif agg_function == 'min':
+                agg_exprs.append(pl.col(metric).min().alias(f"{metric}_min"))
+            elif agg_function == 'max':
+                agg_exprs.append(pl.col(metric).max().alias(f"{metric}_max"))
+            elif agg_function == 'std':
+                agg_exprs.append(pl.col(metric).std().alias(f"{metric}_std"))
+            elif agg_function == 'count':
+                agg_exprs.append(pl.col(metric).count().alias(f"{metric}_count"))
+            else:
+                # Default to mean
+                agg_exprs.append(pl.col(metric).mean().alias(f"{metric}_mean"))
+        
+        # Add count of records per group
+        agg_exprs.append(pl.len().alias("record_count"))
+        
+        # Perform aggregation
+        aggregated_pl = (
+            df_pl
+            .group_by(available_group_by)
+            .agg(agg_exprs)
+            .sort(available_group_by)
+        )
+        
+        logger.info(f"Aggregated to {aggregated_pl.height:,} groups")
+        return aggregated_pl
+
+
 def aggregate_data_polars(
     df: pd.DataFrame,
     group_by: List[str] = None,
     metrics: List[str] = None,
     agg_function: str = 'mean'
 ) -> pd.DataFrame:
+    """
+    Aggregate data using Polars backend, return pandas for compatibility.
+    """    
+    # Convert to polars, aggregate, convert back
+    df_pl = pl.from_pandas(df)
+    aggregated_pl = aggregate_data_polars_native(df_pl, group_by, metrics, agg_function)
+    return aggregated_pl.to_pandas()
     """
     Flexible aggregation using Polars for optimal performance.
     

@@ -280,8 +280,8 @@ def validate_analysis_config(
         errors.append("Start date must be before end date")
         
     date_range = end_date - start_date
-    if date_range.days > 90:
-        errors.append("Date range cannot exceed 90 days")
+    # No maximum date range limit - let user request as much data as needed
+    # If they request too much data, the system will error out naturally
         
     if date_range.days < 1:
         errors.append("Date range must be at least 1 day")
