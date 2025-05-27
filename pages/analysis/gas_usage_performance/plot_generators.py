@@ -33,7 +33,8 @@ def create_gas_vs_arrival_scatter(
     agg_function: str = "mean",
     network: str = None,
     time_range: str = None,
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = None,
+    show_reference_line: bool = False
 ) -> go.Figure:
     """
     Create interactive scatter plot of gas usage vs arrival times.
@@ -85,6 +86,11 @@ def create_gas_vs_arrival_scatter(
     else:
         metadata_parts.append(f"Data Points: {data_count:,}")
     
+    # Add correlation statistics to metadata if available
+    if correlation_data:
+        metadata_parts.append(f"Correlation: r={correlation_data['correlation']:.3f} (p={correlation_data['p_value']:.4f})")
+        metadata_parts.append(f"R²={correlation_data['r_squared']:.3f}")
+    
     # Use annotations instead of title overflow
     title = main_title
     
@@ -114,11 +120,14 @@ def create_gas_vs_arrival_scatter(
         hover_data.append('meta_client_geo_continent_code')
     
     # Choose grouping for discrete series (avoid continuous scales)
+    # Prioritize consensus implementation for coloring, then continent
     color_column = None
-    if 'meta_consensus_implementation' in data.columns:
+    if 'meta_consensus_implementation' in data.columns and data['meta_consensus_implementation'].nunique() <= 10:
         color_column = 'meta_consensus_implementation'
-    elif 'meta_client_geo_continent_code' in data.columns:
+    elif 'meta_client_geo_continent_code' in data.columns and data['meta_client_geo_continent_code'].nunique() <= 10:
         color_column = 'meta_client_geo_continent_code'
+    elif 'gas_bucket' in data.columns and data['gas_bucket'].nunique() <= 15:
+        color_column = 'gas_bucket'
     
     # Create scatter plot with discrete color grouping if available
     if color_column and data[color_column].nunique() <= 10:  # Limit to reasonable number of groups
@@ -136,6 +145,23 @@ def create_gas_vs_arrival_scatter(
             hover_data=hover_data,
             color_discrete_sequence=px.colors.qualitative.Set1
         )
+        
+        # Improve marker size for aggregated data
+        fig.update_traces(marker=dict(size=8, opacity=0.8))
+        
+        # Add node count to legend names if we have implementation/continent grouping and original data
+        if (metadata and 'combined_data' in metadata and 
+            'meta_client_name' in metadata['combined_data'].columns and
+            color_column in ['meta_consensus_implementation', 'meta_client_geo_continent_code']):
+            
+            # Update legend names to include node counts
+            original_data = metadata['combined_data']
+            for trace in fig.data:
+                if hasattr(trace, 'name') and trace.name:
+                    # Find group name from trace
+                    group_name = trace.name
+                    group_nodes = original_data[original_data[color_column] == group_name]['meta_client_name'].nunique()
+                    trace.name = f"{group_name} ({group_nodes} nodes)"
     else:
         # Single series if no good grouping column
         fig = px.scatter(
@@ -150,7 +176,7 @@ def create_gas_vs_arrival_scatter(
             hover_data=hover_data
         )
     
-    # Add trend line if correlation data available
+    # Always add trend line if correlation data available
     if correlation_data and len(data) > 10:
         x_range = np.linspace(data[x_metric].min(), data[x_metric].max(), 100)
         y_trend = correlation_data['slope'] * x_range + correlation_data['intercept']
@@ -159,9 +185,33 @@ def create_gas_vs_arrival_scatter(
             x=x_range,
             y=y_trend,
             mode='lines',
-            name='Trend Line',
+            name='Actual Trend',
             line=dict(dash='dash', color='red', width=2),
-            hovertemplate='Trend Line<extra></extra>'
+            hovertemplate=f'Actual Trend<br>Slope: {correlation_data["slope"]:.2e}<extra></extra>'
+        ))
+    
+    # Add 1:1 reference line if requested and metrics are comparable
+    if show_reference_line and 'gas' in x_metric.lower() and 'time' in y_metric.lower():
+        # For gas vs time, we need to scale appropriately
+        # Assume 1 unit of gas = some constant time (need to determine scale)
+        x_min, x_max = data[x_metric].min(), data[x_metric].max()
+        
+        # Calculate a reasonable scale factor based on the data
+        # Use the mean ratio as a starting point
+        gas_mean = data[x_metric].mean()
+        time_mean = data[y_metric].mean()
+        scale_factor = time_mean / gas_mean if gas_mean > 0 else 1
+        
+        x_ref = np.array([x_min, x_max])
+        y_ref = x_ref * scale_factor  # 1:1 linear relationship with scaling
+        
+        fig.add_trace(go.Scatter(
+            x=x_ref,
+            y=y_ref,
+            mode='lines',
+            name='1:1 Linear Reference',
+            line=dict(dash='dot', color='black', width=2),
+            hovertemplate=f'1:1 Linear Reference<br>Scale: 1 gas = {scale_factor:.2e} ms<extra></extra>'
         ))
     
     # Update layout with clean axis lines, interactive legend, and metadata annotations
@@ -199,6 +249,7 @@ def create_gas_vs_arrival_scatter(
             rangemode='tozero',
             title=f'{y_info["title"]} ({y_info["unit"]})'
         ),
+        margin=dict(r=200),  # Right margin for legend with node counts
         annotations=[
             dict(
                 text=' | '.join(metadata_parts),
@@ -357,7 +408,7 @@ def create_time_series_comparison(
             mirror=False,
             ticks='outside'
         ),
-        margin=dict(r=150),  # Add right margin for legend
+        margin=dict(r=200),  # Right margin for legend with node counts
         annotations=[
             dict(
                 text=' | '.join(metadata_parts),
@@ -403,7 +454,9 @@ def create_multi_y_correlation_plot(
     time_range: str = None,
     metadata: Dict[str, Any] = None,
     start_y_from_zero: bool = True,
-    show_attestation_deadline: bool = True
+    show_attestation_deadline: bool = True,
+    extrapolate_to_deadline: bool = False,
+    show_reference_line: bool = False
 ) -> go.Figure:
     """
     Create scatter plot with multiple y-axis metrics against one x-metric.
@@ -462,63 +515,290 @@ def create_multi_y_correlation_plot(
     ]
     color_idx = 0
     
-    # Plot each y-metric as a separate trace with trend lines
-    for y_metric in y_metrics:
-        if y_metric in data.columns:
-            y_info = get_metric_info(y_metric)
-            current_color = colors[color_idx % len(colors)]
+    # Track colors used for each trace to match trend lines
+    trace_colors = {}
+    
+    # Create annotations list for trend line intersections
+    annotations = []
+    
+    # Check if we should group by implementation or other categorical variables
+    group_by_implementation = ('meta_consensus_implementation' in data.columns and 
+                              data['meta_consensus_implementation'].nunique() > 1 and 
+                              data['meta_consensus_implementation'].nunique() <= 10)
+    
+    group_by_continent = ('meta_client_geo_continent_code' in data.columns and 
+                         data['meta_client_geo_continent_code'].nunique() > 1 and 
+                         data['meta_client_geo_continent_code'].nunique() <= 8)
+    
+    # Determine grouping strategy
+    if group_by_implementation:
+        grouping_column = 'meta_consensus_implementation'
+        grouping_title = 'Implementation'
+    elif group_by_continent:
+        grouping_column = 'meta_client_geo_continent_code'
+        grouping_title = 'Continent'
+    else:
+        grouping_column = None
+        grouping_title = None
+    
+    # Plot data grouped by implementation/continent and y-metric
+    if grouping_column:
+        # Group by implementation/continent first, then by y-metric
+        for group_value in sorted(data[grouping_column].unique()):
+            group_data = data[data[grouping_column] == group_value]
             
-            # Add scatter plot
-            fig.add_trace(
-                go.Scatter(
-                    x=data[x_metric],
-                    y=data[y_metric],
-                    mode='markers',
-                    name=y_info["title"],
-                    marker=dict(
-                        color=current_color,
-                        size=6,
-                        opacity=0.7
-                    ),
-                    hovertemplate=f'{x_info["title"]}: %{{x:.2f}} {x_info["unit"]}<br>' +
-                                 f'{y_info["title"]}: %{{y:.2f}} {y_info["unit"]}<extra></extra>',
-                    showlegend=True
+            # Calculate node count for this group if we have original node data
+            node_count_info = ""
+            if metadata and 'combined_data' in metadata:
+                # Try to get node count from original data
+                original_data = metadata['combined_data']
+                if 'meta_client_name' in original_data.columns and grouping_column in original_data.columns:
+                    group_nodes = original_data[original_data[grouping_column] == group_value]['meta_client_name'].nunique()
+                    node_count_info = f" ({group_nodes} nodes)"
+            
+            for y_metric in y_metrics:
+                if y_metric in group_data.columns and not group_data[y_metric].isna().all():
+                    y_info = get_metric_info(y_metric)
+                    current_color = colors[color_idx % len(colors)]
+                    
+                    # Create combined name for legend with node count
+                    trace_name = f"{group_value}{node_count_info} - {y_info['title']}"
+                    
+                    # Track color for this trace (for matching trend lines)
+                    trace_key = f"{group_value}_{y_metric}"
+                    trace_colors[trace_key] = current_color
+                    
+                    # Add scatter plot for this implementation + metric combination
+                    fig.add_trace(
+                        go.Scatter(
+                            x=group_data[x_metric],
+                            y=group_data[y_metric],
+                            mode='markers',
+                            name=trace_name,
+                            marker=dict(
+                                color=current_color,
+                                size=8,
+                                opacity=0.8
+                            ),
+                            hovertemplate=f'{grouping_title}: {group_value}<br>' +
+                                         f'{x_info["title"]}: %{{x:.2f}} {x_info["unit"]}<br>' +
+                                         f'{y_info["title"]}: %{{y:.2f}} {y_info["unit"]}<extra></extra>',
+                            showlegend=True
+                        )
+                    )
+                    color_idx += 1
+    else:
+        # Fallback to original behavior - plot each y-metric as a separate trace
+        for y_metric in y_metrics:
+            if y_metric in data.columns:
+                y_info = get_metric_info(y_metric)
+                current_color = colors[color_idx % len(colors)]
+                
+                # Track color for this metric
+                trace_colors[y_metric] = current_color
+                
+                # Add scatter plot
+                fig.add_trace(
+                    go.Scatter(
+                        x=data[x_metric],
+                        y=data[y_metric],
+                        mode='markers',
+                        name=y_info["title"],
+                        marker=dict(
+                            color=current_color,
+                            size=6,
+                            opacity=0.7
+                        ),
+                        hovertemplate=f'{x_info["title"]}: %{{x:.2f}} {x_info["unit"]}<br>' +
+                                     f'{y_info["title"]}: %{{y:.2f}} {y_info["unit"]}<extra></extra>',
+                        showlegend=True
+                    )
                 )
-            )
+                color_idx += 1
             
-            # Add trend line if we have enough data points
-            if len(data) > 10:
+    # Add trend lines after all scatter plots
+    if len(data) > 10:
+        if grouping_column:
+            # For grouped data, add trend lines for each group + metric combination
+            for group_value in sorted(data[grouping_column].unique()):
+                group_data = data[data[grouping_column] == group_value]
+                if len(group_data) > 5:  # Need minimum points for trend
+                    for y_metric in y_metrics:
+                        if y_metric in group_data.columns and not group_data[y_metric].isna().all():
+                            try:
+                                correlation_data = calculate_correlation_analysis(group_data, x_metric, y_metric)
+                                if correlation_data and 'slope' in correlation_data and 'intercept' in correlation_data:
+                                    x_min = group_data[x_metric].min()
+                                    x_max = group_data[x_metric].max()
+                                    
+                                    # Calculate intersection with 4s deadline if extrapolation is enabled
+                                    deadline_intersection = None
+                                    if extrapolate_to_deadline and 'ms' in get_metric_info(y_metric).get("unit", ""):
+                                        # Only extrapolate for timing metrics (ms unit)
+                                        # Solve: 4000 = slope * x + intercept -> x = (4000 - intercept) / slope
+                                        if correlation_data['slope'] != 0:
+                                            x_at_4s = (4000 - correlation_data['intercept']) / correlation_data['slope']
+                                            if x_at_4s > 0:  # Only show positive gas values
+                                                deadline_intersection = x_at_4s
+                                                x_max = max(x_max, x_at_4s)
+                                    
+                                    x_range = np.linspace(x_min, x_max, 100)
+                                    y_trend = correlation_data['slope'] * x_range + correlation_data['intercept']
+                                    
+                                    y_info = get_metric_info(y_metric)
+                                    # Use the same color as the corresponding data trace
+                                    trace_key = f"{group_value}_{y_metric}"
+                                    trend_color = trace_colors.get(trace_key, colors[0])
+                                    
+                                    # Always add trend line with same color as data
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=x_range,
+                                            y=y_trend,
+                                            mode='lines',
+                                            name=f'{group_value} - {y_info["title"]} Trend',
+                                            line=dict(
+                                                color=trend_color,
+                                                width=1.5,
+                                                dash='dash'
+                                            ),
+                                            opacity=0.7,
+                                            showlegend=False,  # Don't clutter legend with trend lines
+                                            hovertemplate=f'Trend: {group_value} - {y_info["title"]}<br>' +
+                                                         f'R² = {correlation_data.get("r_squared", 0):.3f}<extra></extra>'
+                                        )
+                                    )
+                                    
+                                    # Add annotation for 4s intersection if available
+                                    if deadline_intersection:
+                                        # Round to nearest million for cleaner display
+                                        gas_millions = round(deadline_intersection / 1_000_000)
+                                        annotations.append(dict(
+                                            x=deadline_intersection,
+                                            y=4000,
+                                            text=f"{group_value}<br>{gas_millions}M gas",
+                                            showarrow=True,
+                                            arrowhead=2,
+                                            arrowsize=1,
+                                            arrowwidth=2,
+                                            arrowcolor=trend_color,
+                                            bgcolor="rgba(255,255,255,0.8)",
+                                            bordercolor=trend_color,
+                                            borderwidth=1,
+                                            borderpad=6,
+                                            font=dict(size=12, color=trend_color)
+                                        ))
+                            except Exception as e:
+                                logger.warning(f"Could not calculate trend line for {group_value} - {y_metric}: {e}")
+        else:
+            # For non-grouped data, add trend lines for each metric
+            for y_metric in y_metrics:
+                if y_metric in data.columns:
+                    try:
+                        correlation_data = calculate_correlation_analysis(data, x_metric, y_metric)
+                        if correlation_data and 'slope' in correlation_data and 'intercept' in correlation_data:
+                            x_min = data[x_metric].min()
+                            x_max = data[x_metric].max()
+                            
+                            # Calculate intersection with 4s deadline if extrapolation is enabled
+                            deadline_intersection = None
+                            if extrapolate_to_deadline and 'ms' in get_metric_info(y_metric).get("unit", ""):
+                                # Only extrapolate for timing metrics (ms unit)
+                                # Solve: 4000 = slope * x + intercept -> x = (4000 - intercept) / slope
+                                if correlation_data['slope'] != 0:
+                                    x_at_4s = (4000 - correlation_data['intercept']) / correlation_data['slope']
+                                    if x_at_4s > 0:  # Only show positive gas values
+                                        deadline_intersection = x_at_4s
+                                        x_max = max(x_max, x_at_4s)
+                            
+                            x_range = np.linspace(x_min, x_max, 100)
+                            y_trend = correlation_data['slope'] * x_range + correlation_data['intercept']
+                            
+                            y_info = get_metric_info(y_metric)
+                            # Use the same color as the corresponding data trace
+                            trend_color = trace_colors.get(y_metric, colors[0])
+                            
+                            # Always add trend line with same color as data
+                            fig.add_trace(
+                                go.Scatter(
+                                    x=x_range,
+                                    y=y_trend,
+                                    mode='lines',
+                                    name=f'{y_info["title"]} Trend',
+                                    line=dict(
+                                        color=trend_color,
+                                        width=2,
+                                        dash='dash'
+                                    ),
+                                    opacity=0.8,
+                                    showlegend=True,  # Show trend lines in legend for non-grouped
+                                    hovertemplate=f'Trend: {y_info["title"]}<br>' +
+                                                 f'R² = {correlation_data.get("r_squared", 0):.3f}<extra></extra>'
+                                )
+                            )
+                            
+                            # Add annotation for 4s intersection if available
+                            if deadline_intersection:
+                                # Round to nearest million for cleaner display
+                                gas_millions = round(deadline_intersection / 1_000_000)
+                                annotations.append(dict(
+                                    x=deadline_intersection,
+                                    y=4000,
+                                    text=f"{y_info['title']}<br>{gas_millions}M gas",
+                                    showarrow=True,
+                                    arrowhead=2,
+                                    arrowsize=1,
+                                    arrowwidth=2,
+                                    arrowcolor=trend_color,
+                                    bgcolor="rgba(255,255,255,0.8)",
+                                    bordercolor=trend_color,
+                                    borderwidth=1,
+                                    borderpad=6,
+                                    font=dict(size=12, color=trend_color)
+                                ))
+                    except Exception as e:
+                        logger.warning(f"Could not calculate trend line for {y_metric}: {e}")
+    
+    # Add 1:1 reference lines if requested and we have gas vs time metrics
+    if show_reference_line and 'gas' in x_metric.lower():
+        for y_metric in y_metrics:
+            if y_metric in data.columns and 'time' in y_metric.lower():
                 try:
-                    correlation_data = calculate_correlation_analysis(data, x_metric, y_metric)
-                    if correlation_data and 'slope' in correlation_data and 'intercept' in correlation_data:
-                        x_range = np.linspace(data[x_metric].min(), data[x_metric].max(), 100)
-                        y_trend = correlation_data['slope'] * x_range + correlation_data['intercept']
+                    # Calculate scale factor for this specific metric pair
+                    x_data = data[x_metric].dropna()
+                    y_data = data[y_metric].dropna()
+                    
+                    if len(x_data) > 0 and len(y_data) > 0:
+                        x_mean = x_data.mean()
+                        y_mean = y_data.mean()
+                        scale_factor = y_mean / x_mean if x_mean > 0 else 1
                         
-                        # Add trend line with same color but more transparent
+                        x_min, x_max = x_data.min(), x_data.max()
+                        x_ref = np.array([x_min, x_max])
+                        y_ref = x_ref * scale_factor
+                        
+                        y_info = get_metric_info(y_metric)
+                        ref_color = 'black'
+                        
                         fig.add_trace(
                             go.Scatter(
-                                x=x_range,
-                                y=y_trend,
+                                x=x_ref,
+                                y=y_ref,
                                 mode='lines',
-                                name=f'{y_info["title"]} Trend',
+                                name='1:1 Linear Reference',
                                 line=dict(
-                                    color=current_color,
+                                    color=ref_color,
                                     width=2,
-                                    dash='dash'
+                                    dash='dot'
                                 ),
-                                opacity=0.8,
-                                showlegend=True,  # Show trend lines in legend
-                                hovertemplate=f'Trend: {y_info["title"]}<br>' +
-                                             f'R² = {correlation_data.get("r_squared", 0):.3f}<extra></extra>'
+                                opacity=0.6,
+                                showlegend=True,
+                                hovertemplate=f'1:1 Linear Reference<br>' +
+                                             f'Scale: 1 gas = {scale_factor:.2e} {y_info["unit"]}<extra></extra>'
                             )
                         )
                 except Exception as e:
-                    logger.warning(f"Could not calculate trend line for {y_metric}: {e}")
-            
-            color_idx += 1
-    
-    # Create annotations list
-    annotations = []
+                    logger.warning(f"Could not add 1:1 reference line for {y_metric}: {e}")
     
     # Add subtitle annotation
     if subtitle:
@@ -530,6 +810,7 @@ def create_multi_y_correlation_plot(
             xanchor='center', yanchor='bottom',
             font=dict(size=12, color="gray")
         ))
+    
     
     
     # Determine y-axis title based on metric units
@@ -552,12 +833,13 @@ def create_multi_y_correlation_plot(
         y_axis_title = "Performance Metrics"
     
     # Add ethPandaOps logo using add_layout_image (will be added after layout update)
+    # Position logo at top left next to title
     logo_config = dict(
         source="https://ethpandaops.io/img/logo-slim.png",
         xref="paper", yref="paper",
-        x=0.99, y=1.05,  # Top right, slightly above chart
-        sizex=0.15, sizey=0.15,
-        xanchor="right", yanchor="bottom"
+        x=0.02, y=0.98,  # Top left position
+        sizex=0.08, sizey=0.08,  # Small logo
+        xanchor="left", yanchor="top"
     )
     
     # Update layout
@@ -571,9 +853,9 @@ def create_multi_y_correlation_plot(
             itemdoubleclick="toggleothers",
             orientation="v",
             yanchor="top",
-            y=0.98,
-            xanchor="right",
-            x=0.98,
+            y=0.95,
+            xanchor="left",
+            x=1.02,  # Position legend to the right of the chart
             bgcolor="rgba(255,255,255,0.9)",
             bordercolor="rgba(0,0,0,0.3)",
             borderwidth=1
@@ -595,7 +877,7 @@ def create_multi_y_correlation_plot(
             title=y_axis_title,
             rangemode='tozero' if start_y_from_zero else 'normal'
         ),
-        margin=dict(r=0, t=120),  # Reduced right margin since legend is inside chart
+        margin=dict(r=200, t=120, l=80),  # Right margin for legend, left margin for logo
         annotations=annotations if annotations else None
     )
     
@@ -858,6 +1140,156 @@ def create_correlation_matrix(
         height=500,
         width=500,
         xaxis_tickangle=-45
+    )
+    
+    return add_ethPandaOps_logo(fig)
+
+
+def create_gas_vs_head_time_plot(
+    relationship_data: Dict[str, Any],
+    show_binned: bool = True,
+    title_suffix: str = "",
+    network: str = None,
+    time_range: str = None
+) -> go.Figure:
+    """
+    Create visualization for gas usage vs head time relationship analysis.
+    
+    Args:
+        relationship_data: Output from calculate_gas_vs_head_time_relationship
+        show_binned: Whether to show binned analysis overlay
+        title_suffix: Additional text for plot title
+        network: Network name for metadata
+        time_range: Time range for metadata
+        
+    Returns:
+        Plotly figure showing the relationship
+    """
+    if not relationship_data or 'visualization_data' not in relationship_data:
+        logger.warning("Cannot create gas vs head time plot: no data")
+        return go.Figure()
+    
+    viz_data = relationship_data['visualization_data']
+    scatter_df = pd.DataFrame(viz_data['scatter_data'])
+    
+    # Create figure
+    fig = go.Figure()
+    
+    # Add scatter plot of raw data
+    fig.add_trace(go.Scatter(
+        x=scatter_df[viz_data['x_column']],
+        y=scatter_df[viz_data['y_column']],
+        mode='markers',
+        name='Data Points',
+        marker=dict(
+            size=6,
+            color='lightblue',
+            opacity=0.6,
+            line=dict(width=1, color='darkblue')
+        ),
+        hovertemplate='Gas: %{x:,.0f}<br>Head Time: %{y:.2f} ms<extra></extra>'
+    ))
+    
+    # Add trend line if available
+    if 'trend_line' in viz_data:
+        trend = viz_data['trend_line']
+        fig.add_trace(go.Scatter(
+            x=trend['x'],
+            y=trend['y'],
+            mode='lines',
+            name='Linear Fit',
+            line=dict(color='red', width=3, dash='solid'),
+            hovertemplate=f"{trend['equation']}<br>R² = {trend['r_squared']:.3f}<extra></extra>"
+        ))
+    
+    # Add binned analysis if available and requested
+    if show_binned and 'binned_analysis' in relationship_data:
+        bin_data = pd.DataFrame(relationship_data['binned_analysis']['bin_data'])
+        if not bin_data.empty:
+            # Add binned averages
+            fig.add_trace(go.Scatter(
+                x=bin_data['gas_bin_midpoint'],
+                y=bin_data[f"{viz_data['y_column']}_mean"],
+                mode='lines+markers',
+                name='Binned Average',
+                line=dict(color='darkgreen', width=2),
+                marker=dict(size=10, symbol='diamond'),
+                error_y=dict(
+                    type='data',
+                    array=bin_data[f"{viz_data['y_column']}_std"],
+                    visible=True,
+                    color='green'
+                ),
+                hovertemplate='Gas Bin: %{x:,.0f}<br>Avg Head Time: %{y:.2f} ms<br>±%{error_y.array:.2f}<extra></extra>'
+            ))
+    
+    # Create title with relationship description
+    main_title = viz_data.get('title', 'Gas Usage vs Head Time Relationship')
+    if 'relationship_description' in relationship_data:
+        main_title += f" - {relationship_data['relationship_description']}"
+    main_title += title_suffix
+    
+    # Create metadata annotation
+    metadata_parts = []
+    if network:
+        metadata_parts.append(f"Network: {network.title()}")
+    if time_range:
+        metadata_parts.append(f"Period: {time_range}")
+    
+    # Add statistical information
+    if 'correlation_analysis' in relationship_data:
+        corr = relationship_data['correlation_analysis']
+        metadata_parts.append(f"Correlation: {corr['correlation']:.3f} (p={corr['p_value']:.4f})")
+        metadata_parts.append(f"R²: {corr['r_squared']:.3f}")
+    
+    metadata_parts.append(f"Samples: {relationship_data['sample_size']:,}")
+    
+    # Add linearity assessment
+    if 'is_linear' in relationship_data:
+        linearity_text = "Linear" if relationship_data['is_linear'] else "Non-linear"
+        confidence = relationship_data.get('linearity_confidence', 0)
+        metadata_parts.append(f"Relationship: {linearity_text} (confidence: {confidence:.1%})")
+    
+    # Update layout
+    fig.update_layout(
+        title=main_title,
+        xaxis_title=viz_data.get('x_label', 'Gas Used'),
+        yaxis_title=viz_data.get('y_label', 'Head Time (ms)'),
+        height=600,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
+        ),
+        xaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,
+            ticks='outside',
+            rangemode='tozero'
+        ),
+        yaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            mirror=False,
+            ticks='outside',
+            rangemode='tozero'
+        ),
+        annotations=[
+            dict(
+                text=' | '.join(metadata_parts),
+                showarrow=False,
+                xref="paper", yref="paper",
+                x=0, y=-0.12,
+                xanchor='left', yanchor='top',
+                font=dict(size=10, color="gray")
+            )
+        ]
     )
     
     return add_ethPandaOps_logo(fig)

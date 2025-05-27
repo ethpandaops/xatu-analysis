@@ -857,3 +857,170 @@ def calculate_comparative_analysis(
     return comparison_results
 
 
+def calculate_gas_vs_head_time_relationship(
+    df: pd.DataFrame,
+    gas_column: str = 'gas_used',
+    head_time_column: str = 'head_time_mean',
+    bin_size: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Calculate the relationship between gas used and head time.
+    
+    This function analyzes whether there's a linear relationship between 
+    gas usage and head time (block processing/propagation time).
+    
+    Args:
+        df: DataFrame with gas and head time data
+        gas_column: Column name for gas usage
+        head_time_column: Column name for head time
+        bin_size: Optional gas bin size for binned analysis
+        
+    Returns:
+        Dictionary containing:
+        - correlation_analysis: Correlation statistics (r, p-value, etc.)
+        - linear_regression: Linear regression results (slope, intercept, r-squared)
+        - binned_analysis: Gas-binned average head times (if bin_size provided)
+        - relationship_type: String describing the relationship
+        - visualization_data: Data formatted for plotting
+    """
+    if df.empty or gas_column not in df.columns or head_time_column not in df.columns:
+        logger.warning(f"Cannot calculate gas vs head time relationship: missing data or columns")
+        return {}
+    
+    # Remove NaN values
+    mask = df[[gas_column, head_time_column]].notna().all(axis=1)
+    clean_df = df.loc[mask]
+    
+    if len(clean_df) < 10:
+        logger.warning(f"Insufficient data for gas vs head time analysis: {len(clean_df)} samples")
+        return {}
+    
+    result = {
+        'sample_size': len(clean_df),
+        'gas_range': {
+            'min': float(clean_df[gas_column].min()),
+            'max': float(clean_df[gas_column].max()),
+            'mean': float(clean_df[gas_column].mean())
+        },
+        'head_time_range': {
+            'min': float(clean_df[head_time_column].min()),
+            'max': float(clean_df[head_time_column].max()),
+            'mean': float(clean_df[head_time_column].mean())
+        }
+    }
+    
+    # Calculate correlation analysis
+    correlation_data = calculate_correlation_analysis(clean_df, gas_column, head_time_column)
+    if correlation_data:
+        result['correlation_analysis'] = correlation_data
+        
+        # Determine relationship type based on correlation and p-value
+        r_value = correlation_data['correlation']
+        p_value = correlation_data['p_value']
+        
+        if p_value >= 0.05:
+            result['relationship_type'] = 'no_significant_relationship'
+            result['relationship_description'] = 'No statistically significant relationship'
+        elif abs(r_value) < 0.3:
+            result['relationship_type'] = 'weak'
+            result['relationship_description'] = f'Weak {"positive" if r_value > 0 else "negative"} relationship'
+        elif abs(r_value) < 0.7:
+            result['relationship_type'] = 'moderate'
+            result['relationship_description'] = f'Moderate {"positive" if r_value > 0 else "negative"} relationship'
+        else:
+            result['relationship_type'] = 'strong'
+            result['relationship_description'] = f'Strong {"positive" if r_value > 0 else "negative"} relationship'
+        
+        # Add linearity assessment
+        result['is_linear'] = abs(r_value) > 0.7 and p_value < 0.05
+        result['linearity_confidence'] = 1 - p_value if p_value < 0.05 else 0
+    
+    # Perform binned analysis if requested
+    if bin_size:
+        try:
+            # Create gas bins
+            min_gas = clean_df[gas_column].min()
+            max_gas = clean_df[gas_column].max()
+            
+            # Create bin edges
+            bin_edges = list(range(int(min_gas), int(max_gas) + bin_size, bin_size))
+            if bin_edges[-1] < max_gas:
+                bin_edges.append(bin_edges[-1] + bin_size)
+            
+            # Assign bins
+            clean_df = clean_df.copy()
+            clean_df['gas_bin'] = pd.cut(clean_df[gas_column], bins=bin_edges, include_lowest=True)
+            
+            # Calculate metrics per bin
+            bin_metrics = clean_df.groupby('gas_bin').agg({
+                head_time_column: ['mean', 'median', 'std', 'count'],
+                gas_column: ['mean', 'median']
+            }).reset_index()
+            
+            # Flatten column names
+            bin_metrics.columns = ['_'.join(col).strip('_') if col[1] else col[0] 
+                                  for col in bin_metrics.columns]
+            
+            # Add bin metadata
+            bin_metrics['gas_bin_start'] = bin_metrics['gas_bin'].apply(lambda x: float(x.left))
+            bin_metrics['gas_bin_end'] = bin_metrics['gas_bin'].apply(lambda x: float(x.right))
+            bin_metrics['gas_bin_midpoint'] = (bin_metrics['gas_bin_start'] + bin_metrics['gas_bin_end']) / 2
+            
+            # Filter bins with sufficient data
+            min_samples = 5
+            bin_metrics = bin_metrics[bin_metrics[f"{head_time_column}_count"] >= min_samples]
+            
+            result['binned_analysis'] = {
+                'bin_size': bin_size,
+                'num_bins': len(bin_metrics),
+                'bin_data': bin_metrics.to_dict('records')
+            }
+            
+            # Calculate trend across bins
+            if len(bin_metrics) >= 3:
+                bin_correlation = calculate_correlation_analysis(
+                    bin_metrics, 
+                    'gas_bin_midpoint', 
+                    f"{head_time_column}_mean"
+                )
+                if bin_correlation:
+                    result['binned_correlation'] = bin_correlation
+                    result['binned_trend_description'] = (
+                        f"Binned analysis shows {'positive' if bin_correlation['slope'] > 0 else 'negative'} "
+                        f"trend with R² = {bin_correlation['r_squared']:.3f}"
+                    )
+        
+        except Exception as e:
+            logger.error(f"Error in binned analysis: {e}")
+    
+    # Prepare visualization data
+    result['visualization_data'] = {
+        'scatter_data': clean_df[[gas_column, head_time_column]].to_dict('records'),
+        'x_column': gas_column,
+        'y_column': head_time_column,
+        'x_label': 'Gas Used',
+        'y_label': 'Head Time (ms)',
+        'title': 'Gas Usage vs Head Time Relationship'
+    }
+    
+    # Add trend line data if correlation exists
+    if 'correlation_analysis' in result and result['correlation_analysis']:
+        slope = result['correlation_analysis']['slope']
+        intercept = result['correlation_analysis']['intercept']
+        
+        # Generate trend line points
+        x_min, x_max = clean_df[gas_column].min(), clean_df[gas_column].max()
+        x_trend = np.linspace(x_min, x_max, 100)
+        y_trend = slope * x_trend + intercept
+        
+        result['visualization_data']['trend_line'] = {
+            'x': x_trend.tolist(),
+            'y': y_trend.tolist(),
+            'equation': f"y = {slope:.2e}x + {intercept:.2f}",
+            'r_squared': result['correlation_analysis']['r_squared']
+        }
+    
+    logger.info(f"Calculated gas vs head time relationship: {result.get('relationship_description', 'Unknown')}")
+    return result
+
+

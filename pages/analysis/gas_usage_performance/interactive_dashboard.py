@@ -353,19 +353,22 @@ def render_analysis_controls() -> Dict[str, Any]:
         aggregation_options = {
             'Client Level': None,  # No aggregation - raw client data
             'Slot Level': ['slot'],
-            'Consensus Implementation': ['meta_consensus_implementation'],
-            'Time Bucket': ['bucket_number'],
             'Gas Bucket': ['gas_bucket'],
-            'Implementation + Time': ['meta_consensus_implementation', 'bucket_number'],
-            'Implementation + Gas': ['meta_consensus_implementation', 'gas_bucket'],
-            'Continent': ['meta_client_geo_continent_code'],
-            'Continent + Time': ['meta_client_geo_continent_code', 'bucket_number']
+            'Gas Bucket + Implementation': ['gas_bucket', 'meta_consensus_implementation'],
+            'Gas Bucket + Continent': ['gas_bucket', 'meta_client_geo_continent_code'],
+            'Time Bucket': ['bucket_number'],
+            'Time Bucket + Implementation': ['bucket_number', 'meta_consensus_implementation'],
+            'Time Bucket + Gas Bucket': ['bucket_number', 'gas_bucket'],
+            'Implementation Only': ['meta_consensus_implementation'],
+            'Implementation + Gas + Time': ['meta_consensus_implementation', 'gas_bucket', 'bucket_number'],
+            'Continent Only': ['meta_client_geo_continent_code'],
+            'Continent + Implementation': ['meta_client_geo_continent_code', 'meta_consensus_implementation']
         }
         
         aggregation_level = st.selectbox(
             "Group data by:",
             list(aggregation_options.keys()),
-            index=4,  # Default to Gas Bucket
+            index=2,  # Default to Gas Bucket
             key="aggregation_level"
         )
         
@@ -391,7 +394,7 @@ def render_analysis_controls() -> Dict[str, Any]:
     
     # Chart configuration options
     st.write("**Chart Options**")
-    col4, col5 = st.columns(2)
+    col4, col5, col6 = st.columns(3)
     with col4:
         start_y_from_zero = st.checkbox(
             "Start Y-axis from 0",
@@ -399,12 +402,25 @@ def render_analysis_controls() -> Dict[str, Any]:
             key="start_y_from_zero",
             help="Force Y-axis to start from zero for better comparison"
         )
+        show_reference_line = st.checkbox(
+            "Show 1:1 reference line",
+            value=False,
+            key="show_reference_line",
+            help="Display a 1:1 linear reference line to compare against actual trend"
+        )
     with col5:
         show_attestation_deadline = st.checkbox(
             "Show 4s attestation deadline",
             value=True,
             key="show_attestation_deadline",
             help="Display a reference line at 4000ms for attestation timing analysis"
+        )
+    with col6:
+        extrapolate_to_deadline = st.checkbox(
+            "Extrapolate trends to 4s line",
+            value=False,
+            key="extrapolate_to_deadline",
+            help="Extend trend lines to 4s deadline and show predicted gas capacity"
         )
     
     # Don't store widget values in session state - they're already managed by the widgets
@@ -416,7 +432,9 @@ def render_analysis_controls() -> Dict[str, Any]:
         'aggregation_level': aggregation_level,
         'gas_bucket_size': gas_bucket_size,
         'start_y_from_zero': start_y_from_zero,
-        'show_attestation_deadline': show_attestation_deadline
+        'show_attestation_deadline': show_attestation_deadline,
+        'extrapolate_to_deadline': extrapolate_to_deadline,
+        'show_reference_line': show_reference_line
     }
 
 
@@ -448,7 +466,17 @@ def render_analysis_dashboard():
         # Check if gas bucket aggregation is requested
         needs_gas_bucketed_data = any('gas_bucket' in str(col) for col in analysis_config['group_by'])
         
-        if needs_time_bucketed_data and not period1_bucketed.empty:
+        if needs_time_bucketed_data and needs_gas_bucketed_data:
+            # Need both time and gas buckets - start with time bucketed data and add gas buckets
+            if not period1_bucketed.empty:
+                source_data = create_gas_buckets(period1_bucketed, bucket_size=analysis_config['gas_bucket_size'])
+                if 'gas_bucket' not in source_data.columns:
+                    st.warning("⚠️ Could not create gas buckets on time-bucketed data - using time buckets only")
+                    source_data = period1_bucketed
+            else:
+                st.warning("⚠️ No time-bucketed data available for combined aggregation")
+                source_data = period1_data
+        elif needs_time_bucketed_data and not period1_bucketed.empty:
             # Use pre-bucketed data for time bucket aggregations
             source_data = period1_bucketed
         elif needs_gas_bucketed_data:
@@ -471,6 +499,32 @@ def render_analysis_dashboard():
                 metrics=analysis_config['metrics'],
                 agg_function=analysis_config['agg_function']
             )
+        
+        # Show aggregation results for debugging
+        with st.expander("🔍 Aggregation Details", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Aggregated data shape:** {aggregated_data.shape}")
+                st.write(f"**Grouping columns:** {analysis_config['group_by']}")
+                if 'meta_consensus_implementation' in aggregated_data.columns:
+                    implementations = aggregated_data['meta_consensus_implementation'].unique()
+                    st.write(f"**Implementations found:** {', '.join(implementations)}")
+                    
+                    # Show node count per implementation
+                    period1_data_info = st.session_state.analysis_data.get('period1', {})
+                    if period1_data_info and 'combined_data' in period1_data_info:
+                        original_data = period1_data_info['combined_data']
+                        if 'meta_client_name' in original_data.columns:
+                            impl_node_counts = []
+                            for impl in implementations:
+                                node_count = original_data[original_data['meta_consensus_implementation'] == impl]['meta_client_name'].nunique()
+                                impl_node_counts.append(f"{impl}: {node_count}")
+                            st.write(f"**Node counts:** {', '.join(impl_node_counts)}")
+            with col2:
+                st.write(f"**Available columns:** {', '.join(aggregated_data.columns)}")
+                if 'gas_bucket' in aggregated_data.columns:
+                    gas_buckets = sorted(aggregated_data['gas_bucket'].unique())
+                    st.write(f"**Gas buckets:** {gas_buckets}")
         
         # If aggregated data is still too large, suggest higher-level aggregation
         max_chart_points = 5000  # Optimal for interactive charts
@@ -603,6 +657,14 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
             # Create chart metadata
             chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
             
+            # Add aggregation level information to metadata
+            if analysis_config and 'aggregation_level' in analysis_config:
+                chart_metadata['aggregation_level'] = analysis_config['aggregation_level']
+            
+            # Add original combined data for node counting in plots
+            if period_data and 'combined_data' in period_data:
+                chart_metadata['combined_data'] = period_data['combined_data']
+            
             # If working with aggregated data, ensure we still show unique nodes from original data
             if 'unique_nodes' not in chart_metadata and period_data and 'combined_data' in period_data:
                 if 'meta_client_name' in period_data['combined_data'].columns:
@@ -621,7 +683,9 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
                 time_range=chart_metadata.get('time_range'),
                 metadata=chart_metadata,
                 start_y_from_zero=analysis_config.get('start_y_from_zero', True),
-                show_attestation_deadline=analysis_config.get('show_attestation_deadline', True)
+                show_attestation_deadline=analysis_config.get('show_attestation_deadline', True),
+                extrapolate_to_deadline=analysis_config.get('extrapolate_to_deadline', False),
+                show_reference_line=analysis_config.get('show_reference_line', False)
             )
             st.plotly_chart(fig, use_container_width=True)
             
@@ -702,6 +766,14 @@ def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str],
             
             # Create chart metadata
             chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
+            
+            # Add aggregation level information to metadata
+            if analysis_config and 'aggregation_level' in analysis_config:
+                chart_metadata['aggregation_level'] = analysis_config['aggregation_level']
+            
+            # Add original combined data for node counting in plots
+            if period_data and 'combined_data' in period_data:
+                chart_metadata['combined_data'] = period_data['combined_data']
             
             # If working with aggregated data, ensure we still show unique nodes from original data
             if 'unique_nodes' not in chart_metadata and period_data and 'combined_data' in period_data:
