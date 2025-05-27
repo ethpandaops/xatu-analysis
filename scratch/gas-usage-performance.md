@@ -97,7 +97,7 @@ GROUP BY slot, slot_start_date_time, meta_client_name,
 
 **Function:** `fetch_execution_data(network, start_date, end_date)`
 
-**Source Table:** `canonical_beacon_block`
+**Source Table:** `beacon_api_eth_v2_beacon_block`
 
 **SQL Query:**
 ```sql

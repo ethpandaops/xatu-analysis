@@ -348,7 +348,7 @@ def load_canonical_block_data_polars(
             execution_payload_excess_blob_gas as excess_blob_gas,
             execution_payload_transactions_count as transaction_count,
             execution_payload_block_hash as block_hash
-        FROM canonical_beacon_block FINAL
+        FROM beacon_api_eth_v2_beacon_block FINAL
         WHERE meta_network_name = %(network)s
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND execution_payload_gas_used IS NOT NULL
@@ -561,7 +561,7 @@ def load_raw_data_as_polars(
             execution_payload_excess_blob_gas as excess_blob_gas,
             execution_payload_transactions_count as transaction_count,
             execution_payload_block_hash as block_hash
-        FROM canonical_beacon_block FINAL
+        FROM beacon_api_eth_v2_beacon_block FINAL
         WHERE meta_network_name = %(network)s
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND execution_payload_gas_used IS NOT NULL
