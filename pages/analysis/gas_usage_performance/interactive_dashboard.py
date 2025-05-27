@@ -375,7 +375,7 @@ def render_analysis_controls() -> Dict[str, Any]:
         st.write("**Aggregation Function**")
         agg_function = st.selectbox(
             "How to aggregate:",
-            ['mean', 'median', 'p95', 'p99', 'min', 'max'],
+            ['mean', 'median', 'p90', 'p95', 'p99', 'min', 'max'],
             index=0,
             key="agg_function"
         )
@@ -511,11 +511,16 @@ def create_chart_metadata(analysis_config: Dict[str, Any], period_data: Dict[str
     if 'network' in period_data:
         metadata['network'] = period_data['network']
     
-    # Extract block counts
+    # Extract block counts and unique nodes
     if 'combined_data' in period_data and not period_data['combined_data'].empty:
         # Count unique blocks (slots)
         unique_blocks = period_data['combined_data']['slot'].nunique() if 'slot' in period_data['combined_data'].columns else len(period_data['combined_data'])
         metadata['total_blocks'] = unique_blocks
+        
+        # Count unique nodes (clients)
+        if 'meta_client_name' in period_data['combined_data'].columns:
+            unique_nodes = period_data['combined_data']['meta_client_name'].nunique()
+            metadata['unique_nodes'] = unique_nodes
     
     return metadata
 
@@ -597,6 +602,11 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
             
             # Create chart metadata
             chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
+            
+            # If working with aggregated data, ensure we still show unique nodes from original data
+            if 'unique_nodes' not in chart_metadata and period_data and 'combined_data' in period_data:
+                if 'meta_client_name' in period_data['combined_data'].columns:
+                    chart_metadata['unique_nodes'] = period_data['combined_data']['meta_client_name'].nunique()
             
             # Map selected metrics to actual column names in the data
             actual_x_metric = metric_mapping.get(x_metric, x_metric)
@@ -692,6 +702,11 @@ def render_time_series_analysis(bucketed_data: pd.DataFrame, metrics: List[str],
             
             # Create chart metadata
             chart_metadata = create_chart_metadata(analysis_config or {}, period_data or {})
+            
+            # If working with aggregated data, ensure we still show unique nodes from original data
+            if 'unique_nodes' not in chart_metadata and period_data and 'combined_data' in period_data:
+                if 'meta_client_name' in period_data['combined_data'].columns:
+                    chart_metadata['unique_nodes'] = period_data['combined_data']['meta_client_name'].nunique()
             
             # Create time series plot
             fig = create_time_series_comparison(

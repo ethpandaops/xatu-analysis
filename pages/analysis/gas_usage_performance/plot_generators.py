@@ -75,10 +75,13 @@ def create_gas_vs_arrival_scatter(
     if time_range:
         metadata_parts.append(f"Period: {time_range}")
     
-    # Add data point count
+    # Add data point count and unique nodes
     data_count = len(data)
     if metadata and 'total_blocks' in metadata:
-        metadata_parts.append(f"Points: {data_count:,} (from {metadata['total_blocks']:,} blocks)")
+        block_info = f"Points: {data_count:,} (from {metadata['total_blocks']:,} blocks)"
+        if 'unique_nodes' in metadata:
+            block_info += f", {metadata['unique_nodes']} nodes"
+        metadata_parts.append(block_info)
     else:
         metadata_parts.append(f"Data Points: {data_count:,}")
     
@@ -309,7 +312,10 @@ def create_time_series_comparison(
     # Add bucket and data point information
     num_buckets = len(time_metrics)
     if metadata and 'total_blocks' in metadata:
-        metadata_parts.append(f"Buckets: {num_buckets} (from {metadata['total_blocks']:,} blocks)")
+        bucket_info = f"Buckets: {num_buckets} (from {metadata['total_blocks']:,} blocks)"
+        if 'unique_nodes' in metadata:
+            bucket_info += f", {metadata['unique_nodes']} nodes"
+        metadata_parts.append(bucket_info)
     else:
         metadata_parts.append(f"Time Buckets: {num_buckets}")
     
@@ -427,14 +433,17 @@ def create_multi_y_correlation_plot(
     agg_suffix = f" ({agg_function.title()})" if agg_function and agg_function != "mean" else ""
     main_title = f'{x_info["title"]} vs Performance Metrics{agg_suffix}{title_suffix}'
     
-    # Create subtitle with network, time range, and block count
+    # Create subtitle with network, time range, block count, and unique nodes
     subtitle_parts = []
     if network:
         subtitle_parts.append(f"Network: {network.title()}")
     if time_range:
         subtitle_parts.append(f"Period: {time_range}")
     if metadata and 'total_blocks' in metadata:
-        subtitle_parts.append(f"{metadata['total_blocks']:,} blocks")
+        block_info = f"{metadata['total_blocks']:,} blocks"
+        if 'unique_nodes' in metadata:
+            block_info += f", {metadata['unique_nodes']} nodes"
+        subtitle_parts.append(block_info)
     subtitle = ' | '.join(subtitle_parts) if subtitle_parts else ""
     
     # Create figure

@@ -107,7 +107,7 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
     agg_description = ""
     
     # Check for aggregation suffixes
-    for suffix in ['_mean', '_median', '_p95', '_p99', '_min', '_max', '_std', '_count']:
+    for suffix in ['_mean', '_median', '_p90', '_p95', '_p99', '_min', '_max', '_std', '_count']:
         if metric_name.endswith(suffix):
             base_metric = metric_name.replace(suffix, '')
             agg_suffix = suffix[1:]  # Remove the underscore
@@ -116,6 +116,7 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
             agg_descriptions = {
                 'mean': 'average',
                 'median': 'median (p50)',
+                'p90': 'p90',
                 'p95': 'p95',
                 'p99': 'p99',
                 'min': 'minimum',
@@ -303,6 +304,7 @@ def get_aggregation_functions() -> Dict[str, str]:
     return {
         "mean": "Average",
         "median": "Median (p50)",
+        "p90": "p90",
         "p95": "p95",
         "p99": "p99", 
         "min": "Minimum",
