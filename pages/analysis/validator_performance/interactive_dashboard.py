@@ -2167,6 +2167,15 @@ def render_main_content(config: Dict[str, Any]):
                         start_date, end_date = time_range
                         report.append(f"**Time Range**: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                     
+                    # Add excluded date ranges if any
+                    excluded_ranges = st.session_state.get('validator_performance_excluded_ranges', [])
+                    if excluded_ranges:
+                        exclusions_text = ", ".join([
+                            f"{exc['start']} to {exc['end']}" 
+                            for exc in excluded_ranges
+                        ])
+                        report.append(f"**Excluded Date Ranges**: {exclusions_text}")
+                    
                     report.append("\n---\n")
                     
                     # Metrics Interpretation - moved to the beginning for context

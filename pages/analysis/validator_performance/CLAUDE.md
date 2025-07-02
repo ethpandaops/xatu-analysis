@@ -50,24 +50,57 @@ All session state keys are prefixed with `validator_performance_` to avoid confl
 - `validator_performance_last_config` - Previous configuration for change detection
 - `validator_performance_data_loaded` - Boolean flag for data loading status
 
-## Future Integration Points
+## Current Implementation Status
 
-### ClickHouse Integration
-- Query validator attestations and block proposals
-- Aggregate performance metrics over time ranges
-- Support for efficient bulk validator queries
+### Data Sources and Integrations
+1. **ClickHouse Integration** ✅
+   - Queries validator indices from `canonical_beacon_validators_pubkeys` table
+   - Supports bulk validator lookups with efficient IN clause queries
+   - Network-aware queries (though currently limited to mainnet)
 
-### Beaconcha.in API Integration
-- Fetch additional validator metadata
-- Cross-reference performance data
-- Provide validator status and history
+2. **Beaconcha.in API Integration** ✅
+   - Implemented via BeaconchainClient
+   - Fetches comprehensive validator daily stats
+   - Provides historical performance data
 
-### Planned Metrics
-- Attestation effectiveness rate
-- Block proposal success rate
-- Sync committee participation
-- Validator uptime and consistency
-- Rewards and penalties tracking
+3. **Rated.network API Integration** ✅
+   - Three endpoints implemented:
+     - Effectiveness metrics endpoint for validator performance percentages
+     - Attestations endpoint for detailed attestation data
+     - Proposals endpoint for block proposal information
+   - Currently limited to mainnet due to API constraints
+
+### Implemented Metrics
+- **Effectiveness Metrics**: Validator, attester, and proposer effectiveness percentages
+- **Performance Tracking**: Uptime, correctness, inclusion delay
+- **Block Production**: Proposed blocks, missed blocks, orphaned blocks
+- **Attestations**: Missed attestations, orphaned attestations
+- **Sync Committee**: Participation tracking
+- **Slashing Events**: Both attester and proposer slashings
+- **Financial Metrics**: Balance tracking, deposits, withdrawals (in ETH)
+- **Data Export**: CSV download functionality for aggregated stats
+
+### Additional Features
+- **Date Exclusion**: Users can exclude specific date ranges from analysis
+- **UTC Time Handling**: All timestamps properly converted to UTC
+- **Bulk Operations**: Efficient handling of 100+ validators
+- **Aggregated Statistics**: Daily summaries and per-validator breakdowns
+- **Session State Management**: Proper configuration change detection
+
+## Limitations and Future Work
+
+### Current Limitations
+1. **Network Support**: Currently limited to mainnet only (Rated API constraint)
+2. **Visualizations**: No charts or plots implemented yet (plot_generators.py is empty)
+3. **API Performance**: Sequential API calls instead of parallel fetching
+4. **Caching**: No caching mechanism for API responses
+
+### Future Enhancements
+- Implement visualization layer with performance charts
+- Add support for other networks when APIs become available
+- Implement parallel API fetching for improved performance
+- Add response caching to reduce API calls
+- Enhance metrics_calculators.py with complex calculations
 
 ## Development Guidelines
 - Always validate pubkey format before processing
