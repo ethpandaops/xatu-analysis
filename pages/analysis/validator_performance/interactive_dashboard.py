@@ -9,6 +9,13 @@ from pages.analysis.validator_performance.config_utils import (
     format_pubkey_for_display, 
     get_validator_summary_text
 )
+from pages.analysis.validator_performance.data_loaders import load_validator_indices
+from pages.analysis.validator_performance.session_state import (
+    store_validator_mappings, 
+    get_valid_validators, 
+    get_excluded_validators,
+    clear_validator_mappings
+)
 
 
 def get_time_range_from_selection(
@@ -134,14 +141,6 @@ def render_validator_input() -> List[str]:
                 with st.expander(f"⚠️ {len(errors)} issue(s)", expanded=False):
                     for error in errors:
                         st.warning(error)
-        
-        # Show summary of selected validators
-        if valid_pubkeys:
-            with st.expander("Selected Validators", expanded=False):
-                for i, pubkey in enumerate(valid_pubkeys[:10]):  # Show first 10
-                    st.text(f"{i+1}. {pubkey}")
-                if len(valid_pubkeys) > 10:
-                    st.text(f"... and {len(valid_pubkeys) - 10} more")
         
         return valid_pubkeys
     else:
@@ -280,7 +279,9 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         )
         
         if load_button and len(validator_pubkeys) > 0:
-            st.info("🚧 Data loading functionality will be implemented in future updates")
+            # Set a flag to indicate loading was initiated
+            st.session_state['validator_performance_loading_initiated'] = True
+            st.rerun()
         
         # Check if configuration changed
         current_config = {
@@ -299,6 +300,8 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         
         if config_changed:
             st.session_state['validator_performance_data_loaded'] = False
+            st.session_state['validator_performance_loading_initiated'] = False
+            clear_validator_mappings()
         
         return {
             'network': network,
@@ -345,7 +348,31 @@ def render_main_content(config: Dict[str, Any]):
     if config['validator_pubkeys']:
         st.divider()
         st.subheader("Selected Validators")
-        st.info(get_validator_summary_text(config['validator_pubkeys']))
+        
+        # Get validator status if data has been loaded
+        pubkey_to_index = get_valid_validators()
+        excluded_pubkeys = get_excluded_validators()
+        
+        # Expandable list of validators with counts
+        found_count = sum(1 for pk in config['validator_pubkeys'] if pk in pubkey_to_index)
+        excluded_count = sum(1 for pk in config['validator_pubkeys'] if pk in excluded_pubkeys)
+        
+        expander_text = "View validator list"
+        if pubkey_to_index or excluded_pubkeys:  # If data has been loaded
+            expander_text = f"View validator list ({found_count} found, {excluded_count} excluded)"
+        
+        with st.expander(expander_text, expanded=False):
+            for i, pubkey in enumerate(config['validator_pubkeys']):
+                if pubkey in pubkey_to_index:
+                    st.text(f"{i+1}. ✅ {pubkey} (index: {pubkey_to_index[pubkey]})")
+                elif pubkey in excluded_pubkeys:
+                    st.text(f"{i+1}. ❌ {pubkey} (not found)")
+                else:
+                    st.text(f"{i+1}. {pubkey}")
+                
+                if i >= 99:  # Show max 100 validators
+                    st.text(f"... and {len(config['validator_pubkeys']) - 100} more")
+                    break
     
     # Data loading section
     st.divider()
@@ -353,37 +380,44 @@ def render_main_content(config: Dict[str, Any]):
     if not config['validator_pubkeys']:
         st.info("👈 Select validators in the sidebar to begin analysis")
     elif not st.session_state['validator_performance_data_loaded']:
-        st.info("🔄 Click 'Load Data' in the sidebar to fetch validator performance data")
-        
-        # Placeholder sections for future visualizations
-        with st.container():
-            st.subheader("📈 Performance Metrics")
-            st.caption("Performance metrics will be displayed here after data is loaded")
+        # Check if loading was initiated
+        if st.session_state.get('validator_performance_loading_initiated', False):
+            # Perform the actual data loading
+            network = config['network']
+            validator_pubkeys = config['validator_pubkeys']
             
-            # Placeholder columns for metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.empty()
-            with col2:
-                st.empty()
-            with col3:
-                st.empty()
-            with col4:
-                st.empty()
-        
-        with st.container():
-            st.subheader("📊 Attestation Performance")
-            st.caption("Attestation effectiveness and participation rates will be shown here")
-            st.empty()
-        
-        with st.container():
-            st.subheader("🎯 Block Proposals")
-            st.caption("Block proposal success rates and rewards will be visualized here")
-            st.empty()
+            # Load validator indices from ClickHouse
+            with st.spinner("Loading validator indices..."):
+                pubkey_to_index, missing_pubkeys = load_validator_indices(validator_pubkeys, network)
+            
+            # Display warnings for missing pubkeys in an expandable section
+            if missing_pubkeys:
+                st.warning(f"⚠️ {len(missing_pubkeys)} validator(s) not found in database and will be excluded")
+            
+            # Store results in session state
+            store_validator_mappings(pubkey_to_index, missing_pubkeys)
+            
+            # Display success/error message
+            if pubkey_to_index:
+                st.success(f"✅ Successfully loaded {len(pubkey_to_index)} validator(s)")
+                # Mark data as loaded
+                st.session_state['validator_performance_data_loaded'] = True
+                st.session_state['validator_performance_loading_initiated'] = False
+                st.rerun()
+            else:
+                st.error("❌ No valid validators found. Please check your validator pubkeys.")
+                st.session_state['validator_performance_loading_initiated'] = False
+        else:
+            st.info("🔄 Click 'Load Data' in the sidebar to fetch validator performance data")
     else:
-        # This section will be implemented when data loading is added
-        st.success("✅ Data loaded successfully")
-        st.info("🚧 Data visualization features will be implemented in future updates")
+        # Data has been loaded - show summary
+        pubkey_to_index = get_valid_validators()
+        excluded_pubkeys = get_excluded_validators()
+        
+        st.success(f"✅ {len(pubkey_to_index)} validator(s) found, {len(excluded_pubkeys)} excluded")
+        
+        st.divider()
+        st.info("🚧 Performance visualization features will be implemented in future updates")
 
 
 def run_dashboard():
