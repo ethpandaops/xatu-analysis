@@ -98,7 +98,9 @@ class BeaconchainClient:
         """
         params = {}
         if start_day is not None:
-            params['start_day'] = start_day
+            # Subtract 1 day to account for beaconcha.in's 12-hour split
+            # This ensures we capture all data even if the day boundary is at noon UTC
+            params['start_day'] = max(1, start_day - 1)  # Ensure we don't go below day 1
         if end_day is not None:
             params['end_day'] = end_day
         
@@ -106,10 +108,22 @@ class BeaconchainClient:
         
         try:
             parsed = BeaconchainResponse(**response)
+            
+            # Process the data to truncate dates to YYYY-MM-DD
+            data_list = parsed.data if isinstance(parsed.data, list) else [parsed.data]
+            
+            for item in data_list:
+                # Truncate day_start and day_end to just YYYY-MM-DD
+                if 'day_start' in item and item['day_start']:
+                    item['day_start'] = item['day_start'][:10]
+                if 'day_end' in item and item['day_end']:
+                    item['day_end'] = item['day_end'][:10]
+            
+            # Now create the model objects
             if isinstance(parsed.data, list):
-                return [ValidatorDailyStats(**v) for v in parsed.data]
+                return [ValidatorDailyStats(**v) for v in data_list]
             else:
-                return [ValidatorDailyStats(**parsed.data)]
+                return [ValidatorDailyStats(**data_list[0])]
         except ValidationError as e:
             logger.error(f"Failed to parse validator stats response: {e}")
             return []
