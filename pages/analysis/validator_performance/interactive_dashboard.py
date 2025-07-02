@@ -16,6 +16,7 @@ from pages.analysis.validator_performance.session_state import (
     get_excluded_validators,
     clear_validator_mappings
 )
+from shared import BeaconchainClient
 
 
 def get_time_range_from_selection(
@@ -101,6 +102,9 @@ def initialize_session_state():
     
     if 'validator_performance_data_loaded' not in st.session_state:
         st.session_state['validator_performance_data_loaded'] = False
+    
+    if 'validator_performance_api_test_results' not in st.session_state:
+        st.session_state['validator_performance_api_test_results'] = None
 
 
 def render_validator_input() -> List[str]:
@@ -301,6 +305,7 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         if config_changed:
             st.session_state['validator_performance_data_loaded'] = False
             st.session_state['validator_performance_loading_initiated'] = False
+            st.session_state['validator_performance_api_test_results'] = None
             clear_validator_mappings()
         
         return {
@@ -400,6 +405,46 @@ def render_main_content(config: Dict[str, Any]):
             # Display success/error message
             if pubkey_to_index:
                 st.success(f"✅ Successfully loaded {len(pubkey_to_index)} validator(s)")
+                
+                # Test BeaconchainClient.get_validator_performance
+                with st.spinner("Testing Beaconcha.in API..."):
+                    try:
+                        # Create client
+                        client = BeaconchainClient()
+                        
+                        # Get list of validator indices (max 10 for testing)
+                        test_indices = list(pubkey_to_index.values())[:10]
+                        
+                        # Call get_validator_performance
+                        performance_data = client.get_validator_performance(test_indices)
+                        
+                        # Store results in session state
+                        st.session_state['validator_performance_api_test_results'] = {
+                            'test_indices': test_indices,
+                            'performance_data': [
+                                {
+                                    "validatorindex": perf.validatorindex,
+                                    "balance": perf.balance,
+                                    "performance1d": perf.performance1d,
+                                    "performance7d": perf.performance7d,
+                                    "performance31d": perf.performance31d,
+                                    "performance365d": perf.performance365d,
+                                    "rank7d": perf.rank7d
+                                } for perf in performance_data
+                            ],
+                            'error': None
+                        }
+                        
+                        # Close the client
+                        client.close()
+                        
+                    except Exception as e:
+                        st.session_state['validator_performance_api_test_results'] = {
+                            'test_indices': test_indices,
+                            'performance_data': [],
+                            'error': str(e)
+                        }
+                
                 # Mark data as loaded
                 st.session_state['validator_performance_data_loaded'] = True
                 st.session_state['validator_performance_loading_initiated'] = False
@@ -416,8 +461,27 @@ def render_main_content(config: Dict[str, Any]):
         
         st.success(f"✅ {len(pubkey_to_index)} validator(s) found, {len(excluded_pubkeys)} excluded")
         
-        st.divider()
-        st.info("🚧 Performance visualization features will be implemented in future updates")
+        # Display API test results if available
+        if st.session_state.get('validator_performance_api_test_results'):
+            test_results = st.session_state['validator_performance_api_test_results']
+            
+            with st.expander("🧪 Beaconcha.in API Test Results", expanded=True):
+                if test_results.get('error'):
+                    st.error(f"❌ Error testing Beaconcha.in API: {test_results['error']}")
+                else:
+                    st.write(f"**Requested indices:** {test_results['test_indices']}")
+                    st.write(f"**Response count:** {len(test_results['performance_data'])}")
+                    
+                    if test_results['performance_data']:
+                        st.write("**Sample performance data:**")
+                        for i, perf in enumerate(test_results['performance_data'][:3]):  # Show max 3
+                            st.write(f"\n**Validator {perf['validatorindex']}:**")
+                            st.json(perf)
+                        
+                        if len(test_results['performance_data']) > 3:
+                            st.write(f"... and {len(test_results['performance_data']) - 3} more validators")
+                    else:
+                        st.warning("No performance data returned from API")
 
 
 def run_dashboard():

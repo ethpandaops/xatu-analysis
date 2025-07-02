@@ -24,6 +24,7 @@ from .filesystem import get_cache_dir
 from .parquet_utils import calculate_parquet_urls, download_and_cache_parquet
 from .data_utils import get_aggregate_function
 from .ui_components import add_ethPandaOps_logo, apply_ethPandaOps_styling
+from .beaconchain_client import BeaconchainClient, get_beaconchain_client
 
 # Ethereum-specific imports available as shared.ethereum.*
 from . import ethereum
@@ -36,5 +37,7 @@ __all__ = [
     'get_aggregate_function',
     'add_ethPandaOps_logo',
     'apply_ethPandaOps_styling',
+    'BeaconchainClient',
+    'get_beaconchain_client',
     'ethereum'
 ]
