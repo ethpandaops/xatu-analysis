@@ -89,7 +89,13 @@ class BeaconchainClient:
             return []
     
     def get_validator_stats(self, index: int, start_day: Optional[int] = None, end_day: Optional[int] = None) -> List[ValidatorDailyStats]:
-        """Get validator statistics over time"""
+        """Get validator statistics over time
+        
+        Args:
+            index: Validator index
+            start_day: Start day number (day 1 = Dec 1, 2020)
+            end_day: End day number (day 1 = Dec 1, 2020)
+        """
         params = {}
         if start_day is not None:
             params['start_day'] = start_day
