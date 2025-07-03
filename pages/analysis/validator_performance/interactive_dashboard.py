@@ -903,7 +903,7 @@ def render_main_content(config: Dict[str, Any]):
                                     'End Balance (ETH)': f"{stat.get('end_balance', 0) / 1e9:.6f}" if stat.get('end_balance') else "0",
                                     'Start Eff. Balance': stat.get('start_effective_balance', 0),
                                     'End Eff. Balance': stat.get('end_effective_balance', 0),
-                                    'Min Balance (ETH)': f"{stat.get('min_balance', 0) / 1e9:.6f}" if stat.get('min_balance') else "0",
+                                    'Min Balance (ETH)': f"{stat.get('min_balance', 0) / 1e9:.6f}" if stat.get('min_balance') is not None and stat.get('min_balance') > 0 else "N/A",
                                     'Max Balance (ETH)': f"{stat.get('max_balance', 0) / 1e9:.6f}" if stat.get('max_balance') else "0",
                                     'Min Eff. Balance': stat.get('min_effective_balance', 0),
                                     'Max Eff. Balance': stat.get('max_effective_balance', 0),
@@ -1912,7 +1912,10 @@ def render_main_content(config: Dict[str, Any]):
                                 'missed_sync': 0,
                                 'proposed_blocks': 0,
                                 'slashings': 0,
-                                'days': 0
+                                'days': 0,
+                                'start_balance': None,
+                                'end_balance': None,
+                                'lowest_balance': float('inf')
                             }
                         bc_validator_stats[idx]['missed_blocks'] += stat.get('missed_blocks', 0)
                         bc_validator_stats[idx]['missed_attestations'] += stat.get('missed_attestations', 0)
@@ -1920,6 +1923,17 @@ def render_main_content(config: Dict[str, Any]):
                         bc_validator_stats[idx]['proposed_blocks'] += stat.get('proposed_blocks', 0)
                         bc_validator_stats[idx]['slashings'] += stat.get('attester_slashings', 0) + stat.get('proposer_slashings', 0)
                         bc_validator_stats[idx]['days'] += 1
+                        # Track first start balance
+                        if bc_validator_stats[idx]['start_balance'] is None and stat.get('start_balance') is not None:
+                            bc_validator_stats[idx]['start_balance'] = stat.get('start_balance')
+                        # Keep the most recent end balance
+                        if stat.get('end_balance') is not None:
+                            bc_validator_stats[idx]['end_balance'] = stat.get('end_balance')
+                        # Track lowest of start and end balances
+                        if stat.get('start_balance') is not None and stat.get('start_balance') > 0:
+                            bc_validator_stats[idx]['lowest_balance'] = min(bc_validator_stats[idx]['lowest_balance'], stat.get('start_balance'))
+                        if stat.get('end_balance') is not None and stat.get('end_balance') > 0:
+                            bc_validator_stats[idx]['lowest_balance'] = min(bc_validator_stats[idx]['lowest_balance'], stat.get('end_balance'))
                 
                 # Analyze Rated data
                 rated_validator_stats = {}
@@ -1927,108 +1941,134 @@ def render_main_content(config: Dict[str, Any]):
                     for idx, records in validators_data.items():
                         total_days = len(records)
                         avg_effectiveness = sum(r.get('validatorEffectiveness', 0) for r in records) / total_days if total_days > 0 else 0
+                        avg_attester_effectiveness = sum(r.get('attesterEffectiveness', 0) for r in records) / total_days if total_days > 0 else 0
+                        
+                        # Calculate proposer effectiveness only for days with proposer duties
+                        proposer_days = [r for r in records if r.get('proposerEffectiveness') is not None]
+                        avg_proposer_effectiveness = sum(r.get('proposerEffectiveness', 0) for r in proposer_days) / len(proposer_days) if proposer_days else 0
+                        total_proposer_duties = len(proposer_days)
+                        
                         avg_uptime = sum(r.get('uptime', 0) for r in records) / total_days if total_days > 0 else 0
                         avg_correctness = sum(r.get('avgCorrectness', 0) for r in records) / total_days if total_days > 0 else 0
                         avg_inclusion_delay = sum(r.get('avgInclusionDelay', 0) for r in records) / total_days if total_days > 0 else 0
                         
                         rated_validator_stats[idx] = {
                             'avg_effectiveness': avg_effectiveness,
+                            'avg_attester_effectiveness': avg_attester_effectiveness,
+                            'avg_proposer_effectiveness': avg_proposer_effectiveness,
+                            'total_proposer_duties': total_proposer_duties,
                             'avg_uptime': avg_uptime,
                             'avg_correctness': avg_correctness,
                             'avg_inclusion_delay': avg_inclusion_delay,
                             'days': total_days
                         }
                 
-                # Performance Categories based on Rated docs
+                # Performance Categories based on specified requirements
                 st.subheader("Key Findings")
+                st.markdown("### 🚨 Critical Issues")
+                st.caption("Based on performance requirements: Attestation Inclusion >95% | Correctness >98% | Block Production >95% | Min Balance 31.95 ETH | No Slashings")
                 
-                col1, col2 = st.columns(2)
+                critical_data = []
                 
-                with col1:
-                    st.markdown("### 🚨 Critical Issues")
-                    critical_data = []
-                    
-                    # Check for slashings
-                    for idx, stats in bc_validator_stats.items():
-                        if stats['slashings'] > 0:
+                # Check for slashings (not allowed)
+                for idx, stats in bc_validator_stats.items():
+                    if stats['slashings'] > 0:
+                        pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                        critical_data.append({
+                            'Validator': pubkey,
+                            'Index': idx,
+                            'Issue': 'Slashing Event',
+                            'Value': f"{stats['slashings']} slashing(s)",
+                            'Threshold': 'Not allowed',
+                            'Status': 'Critical'
+                        })
+                
+                # Check minimum balance (31.95 ETH) using start/end balance data
+                for idx, stats in bc_validator_stats.items():
+                    # Check if we have valid balance data
+                    if stats['lowest_balance'] != float('inf'):
+                        lowest_balance_eth = stats['lowest_balance'] / 1e9
+                        if lowest_balance_eth < 31.95:
                             pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
                             critical_data.append({
                                 'Validator': pubkey,
                                 'Index': idx,
-                                'Issue': 'Slashing Event',
-                                'Details': f"{stats['slashings']} slashing(s)",
-                                'Threshold': 'Any occurrence'
+                                'Issue': 'Below Minimum Balance',
+                                'Value': f"{lowest_balance_eth:.3f} ETH",
+                                'Threshold': '≥31.95 ETH',
+                                'Status': 'Critical'
                             })
-                    
-                    # Check for very low effectiveness (< 90%)
-                    for idx, stats in rated_validator_stats.items():
-                        if stats['avg_effectiveness'] < 90:
+                    # Alternative check using end balance if available
+                    elif stats['end_balance'] is not None:
+                        end_balance_eth = stats['end_balance'] / 1e9
+                        if end_balance_eth < 31.95:
                             pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
                             critical_data.append({
                                 'Validator': pubkey,
                                 'Index': idx,
-                                'Issue': 'Low Effectiveness',
-                                'Details': f"{stats['avg_effectiveness']:.1f}%",
-                                'Threshold': '<90%'
+                                'Issue': 'Below Minimum Balance',
+                                'Value': f"{end_balance_eth:.3f} ETH",
+                                'Threshold': '≥31.95 ETH',
+                                'Status': 'Critical'
                             })
-                    
-                    if critical_data:
-                        import pandas as pd
-                        critical_df = pd.DataFrame(critical_data)
-                        st.dataframe(
-                            critical_df,
-                            height=min(300, 50 + len(critical_data) * 35),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        st.caption("**Thresholds**: Slashings = Any occurrence | Effectiveness < 90%")
-                    else:
-                        st.success("No critical issues found")
                 
-                with col2:
-                    st.markdown("### ⚠️ Performance Concerns")
-                    concerns_data = []
-                    
-                    # Check for high missed attestations (> 1% of total attestations)
-                    # Ethereum has ~225 attestation duties per day (32 slots per epoch * 225 epochs per day / 32 slots per attestation)
-                    ATTESTATIONS_PER_DAY = 225
-                    for idx, stats in bc_validator_stats.items():
-                        total_attestation_duties = stats['days'] * ATTESTATIONS_PER_DAY
-                        miss_rate = (stats['missed_attestations'] / total_attestation_duties * 100) if total_attestation_duties > 0 else 0
-                        if miss_rate > 1:
-                            pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
-                            concerns_data.append({
-                                'Validator': pubkey,
-                                'Index': idx,
-                                'Concern': 'High Attestation Miss Rate',
-                                'Value': f"{miss_rate:.1f}%",
-                                'Threshold': '>1%'
-                            })
-                    
-                    # Check for low uptime (< 99%)
-                    for idx, stats in rated_validator_stats.items():
-                        if stats['avg_uptime'] < 0.99:
-                            pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
-                            concerns_data.append({
-                                'Validator': pubkey,
-                                'Index': idx,
-                                'Concern': 'Low Uptime',
-                                'Value': f"{stats['avg_uptime']*100:.1f}%",
-                                'Threshold': '<99%'
-                            })
-                    
-                    if concerns_data:
-                        import pandas as pd
-                        concerns_df = pd.DataFrame(concerns_data)
-                        st.dataframe(
-                            concerns_df,
-                            height=min(300, 50 + len(concerns_data) * 35),
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                        st.caption("**Thresholds**: Attestation miss rate >1% of total attestations | Uptime <99%")
-                    else:
-                        st.info("No major performance concerns")
+                # Check attestation effectiveness/inclusion rate (>95%)
+                for idx, stats in rated_validator_stats.items():
+                    if stats['avg_attester_effectiveness'] < 95:
+                        pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                        critical_data.append({
+                            'Validator': pubkey,
+                            'Index': idx,
+                            'Issue': 'Low Attestation Inclusion Rate',
+                            'Value': f"{stats['avg_attester_effectiveness']:.1f}%",
+                            'Threshold': '>95%',
+                            'Status': 'Below Threshold'
+                        })
+                
+                # Check attestation correctness rate (>98%)
+                for idx, stats in rated_validator_stats.items():
+                    correctness_pct = stats['avg_correctness'] * 100
+                    if correctness_pct < 98:
+                        pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                        critical_data.append({
+                            'Validator': pubkey,
+                            'Index': idx,
+                            'Issue': 'Low Attestation Correctness',
+                            'Value': f"{correctness_pct:.1f}%",
+                            'Threshold': '>98%',
+                            'Status': 'Below Threshold'
+                        })
+                
+                # Check block production effectiveness (>95%)
+                for idx, stats in rated_validator_stats.items():
+                    # Only check if validator had proposer duties
+                    if stats.get('total_proposer_duties', 0) > 0 and stats['avg_proposer_effectiveness'] < 95:
+                        pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                        critical_data.append({
+                            'Validator': pubkey,
+                            'Index': idx,
+                            'Issue': 'Low Block Production Rate',
+                            'Value': f"{stats['avg_proposer_effectiveness']:.1f}%",
+                            'Threshold': '>95%',
+                            'Status': 'Below Threshold'
+                        })
+                
+                if critical_data:
+                    import pandas as pd
+                    critical_df = pd.DataFrame(critical_data)
+                    st.dataframe(
+                        critical_df,
+                        height=min(400, 50 + len(critical_data) * 35),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.success("✅ All validators meet performance requirements")
+                
+                # Check for validators with missing balance data
+                validators_missing_balance = sum(1 for stats in bc_validator_stats.values() if stats['lowest_balance'] == float('inf') and stats['end_balance'] is None)
+                if validators_missing_balance > 0:
+                    st.warning(f"⚠️ Balance data unavailable for {validators_missing_balance} validator(s). Minimum balance requirement could not be verified for these validators.")
                 
                 # Aggregated Metrics Summary
                 st.divider()
@@ -2046,11 +2086,17 @@ def render_main_content(config: Dict[str, Any]):
                 # Rated effectiveness averages
                 if rated_validator_stats:
                     avg_validator_effectiveness = sum(stats['avg_effectiveness'] for stats in rated_validator_stats.values()) / len(rated_validator_stats)
+                    avg_attester_effectiveness = sum(stats['avg_attester_effectiveness'] for stats in rated_validator_stats.values()) / len(rated_validator_stats)
+                    
+                    # Calculate proposer effectiveness only for validators with proposer duties
+                    validators_with_duties = [stats for stats in rated_validator_stats.values() if stats.get('total_proposer_duties', 0) > 0]
+                    avg_proposer_effectiveness = sum(stats['avg_proposer_effectiveness'] for stats in validators_with_duties) / len(validators_with_duties) if validators_with_duties else 0
+                    
                     avg_uptime = sum(stats['avg_uptime'] for stats in rated_validator_stats.values()) / len(rated_validator_stats) * 100
                     avg_correctness = sum(stats['avg_correctness'] for stats in rated_validator_stats.values()) / len(rated_validator_stats) * 100
                     avg_inclusion_delay = sum(stats['avg_inclusion_delay'] for stats in rated_validator_stats.values()) / len(rated_validator_stats)
                 else:
-                    avg_validator_effectiveness = avg_uptime = avg_correctness = avg_inclusion_delay = 0
+                    avg_validator_effectiveness = avg_attester_effectiveness = avg_proposer_effectiveness = avg_uptime = avg_correctness = avg_inclusion_delay = 0
                 
                 # Display aggregated metrics
                 st.markdown("### beaconcha.in Data")
@@ -2072,34 +2118,58 @@ def render_main_content(config: Dict[str, Any]):
                     pass  # Empty for alignment
                 
                 if rated_validator_stats:
-                    st.markdown("### rated.network Effectiveness")
+                    st.markdown("### Aggregate Performance vs Requirements")
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Avg Validator Effectiveness", f"{avg_validator_effectiveness:.2f}%",
-                                 help="Weighted average of attester (97%) and proposer (3%) effectiveness. Target: >95%")
+                        # Attestation Inclusion Rate (>95% required)
+                        st.metric("Attestation Inclusion Rate", f"{avg_attester_effectiveness:.2f}%",
+                                 help="Average attestation effectiveness across all validators. Requirement: >95%")
                     with col2:
-                        st.metric("Avg Uptime", f"{avg_uptime:.2f}%",
-                                 help="Percentage of epochs where validator performed at least one duty. Target: >99%")
+                        # Attestation Correctness (>98% required)
+                        st.metric("Attestation Correctness", f"{avg_correctness:.2f}%",
+                                 help="Percentage of correct attestations (head, source, target). Requirement: >98%")
                     with col3:
-                        st.metric("Avg Correctness", f"{avg_correctness:.2f}%",
-                                 help="Percentage of correct attestations (head, source, target). Target: >99%")
+                        # Block Production (>95% required)
+                        if validators_with_duties:
+                            st.metric("Block Production Rate", f"{avg_proposer_effectiveness:.2f}%",
+                                     help="Success rate for block proposals when selected. Requirement: >95%")
+                        else:
+                            st.metric("Block Production Rate", "N/A",
+                                     help="No block proposal duties in this period")
                     with col4:
+                        # Slashings (0 required)
+                        st.metric("Total Slashings", f"{bc_total_slashings:,}",
+                                 help="Total slashing events. Requirement: 0")
+                
+                # Additional performance metrics
+                if rated_validator_stats:
+                    st.markdown("### Additional Performance Metrics")
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Avg Uptime", f"{avg_uptime:.2f}%",
+                                 help="Percentage of epochs where validator performed at least one duty")
+                    with col2:
                         st.metric("Avg Inclusion Delay", f"{avg_inclusion_delay:.2f}",
-                                 help="Average slots between attestation and on-chain inclusion. Target: 1.0")
+                                 help="Average slots between attestation and on-chain inclusion (lower is better)")
+                    with col3:
+                        st.metric("Missed Attestations", f"{bc_total_missed_attestations:,}",
+                                 help="Total attestations not submitted when assigned")
+                    with col4:
+                        st.metric("Missed Blocks", f"{bc_total_missed_blocks:,}",
+                                 help="Failed to propose when selected by protocol")
                 
                 # Attestations summary if available
                 if 'all_attestation_results' in locals() and all_attestation_results:
-                    st.markdown("### Attestation Performance")
+                    st.markdown("### Detailed Attestation Breakdown")
                     total_att_missed = sum(r.get("sumMissedAttestations", 0) for r in all_attestation_results)
                     total_att_wrong_head = sum(r.get("sumWrongHeadVotes", 0) for r in all_attestation_results)
                     total_att_wrong_target = sum(r.get("sumWrongTargetVotes", 0) for r in all_attestation_results)
                     total_att_late_head = sum(r.get("sumLateHeadVotes", 0) for r in all_attestation_results)
-                    avg_att_effectiveness = sum(r.get("attesterEffectiveness", 0) for r in all_attestation_results) / len(all_attestation_results) if all_attestation_results else 0
                     
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Avg Attester Effectiveness", f"{avg_att_effectiveness:.2f}%",
-                                 help="Measures how well validator performed attestation duties. Target: >95%")
+                        st.metric("Total Missed", f"{total_att_missed:,}",
+                                 help="Attestations not submitted when assigned")
                     with col2:
                         st.metric("Total Missed", f"{total_att_missed:,}",
                                  help="Attestations not submitted when assigned")
@@ -2149,9 +2219,10 @@ def render_main_content(config: Dict[str, Any]):
                     
                     # Header
                     report.append("# Validator Performance Analysis Report")
-                    report.append(f"\n**Generated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-                    report.append(f"**Network**: {current_network}")
-                    report.append(f"**Validators Analyzed**: {len(pubkey_to_index)}")
+                    report.append("\n## Configuration")
+                    report.append(f"- **Generated**: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+                    report.append(f"- **Network**: {current_network}")
+                    report.append(f"- **Validators Analyzed**: {len(pubkey_to_index)}")
                     
                     # Time range info
                     time_range_config = st.session_state.get('validator_performance_time_range', {})
@@ -2165,7 +2236,7 @@ def render_main_content(config: Dict[str, Any]):
                     )
                     if time_range:
                         start_date, end_date = time_range
-                        report.append(f"**Time Range**: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+                        report.append(f"- **Time Range**: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
                     
                     # Add excluded date ranges if any
                     excluded_ranges = st.session_state.get('validator_performance_excluded_ranges', [])
@@ -2174,35 +2245,42 @@ def render_main_content(config: Dict[str, Any]):
                             f"{exc['start']} to {exc['end']}" 
                             for exc in excluded_ranges
                         ])
-                        report.append(f"**Excluded Date Ranges**: {exclusions_text}")
+                        report.append(f"- **Excluded Date Ranges**: {exclusions_text}")
                     
-                    report.append("\n---\n")
+                    report.append("\n")
                     
-                    # Metrics Interpretation - moved to the beginning for context
-                    report.append("## Metrics Interpretation\n")
-                    report.append("### BeaconChain Metrics")
-                    report.append("- **Missed Blocks**: Validator failed to propose a block when selected by the protocol")
-                    report.append("- **Missed Attestations**: Failed to submit an attestation when assigned to a committee")
-                    report.append("- **Missed Sync**: Failed to participate in sync committee duties when selected")
-                    report.append("- **Slashings**: Severe protocol violations (e.g., double voting) resulting in penalties and ejection\n")
+                    # Rated.network Metrics Explanation
+                    report.append("## Understanding Rated.network Metrics\n")
+                    report.append("### Core Performance Metrics")
+                    report.append("- **Validator Effectiveness**: The Rated model of validator performance, combining attester (97% weight) and proposer (3% weight) effectiveness")
+                    report.append("- **Attester Effectiveness**: Measures how well a validator performs attestation duties, including participation rate and inclusion speed")
+                    report.append("- **Proposer Effectiveness**: Success rate when selected to propose blocks (ratio of successful proposals to total proposal duties)")
+                    report.append("- **Inclusion Delay**: Average distance (in slots) between when an attestation is expected and when it's actually included on-chain")
+                    report.append("- **Correctness**: Average accuracy of source, target, and head votes in attestations")
+                    report.append("- **Uptime**: Percentage of epochs where the validator performed at least one duty\n")
                     
-                    report.append("### Rated Metrics")
-                    report.append("#### Effectiveness Scores")
-                    report.append("- **Validator Effectiveness**: Weighted average of attester (97%) and proposer (3%) effectiveness. Target: >95%")
-                    report.append("- **Attester Effectiveness**: Measures attestation performance including correctness and inclusion speed. Target: >95%")
-                    report.append("- **Proposer Effectiveness**: Percentage of assigned blocks successfully proposed. Target: 100%")
-                    report.append("- **Uptime**: Percentage of epochs where validator performed at least one duty. Target: >99%\n")
+                    report.append("### Vote Accuracy Components")
+                    report.append("- **Source Vote**: Voting for the correct justified checkpoint")
+                    report.append("- **Target Vote**: Voting for the correct epoch boundary block")  
+                    report.append("- **Head Vote**: Voting for the correct head of the chain\n")
                     
-                    report.append("#### Attestation Metrics")
-                    report.append("- **Correctness**: Percentage of attestations with correct head, source, and target votes. Target: >99%")
-                    report.append("- **Inclusion Delay**: Average number of slots between attestation and on-chain inclusion. Target: 1.0")
-                    report.append("- **Wrong Head/Target Votes**: Attestations voting for incorrect chain head or target checkpoint")
-                    report.append("- **Late Head Votes**: Attestations submitted after optimal time but still voting correctly\n")
+                    report.append("### Additional Metrics")
+                    report.append("- **Participation Rate**: Number of epochs with included attestations divided by total active epochs")
+                    report.append("- **Proposal Miss Rate**: Failed block proposals divided by total proposal slots attributed")
+                    report.append("- **Slashings**: Severe protocol violations resulting in penalties and forced exit\n")
                     
-                    report.append("#### Proposal Metrics")
-                    report.append("- **Proposer Duties**: Number of times selected to propose blocks (random selection)")
-                    report.append("- **Empty Blocks**: Blocks proposed without execution payload (no transactions)")
-                    report.append("- **Missed Proposals**: Failed to propose when selected (severe performance issue)\n")
+                    # Performance Requirements
+                    report.append("## Performance Requirements\n")
+                    report.append("### Aggregate Performance Metrics")
+                    report.append("Validators must maintain the following aggregate average performance metrics:")
+                    report.append("- **Attestation Inclusion Rate**: >95%")
+                    report.append("- **Attestation Correctness Rate**: >98%")
+                    report.append("- **Block Production**: >95%\n")
+                    
+                    report.append("### Minimum Balance & Slashings")
+                    report.append("- **Minimum Balance**: Each individual validator must maintain a minimum balance of 31.95 ETH")
+                    report.append("- **Slashing Events**: Not allowed and considered critical\n")
+                    
                     
                     # First analyze the data exactly like the dashboard does
                     # Analyze BeaconChain data
@@ -2217,7 +2295,10 @@ def render_main_content(config: Dict[str, Any]):
                                     'missed_sync': 0,
                                     'proposed_blocks': 0,
                                     'slashings': 0,
-                                    'days': 0
+                                    'days': 0,
+                                    'start_balance': None,
+                                    'end_balance': None,
+                                    'lowest_balance': float('inf')
                                 }
                             bc_validator_stats[idx]['missed_blocks'] += stat.get('missed_blocks', 0)
                             bc_validator_stats[idx]['missed_attestations'] += stat.get('missed_attestations', 0)
@@ -2225,6 +2306,17 @@ def render_main_content(config: Dict[str, Any]):
                             bc_validator_stats[idx]['proposed_blocks'] += stat.get('proposed_blocks', 0)
                             bc_validator_stats[idx]['slashings'] += stat.get('attester_slashings', 0) + stat.get('proposer_slashings', 0)
                             bc_validator_stats[idx]['days'] += 1
+                            # Track first start balance
+                            if bc_validator_stats[idx]['start_balance'] is None and stat.get('start_balance') is not None:
+                                bc_validator_stats[idx]['start_balance'] = stat.get('start_balance')
+                            # Keep the most recent end balance
+                            if stat.get('end_balance') is not None:
+                                bc_validator_stats[idx]['end_balance'] = stat.get('end_balance')
+                            # Track lowest of start and end balances
+                            if stat.get('start_balance') is not None and stat.get('start_balance') > 0:
+                                bc_validator_stats[idx]['lowest_balance'] = min(bc_validator_stats[idx]['lowest_balance'], stat.get('start_balance'))
+                            if stat.get('end_balance') is not None and stat.get('end_balance') > 0:
+                                bc_validator_stats[idx]['lowest_balance'] = min(bc_validator_stats[idx]['lowest_balance'], stat.get('end_balance'))
                     
                     # Analyze Rated data
                     rated_validator_stats = {}
@@ -2232,12 +2324,22 @@ def render_main_content(config: Dict[str, Any]):
                         for idx, records in validators_data.items():
                             total_days = len(records)
                             avg_effectiveness = sum(r.get('validatorEffectiveness', 0) for r in records) / total_days if total_days > 0 else 0
+                            avg_attester_effectiveness = sum(r.get('attesterEffectiveness', 0) for r in records) / total_days if total_days > 0 else 0
+                            
+                            # Calculate proposer effectiveness only for days with proposer duties
+                            proposer_days = [r for r in records if r.get('proposerEffectiveness') is not None]
+                            avg_proposer_effectiveness = sum(r.get('proposerEffectiveness', 0) for r in proposer_days) / len(proposer_days) if proposer_days else 0
+                            total_proposer_duties = len(proposer_days)
+                            
                             avg_uptime = sum(r.get('uptime', 0) for r in records) / total_days if total_days > 0 else 0
                             avg_correctness = sum(r.get('avgCorrectness', 0) for r in records) / total_days if total_days > 0 else 0
                             avg_inclusion_delay = sum(r.get('avgInclusionDelay', 0) for r in records) / total_days if total_days > 0 else 0
                             
                             rated_validator_stats[idx] = {
                                 'avg_effectiveness': avg_effectiveness,
+                                'avg_attester_effectiveness': avg_attester_effectiveness,
+                                'avg_proposer_effectiveness': avg_proposer_effectiveness,
+                                'total_proposer_duties': total_proposer_duties,
                                 'avg_uptime': avg_uptime,
                                 'avg_correctness': avg_correctness,
                                 'avg_inclusion_delay': avg_inclusion_delay,
@@ -2250,7 +2352,7 @@ def render_main_content(config: Dict[str, Any]):
                     # Critical Issues
                     critical_data = []
                     
-                    # Check for slashings
+                    # Check for slashings (not allowed)
                     for idx, stats in bc_validator_stats.items():
                         if stats['slashings'] > 0:
                             pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
@@ -2258,74 +2360,97 @@ def render_main_content(config: Dict[str, Any]):
                                 'Validator': pubkey,
                                 'Index': idx,
                                 'Issue': 'Slashing Event',
-                                'Details': f"{stats['slashings']} slashing(s)",
-                                'Threshold': 'Any occurrence'
+                                'Value': f"{stats['slashings']} slashing(s)",
+                                'Threshold': 'Not allowed',
+                                'Status': 'Critical'
                             })
                     
-                    # Check for very low effectiveness (< 90%)
+                    # Check minimum balance (31.95 ETH) using start/end balance data
+                    for idx, stats in bc_validator_stats.items():
+                        # Check if we have valid balance data
+                        if stats['lowest_balance'] != float('inf'):
+                            lowest_balance_eth = stats['lowest_balance'] / 1e9
+                            if lowest_balance_eth < 31.95:
+                                pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                                critical_data.append({
+                                    'Validator': pubkey,
+                                    'Index': idx,
+                                    'Issue': 'Below Minimum Balance',
+                                    'Value': f"{lowest_balance_eth:.3f} ETH",
+                                    'Threshold': '≥31.95 ETH',
+                                    'Status': 'Critical'
+                                })
+                        # Alternative check using end balance if available
+                        elif stats['end_balance'] is not None:
+                            end_balance_eth = stats['end_balance'] / 1e9
+                            if end_balance_eth < 31.95:
+                                pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                                critical_data.append({
+                                    'Validator': pubkey,
+                                    'Index': idx,
+                                    'Issue': 'Below Minimum Balance',
+                                    'Value': f"{end_balance_eth:.3f} ETH",
+                                    'Threshold': '≥31.95 ETH',
+                                    'Status': 'Critical'
+                                })
+                    
+                    # Check attestation effectiveness/inclusion rate (>95%)
                     for idx, stats in rated_validator_stats.items():
-                        if stats['avg_effectiveness'] < 90:
+                        if stats['avg_attester_effectiveness'] < 95:
                             pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
                             critical_data.append({
                                 'Validator': pubkey,
                                 'Index': idx,
-                                'Issue': 'Low Effectiveness',
-                                'Details': f"{stats['avg_effectiveness']:.1f}%",
-                                'Threshold': '<90%'
+                                'Issue': 'Low Attestation Inclusion Rate',
+                                'Value': f"{stats['avg_attester_effectiveness']:.1f}%",
+                                'Threshold': '>95%',
+                                'Status': 'Below Threshold'
                             })
                     
-                    report.append("### 🚨 Critical Issues\n")
-                    if critical_data:
-                        report.append("| Validator | Index | Issue | Details | Threshold |")
-                        report.append("|-----------|-------|-------|---------|-----------|")
-                        for item in critical_data:
-                            report.append(f"| {item['Validator']} | {item['Index']} | {item['Issue']} | {item['Details']} | {item['Threshold']} |")
-                        report.append("\n**Thresholds**: Slashings = Any occurrence | Effectiveness < 90%")
-                    else:
-                        report.append("No critical issues found")
-                    report.append("")
-                    
-                    # Performance Concerns
-                    concerns_data = []
-                    
-                    # Check for high missed attestations (> 1% of total attestations)
-                    # Ethereum has ~225 attestation duties per day (32 slots per epoch * 225 epochs per day / 32 slots per attestation)
-                    ATTESTATIONS_PER_DAY = 225
-                    for idx, stats in bc_validator_stats.items():
-                        total_attestation_duties = stats['days'] * ATTESTATIONS_PER_DAY
-                        miss_rate = (stats['missed_attestations'] / total_attestation_duties * 100) if total_attestation_duties > 0 else 0
-                        if miss_rate > 1:
-                            pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
-                            concerns_data.append({
-                                'Validator': pubkey,
-                                'Index': idx,
-                                'Concern': 'High Attestation Miss Rate',
-                                'Value': f"{miss_rate:.1f}%",
-                                'Threshold': '>1%'
-                            })
-                    
-                    # Check for low uptime (< 99%)
+                    # Check attestation correctness rate (>98%)
                     for idx, stats in rated_validator_stats.items():
-                        if stats['avg_uptime'] < 0.99:
+                        correctness_pct = stats['avg_correctness'] * 100
+                        if correctness_pct < 98:
                             pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
-                            concerns_data.append({
+                            critical_data.append({
                                 'Validator': pubkey,
                                 'Index': idx,
-                                'Concern': 'Low Uptime',
-                                'Value': f"{stats['avg_uptime']*100:.1f}%",
-                                'Threshold': '<99%'
+                                'Issue': 'Low Attestation Correctness',
+                                'Value': f"{correctness_pct:.1f}%",
+                                'Threshold': '>98%',
+                                'Status': 'Below Threshold'
                             })
                     
-                    report.append("### ⚠️ Performance Concerns\n")
-                    if concerns_data:
-                        report.append("| Validator | Index | Concern | Value | Threshold |")
-                        report.append("|-----------|-------|---------|-------|-----------|")
-                        for item in concerns_data:
-                            report.append(f"| {item['Validator']} | {item['Index']} | {item['Concern']} | {item['Value']} | {item['Threshold']} |")
-                        report.append("\n**Thresholds**: Attestation miss rate >1% of total attestations | Uptime <99%")
+                    # Check block production effectiveness (>95%)
+                    for idx, stats in rated_validator_stats.items():
+                        # Only check if validator had proposer duties
+                        if stats.get('total_proposer_duties', 0) > 0 and stats['avg_proposer_effectiveness'] < 95:
+                            pubkey = index_to_pubkey.get(idx, f"Unknown-{idx}")
+                            critical_data.append({
+                                'Validator': pubkey,
+                                'Index': idx,
+                                'Issue': 'Low Block Production Rate',
+                                'Value': f"{stats['avg_proposer_effectiveness']:.1f}%",
+                                'Threshold': '>95%',
+                                'Status': 'Below Threshold'
+                            })
+                    
+                    report.append("### Critical Issues\n")
+                    if critical_data:
+                        report.append("| Validator | Index | Issue | Value | Threshold | Status |")
+                        report.append("|-----------|-------|-------|-------|-----------|--------|")
+                        for item in critical_data:
+                            report.append(f"| {item['Validator']} | {item['Index']} | {item['Issue']} | {item['Value']} | {item['Threshold']} | {item['Status']} |")
+                        report.append("\n**Requirements**: Slashings = Not allowed | Min Balance ≥31.95 ETH | Attestation Inclusion >95% | Correctness >98% | Block Production >95%")
                     else:
-                        report.append("No major performance concerns")
+                        report.append("All validators meet performance requirements")
                     report.append("")
+                    
+                    # Check for validators with missing balance data
+                    validators_missing_balance = sum(1 for stats in bc_validator_stats.values() if stats['lowest_balance'] == float('inf') and stats['end_balance'] is None)
+                    if validators_missing_balance > 0:
+                        report.append(f"**Note:** Balance data unavailable for {validators_missing_balance} validator(s). Minimum balance requirement could not be verified for these validators.\n")
+                    
                     
                     # Aggregated Performance Metrics
                     report.append("## Aggregated Performance Metrics\n")
