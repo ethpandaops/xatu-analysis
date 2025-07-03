@@ -102,7 +102,8 @@ class BeaconchainClient:
             # This ensures we capture all data even if the day boundary is at noon UTC
             params['start_day'] = max(1, start_day - 1)  # Ensure we don't go below day 1
         if end_day is not None:
-            params['end_day'] = end_day
+            # Also subtract 1 from end_day for consistency with start_day adjustment
+            params['end_day'] = max(1, end_day - 1)  # Ensure we don't go below day 1
         
         response = self._make_request(f"/validator/stats/{index}", params=params)
         
