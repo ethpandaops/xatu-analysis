@@ -6,8 +6,10 @@ Functions for loading validator consensus client and entity information.
 import pandas as pd
 from sqlalchemy import text
 from ..database import get_database_connection
+import streamlit as st
 
 
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_blockprint_clients(network):
     """Load blockprint client information for validators.
     
@@ -22,9 +24,16 @@ def load_blockprint_clients(network):
         return {}
         
     try:
-        # Electra epoch 364032 = slot 11,649,024. Blockprint is broken after Electra.
-        # We use pre-Electra blockprint data for ALL blocks by each validator.
-        electra_slot = 364032 * 32  # 11,649,024
+        # Electra epochs by network:
+        # - mainnet: epoch 364032 = slot 11,649,024
+        # - holesky: epoch 105088 = slot 3,362,816
+        # - sepolia: epoch 378368 = slot 12,107,776
+        electra_slots = {
+            'mainnet': 364032 * 32,  # 11,649,024
+            'holesky': 105088 * 32,  # 3,362,816
+            'sepolia': 378368 * 32   # 12,107,776
+        }
+        electra_slot = electra_slots.get(network, 364032 * 32)  # Default to mainnet if unknown
         
         blockprint_query = text("""
         WITH pre_electra_blockprint AS (
@@ -71,6 +80,7 @@ def load_blockprint_clients(network):
         connection.close()
 
 
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_validators_from_ethseer(network):
     """Load validators from the ethseer_validator_entity table for the specified network.
     

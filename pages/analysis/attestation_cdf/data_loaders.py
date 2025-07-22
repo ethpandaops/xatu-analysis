@@ -14,7 +14,8 @@ from _table_verification import verify_table_structures, get_verified_query_temp
 # Import polars functions - REQUIRED
 from polars_data_loaders import (
     load_attestation_timing_data_polars,
-    load_combined_analysis_data_polars
+    load_combined_analysis_data_polars,
+    load_raw_attestation_data_for_slow_analysis
 )
 
 # Configure logging

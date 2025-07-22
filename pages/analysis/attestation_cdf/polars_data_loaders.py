@@ -170,6 +170,165 @@ def load_attestation_timing_data_polars(start_time, end_time, network="mainnet",
         return pl.DataFrame()
 
 
+@st.cache_data(ttl=3600)
+def load_raw_attestation_data_for_slow_analysis(start_time, end_time, network="mainnet", data_source="beacon_api", missed_slots=None, client_filters=None, include_observer_nodes=False):
+    """Load raw attestation data with validator indices for slow period analysis."""
+    logger.info(f"Loading raw attestation data for slow analysis: network={network}, data_source={data_source}, include_observer_nodes={include_observer_nodes}")
+    
+    conn = get_database_connection()
+    
+    # Get data source configuration
+    source_config = get_data_source_options()[data_source]
+    table_name = source_config["table"]
+    
+    try:
+        from datetime import timezone
+        
+        if start_time.tzinfo is None:
+            start_time_utc = start_time.replace(tzinfo=timezone.utc)
+            end_time_utc = end_time.replace(tzinfo=timezone.utc)
+        else:
+            start_time_utc = start_time.astimezone(timezone.utc)
+            end_time_utc = end_time.astimezone(timezone.utc)
+        
+        params = {
+            'start_date': start_time_utc.replace(tzinfo=None),
+            'end_date': end_time_utc.replace(tzinfo=None),
+            'network': network
+        }
+        
+        # If no missed slots provided, we need to find them first
+        if missed_slots is None:
+            start_slot = int((start_time_utc.timestamp() - 1606824023) // 12)
+            end_slot = int((end_time_utc.timestamp() - 1606824023) // 12)
+            params['start_slot'] = start_slot
+            params['end_slot'] = end_slot
+            
+            # Get missed slots
+            all_slots = list(range(start_slot, end_slot + 1))
+            
+            block_slots_query = """
+            SELECT DISTINCT slot
+            FROM beacon_api_eth_v2_beacon_block
+            WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND slot BETWEEN %(start_slot)s AND %(end_slot)s
+                AND meta_network_name = %(network)s
+            """
+            
+            block_slots_df = pd.read_sql(block_slots_query, conn, params=params)
+            block_slots = set(block_slots_df['slot'].tolist())
+            missed_slots = sorted([slot for slot in all_slots if slot not in block_slots])
+        
+        if not missed_slots:
+            logger.warning("No missed slots found")
+            return pl.DataFrame()
+        
+        # Limit to reasonable number of slots to avoid huge queries
+        if len(missed_slots) > 100:
+            logger.warning(f"Too many missed slots ({len(missed_slots)}), limiting to most recent 100")
+            missed_slots = missed_slots[-100:]
+        
+        missed_slots_str = ','.join(map(str, missed_slots))
+        
+        # Build client filter conditions
+        client_conditions = []
+        if client_filters:
+            if client_filters.get('selected_clients'):
+                clients_str = ','.join([f"'{c}'" for c in client_filters['selected_clients']])
+                client_conditions.append(f"meta_client_name IN ({clients_str})")
+            
+            if client_filters.get('excluded_clients'):
+                excluded_str = ','.join([f"'{c}'" for c in client_filters['excluded_clients']])
+                client_conditions.append(f"meta_client_name NOT IN ({excluded_str})")
+        
+        client_filter_sql = " AND " + " AND ".join(client_conditions) if client_conditions else ""
+        
+        if include_observer_nodes:
+            # Query includes observation node details for consensus analysis
+            query = f"""
+            WITH validator_slot_node_attestations AS (
+                SELECT 
+                    slot,
+                    attesting_validator_index,
+                    meta_client_name as observer_node,
+                    MIN(propagation_slot_start_diff) as propagation_time
+                FROM {table_name}
+                WHERE slot IN ({missed_slots_str})
+                    AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                    AND meta_network_name = %(network)s
+                    AND attesting_validator_index IS NOT NULL
+                    AND propagation_slot_start_diff >= 0
+                    AND propagation_slot_start_diff <= 12000
+                    {client_filter_sql}
+                GROUP BY slot, attesting_validator_index, meta_client_name
+            )
+            SELECT 
+                slot,
+                attesting_validator_index,
+                observer_node,
+                propagation_time
+            FROM validator_slot_node_attestations
+            ORDER BY slot, attesting_validator_index, observer_node
+            """
+        else:
+            # Original query - aggregate across all observation nodes
+            query = f"""
+            WITH validator_slot_attestations AS (
+                SELECT 
+                    slot,
+                    attesting_validator_index,
+                    MIN(propagation_slot_start_diff) as propagation_time
+                FROM {table_name}
+                WHERE slot IN ({missed_slots_str})
+                    AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                    AND meta_network_name = %(network)s
+                    AND attesting_validator_index IS NOT NULL
+                    AND propagation_slot_start_diff >= 0
+                    AND propagation_slot_start_diff <= 12000
+                    {client_filter_sql}
+                GROUP BY slot, attesting_validator_index
+            )
+            SELECT 
+                slot,
+                attesting_validator_index,
+                propagation_time
+            FROM validator_slot_attestations
+            ORDER BY slot, propagation_time
+            """
+        
+        logger.debug("Executing validator attestation query...")
+        df_pandas = pd.read_sql(query, conn, params=params)
+        
+        if include_observer_nodes:
+            logger.info(f"Found {len(df_pandas)} attestation records across {df_pandas['slot'].nunique()} slots and {df_pandas['observer_node'].nunique()} observer nodes")
+        else:
+            logger.info(f"Found {len(df_pandas)} attestation records across {df_pandas['slot'].nunique()} slots")
+        logger.info(f"Unique validators: {df_pandas['attesting_validator_index'].nunique()}")
+        
+        if df_pandas.empty:
+            return pl.DataFrame()
+        
+        # Convert to Polars
+        columns_to_cast = [
+            pl.col('slot').cast(pl.Int64),
+            pl.col('attesting_validator_index').cast(pl.Int64),
+            pl.col('propagation_time').cast(pl.Float64)
+        ]
+        
+        if include_observer_nodes:
+            # Keep observer_node as string
+            df_polars = pl.from_pandas(df_pandas).with_columns(columns_to_cast)
+        else:
+            df_polars = pl.from_pandas(df_pandas).with_columns(columns_to_cast)
+        
+        return df_polars
+        
+    except Exception as e:
+        logger.error(f"Error loading raw attestation data: {str(e)}", exc_info=True)
+        return pl.DataFrame()
+    finally:
+        conn.close()
+
 
 def load_combined_analysis_data_polars(start_time, end_time, network="mainnet", data_source="beacon_api"):
     """Load attestation data for missed slots analysis."""
