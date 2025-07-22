@@ -33,6 +33,13 @@ gas_usage_performance_page = st.Page(
     url_path="gas-usage-performance"
 )
 
+attestation_cdf_page = st.Page(
+    "pages/analysis/attestation_cdf/page.py",
+    title="Attestation CDF Analysis",
+    icon="📊",
+    url_path="attestation-cdf"
+)
+
 validator_performance_page = st.Page(
     "pages/analysis/validator_performance/page.py",
     title="Validator Performance",
@@ -43,7 +50,7 @@ validator_performance_page = st.Page(
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [attestation_packing_page, gas_usage_performance_page, validator_performance_page]
+    "Analysis": [attestation_packing_page, gas_usage_performance_page, attestation_cdf_page, validator_performance_page]
 })
 
 # Run the selected page
