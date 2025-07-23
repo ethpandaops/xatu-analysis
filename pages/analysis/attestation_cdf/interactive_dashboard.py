@@ -7,15 +7,15 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # Import components
-from config_utils import (
+from pages.analysis.attestation_cdf.config_utils import (
     get_metric_info, get_default_time_ranges, 
     get_supported_networks, get_grouping_options,
     get_data_source_options
 )
-from data_loaders import load_combined_analysis_data
-from polars_data_loaders import load_raw_attestation_data_for_slow_analysis, load_proposer_duties_for_missed_slots
-from metrics_calculators import calculate_node_cdf_metrics
-from plot_generators import create_cdf_comparison_plot, create_missed_slots_by_proposer_entity_chart
+from pages.analysis.attestation_cdf.data_loaders import load_combined_analysis_data
+from pages.analysis.attestation_cdf.polars_data_loaders import load_raw_attestation_data_for_slow_analysis, load_proposer_duties_for_missed_slots
+from pages.analysis.attestation_cdf.metrics_calculators import calculate_node_cdf_metrics
+from pages.analysis.attestation_cdf.plot_generators import create_cdf_comparison_plot, create_missed_slots_by_proposer_entity_chart
 
 # Import shared components  
 from shared.ui_components import apply_ethPandaOps_styling

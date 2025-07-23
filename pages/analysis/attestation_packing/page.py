@@ -1,15 +1,5 @@
-# pages/analysis/attestation_packing/page.py
-import streamlit as st
-import sys
-import os
+"""Entry point for the Attestation Packing dashboard."""
+from pages.analysis.attestation_packing.interactive_dashboard import main as run_dashboard
 
-# Add current directory to path for relative imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-# Import the original interactive dashboard and run it directly
-# This preserves 100% of the existing functionality
-from interactive_dashboard import main as run_dashboard
-
-# Run the original dashboard logic unchanged
-run_dashboard()
+if __name__ == "__main__":
+    run_dashboard()

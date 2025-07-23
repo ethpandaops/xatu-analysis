@@ -14,8 +14,8 @@ from typing import Dict, Any, List, Optional, Union
 import logging
 
 from shared.ui_components import add_ethPandaOps_logo
-from config_utils import get_metric_info, get_analysis_config, get_continents
-from metrics_calculators import calculate_correlation_analysis
+from pages.analysis.gas_usage_performance.config_utils import get_metric_info, get_analysis_config, get_continents
+from pages.analysis.gas_usage_performance.metrics_calculators import calculate_correlation_analysis
 
 
 # Configure logging

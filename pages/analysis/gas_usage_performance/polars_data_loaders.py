@@ -16,7 +16,7 @@ from contextlib import contextmanager
 import gc
 
 from shared.database import get_database_connection
-from config_utils import get_analysis_config
+from pages.analysis.gas_usage_performance.config_utils import get_analysis_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

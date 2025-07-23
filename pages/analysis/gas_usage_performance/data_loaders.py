@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, Tuple
 import logging
 
 from shared.database import get_database_connection
-from config_utils import get_analysis_config
+from pages.analysis.gas_usage_performance.config_utils import get_analysis_config
 
 # Import polars functions
 try:
