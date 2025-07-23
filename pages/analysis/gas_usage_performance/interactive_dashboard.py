@@ -17,14 +17,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from shared.ui_components import apply_ethPandaOps_styling
-from config_utils import (
+from .config_utils import (
     get_metric_info, get_analysis_config, get_default_periods,
     validate_analysis_config
 )
-from data_loaders import load_complete_analysis_data, validate_data_quality
+from .data_loaders import load_complete_analysis_data, validate_data_quality
 # Import polars-optimized functions first, fall back to pandas if needed
 try:
-    from polars_metrics_calculators import (
+    from .polars_metrics_calculators import (
         create_time_buckets_polars as create_time_buckets,
         create_gas_buckets_polars as create_gas_buckets, 
         calculate_bucket_metrics_polars as calculate_bucket_metrics,
@@ -35,7 +35,7 @@ try:
         sample_large_dataset as prepare_large_dataset
     )
     # Import pandas fallbacks for functions not yet in polars
-    from metrics_calculators import (
+    from .metrics_calculators import (
         calculate_consensus_performance_ranking,
         calculate_gas_binned_analysis,
         calculate_comparative_analysis
@@ -43,13 +43,13 @@ try:
     USING_POLARS_METRICS = True
 except ImportError:
     # Fallback to pandas versions
-    from metrics_calculators import (
+    from .metrics_calculators import (
         create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
         calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
         calculate_comparative_analysis, prepare_large_dataset
     )
     USING_POLARS_METRICS = False
-from plot_generators import (
+from .plot_generators import (
     create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
     create_box_plot_comparison, create_correlation_matrix, create_geographic_performance_plot,
     create_gas_binned_performance_plot, create_multi_y_correlation_plot
