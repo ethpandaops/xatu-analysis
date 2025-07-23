@@ -29,7 +29,7 @@ except ImportError:
         raise ImportError("scipy is required for correlation analysis. Please install: pip install scipy>=1.7.0")
     stats = None
 
-from .config_utils import get_analysis_config
+from config_utils import get_analysis_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
