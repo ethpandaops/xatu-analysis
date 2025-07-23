@@ -3,9 +3,9 @@ from shared.database import get_database_connection
 
 
 @st.cache_data(ttl=3600)
-def verify_table_structures():
+def verify_table_structures(network="mainnet"):
     """Verify existence and structure of required tables."""
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     required_tables = [
         "libp2p_gossipsub_beacon_attestation",
