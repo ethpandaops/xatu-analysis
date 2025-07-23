@@ -24,7 +24,7 @@ def load_validator_indices(pubkeys: List[str], network: str) -> Tuple[Dict[str, 
     
     conn = None
     try:
-        conn = get_database_connection()
+        conn = get_database_connection(network)
         
         # Build the query with proper formatting for ClickHouse IN clause
         # Convert pubkeys list to a comma-separated string of quoted values

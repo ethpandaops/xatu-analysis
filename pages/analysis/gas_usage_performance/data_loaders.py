@@ -57,7 +57,7 @@ def load_block_gossip_data(
     Returns:
         DataFrame with block gossip timing data
     """
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     config = get_analysis_config()
     
     query = """
@@ -114,7 +114,7 @@ def load_head_time_data(
     Returns:
         DataFrame with head timing data
     """
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     config = get_analysis_config()
     
     query = """
@@ -221,7 +221,7 @@ def load_canonical_block_data(
     Returns:
         DataFrame with block and gas usage data
     """
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     query = """
     SELECT
@@ -284,7 +284,7 @@ def load_blob_sidecar_counts(
     Returns:
         DataFrame with blob counts per slot
     """
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     query = """
     SELECT

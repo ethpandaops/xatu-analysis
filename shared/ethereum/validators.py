@@ -19,7 +19,7 @@ def load_blockprint_clients(network):
     Returns:
         dict: Mapping of proposer_index -> blockprint_client
     """
-    connection = get_database_connection()
+    connection = get_database_connection(network)
     if connection is None:
         return {}
         
@@ -90,7 +90,7 @@ def load_validators_from_ethseer(network):
     Returns:
         dict: Mapping of proposer_index -> entity
     """
-    connection = get_database_connection()
+    connection = get_database_connection(network)
     if connection is None:
         return {}
         

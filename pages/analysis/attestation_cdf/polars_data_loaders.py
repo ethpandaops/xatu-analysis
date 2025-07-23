@@ -26,7 +26,7 @@ def load_attestation_timing_data_polars(start_time, end_time, network="mainnet",
     logger.info(f"Loading attestation data for missed slots: network={network}, data_source={data_source}")
     logger.info(f"Time range: {start_time} to {end_time}")
     
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     # Times are now passed in UTC from the dashboard
     from datetime import timezone
@@ -175,7 +175,7 @@ def load_raw_attestation_data_for_slow_analysis(start_time, end_time, network="m
     """Load raw attestation data with validator indices for slow period analysis."""
     logger.info(f"Loading raw attestation data for slow analysis: network={network}, data_source={data_source}, include_observer_nodes={include_observer_nodes}")
     
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     # Get data source configuration
     source_config = get_data_source_options()[data_source]
@@ -412,7 +412,7 @@ def load_proposer_duties_for_missed_slots(missed_slots, network="mainnet"):
         logger.warning(f"Too many missed slots ({len(missed_slots)}), limiting to most recent 1000")
         missed_slots = sorted(missed_slots)[-1000:]
     
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     try:
         # Convert slots to comma-separated string

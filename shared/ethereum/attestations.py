@@ -23,7 +23,7 @@ def load_attestation_data(time_ranges_str, network):
     """
     time_ranges = ast.literal_eval(time_ranges_str)
     
-    connection = get_database_connection()
+    connection = get_database_connection(network)
     if connection is None:
         return pd.DataFrame()
     
