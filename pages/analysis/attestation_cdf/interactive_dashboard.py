@@ -13,9 +13,9 @@ from config_utils import (
     get_data_source_options
 )
 from data_loaders import load_combined_analysis_data
-from polars_data_loaders import load_raw_attestation_data_for_slow_analysis
+from polars_data_loaders import load_raw_attestation_data_for_slow_analysis, load_proposer_duties_for_missed_slots
 from metrics_calculators import calculate_node_cdf_metrics
-from plot_generators import create_cdf_comparison_plot
+from plot_generators import create_cdf_comparison_plot, create_missed_slots_by_proposer_entity_chart
 
 # Import shared components  
 from shared.ui_components import apply_ethPandaOps_styling
@@ -704,6 +704,44 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
                     st.write(f"**{client}**: {count} validators ({pct:.1f}%)")
         else:
             st.info("No client data available")
+    
+    # Add missed slots by proposer entity distribution chart
+    st.divider()
+    st.subheader("📊 Missed Block Proposals by Entity")
+    st.markdown("Shows which entities were assigned to propose blocks but didn't (resulting in missed slots)")
+    
+    # Load proposer duties for the missed slots
+    with st.spinner("Loading proposer duties for missed slots..."):
+        # Get the list of missed slots
+        if not slots_data.empty:
+            missed_slots_list = slots_data['slot'].tolist()
+        else:
+            missed_slots_list = missed_slots
+            
+        # Load proposer duties
+        proposer_duties_df = load_proposer_duties_for_missed_slots(missed_slots_list, network)
+        
+        if not proposer_duties_df.empty:
+            # Create the chart
+            missed_slots_fig = create_missed_slots_by_proposer_entity_chart(proposer_duties_df, entities, top_n=20)
+            st.plotly_chart(missed_slots_fig, use_container_width=True)
+            
+            # Show summary statistics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                total_entities_missed = proposer_duties_df['proposer_validator_index'].map(
+                    lambda x: entities.get(x, 'unknown') if pd.notna(x) else 'unknown'
+                ).nunique()
+                st.metric("Entities with Missed Proposals", f"{total_entities_missed:,}")
+            with col2:
+                total_missed_proposals = len(proposer_duties_df)
+                st.metric("Total Missed Proposals", f"{total_missed_proposals:,}")
+            with col3:
+                # Calculate percentage of missed slots with known proposer
+                coverage_pct = (len(proposer_duties_df) / len(missed_slots_list) * 100) if missed_slots_list else 0
+                st.metric("Proposer Data Coverage", f"{coverage_pct:.1f}%")
+        else:
+            st.warning("No proposer duty data found for the missed slots")
     
     # Additional analysis - show time distribution
     with st.expander("Timing Distribution Analysis"):
