@@ -389,3 +389,56 @@ def load_combined_analysis_data_polars(start_time, end_time, network="mainnet", 
     
     logger.info(f"Returning analysis data: {len(attestations_df)} attestations, {len(unique_slots)} slots")
     return result
+
+
+@st.cache_data(ttl=3600)
+def load_proposer_duties_for_missed_slots(missed_slots, network="mainnet"):
+    """Load proposer duties for missed slots to identify who should have proposed.
+    
+    Args:
+        missed_slots: List of slot numbers
+        network: Network name
+        
+    Returns:
+        DataFrame with columns: slot, proposer_validator_index
+    """
+    logger.info(f"Loading proposer duties for {len(missed_slots)} missed slots")
+    
+    if not missed_slots:
+        return pd.DataFrame(columns=['slot', 'proposer_validator_index'])
+    
+    # Limit to reasonable number to avoid huge queries
+    if len(missed_slots) > 1000:
+        logger.warning(f"Too many missed slots ({len(missed_slots)}), limiting to most recent 1000")
+        missed_slots = sorted(missed_slots)[-1000:]
+    
+    conn = get_database_connection()
+    
+    try:
+        # Convert slots to comma-separated string
+        slots_str = ','.join(map(str, missed_slots))
+        
+        query = f"""
+        SELECT DISTINCT
+            slot,
+            proposer_validator_index
+        FROM beacon_api_eth_v1_proposer_duty
+        WHERE slot IN ({slots_str})
+            AND meta_network_name = %(network)s
+        ORDER BY slot
+        """
+        
+        params = {'network': network}
+        
+        logger.debug("Executing proposer duties query...")
+        df = pd.read_sql(query, conn, params=params)
+        
+        logger.info(f"Found proposer duties for {len(df)} slots out of {len(missed_slots)} missed slots")
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error loading proposer duties: {str(e)}", exc_info=True)
+        return pd.DataFrame(columns=['slot', 'proposer_validator_index'])
+    finally:
+        conn.close()

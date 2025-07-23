@@ -247,3 +247,54 @@ def create_coverage_vs_speed_scatter(cdf_data):
     )
     
     return add_ethPandaOps_logo(fig)
+
+
+def create_missed_slots_by_proposer_entity_chart(missed_slots_with_proposers, entities, top_n=20):
+    """Create bar chart showing count of missed slots by proposer entity.
+    
+    Args:
+        missed_slots_with_proposers: DataFrame with columns 'slot' and 'proposer_validator_index'
+        entities: Dict mapping validator index to entity name
+        top_n: Number of top entities to show (default: 20)
+    
+    Returns:
+        Plotly figure object
+    """
+    # Add entity information based on proposer validator index
+    missed_slots_with_entity = missed_slots_with_proposers.copy()
+    missed_slots_with_entity['entity'] = missed_slots_with_entity['proposer_validator_index'].map(
+        lambda x: entities.get(x, 'unknown') if pd.notna(x) else 'unknown'
+    )
+    
+    # Count missed slots per entity
+    entity_slot_counts = missed_slots_with_entity['entity'].value_counts().reset_index()
+    entity_slot_counts.columns = ['entity', 'missed_slot_count']
+    
+    # Get top N entities
+    entity_slot_counts = entity_slot_counts.head(top_n)
+    
+    # Create bar chart
+    fig = go.Figure(data=[
+        go.Bar(
+            x=entity_slot_counts['entity'],
+            y=entity_slot_counts['missed_slot_count'],
+            text=entity_slot_counts['missed_slot_count'],
+            textposition='auto',
+            marker_color='#d62728',
+            hovertemplate='<b>Entity:</b> %{x}<br>' +
+                         '<b>Missed Slots:</b> %{y}<br>' +
+                         '<extra></extra>'
+        )
+    ])
+    
+    fig.update_layout(
+        title=f'Top {top_n} Entities by Missed Block Proposals<br><sub>Entities who were assigned to propose blocks but didn\'t</sub>',
+        xaxis_title='Entity',
+        yaxis_title='Number of Missed Block Proposals',
+        height=500,
+        xaxis_tickangle=-45,
+        title_font_size=16,
+        showlegend=False
+    )
+    
+    return add_ethPandaOps_logo(fig)
