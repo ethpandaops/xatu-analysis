@@ -743,6 +743,222 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         else:
             st.warning("No proposer duty data found for the missed slots")
     
+    # Entity Density Analysis across percentile thresholds
+    st.divider()
+    st.subheader("📊 Entity Density Analysis Across Percentile Thresholds")
+    st.markdown("Shows how entity concentration changes as we vary the slowness threshold")
+    
+    with st.spinner("Calculating entity density across percentile thresholds..."):
+        # Define percentile thresholds to analyze
+        percentile_thresholds = [50, 60, 70, 80, 85, 90, 92, 94, 95, 96, 97, 98, 99]
+        
+        # Store entity percentages at each threshold
+        entity_density_data = {}
+        total_validators_by_threshold = {}
+        
+        for threshold in percentile_thresholds:
+            # Calculate threshold time for this percentile
+            threshold_time_pct = np.percentile(all_propagation_times, threshold)
+            
+            # Get attestations above this threshold
+            slow_at_threshold = raw_attestations[raw_attestations['propagation_time'] > threshold_time_pct]
+            
+            if not slow_at_threshold.empty:
+                # Get unique validators at this threshold
+                validators_at_threshold = slow_at_threshold['attesting_validator_index'].unique()
+                total_validators_by_threshold[threshold] = len(validators_at_threshold)
+                
+                # Count validators by entity
+                entity_counts_at_threshold = {}
+                for val_idx in validators_at_threshold:
+                    entity = entities.get(val_idx, 'unknown')
+                    entity_counts_at_threshold[entity] = entity_counts_at_threshold.get(entity, 0) + 1
+                
+                # Calculate percentages
+                total_at_threshold = len(validators_at_threshold)
+                for entity, count in entity_counts_at_threshold.items():
+                    if entity not in entity_density_data:
+                        entity_density_data[entity] = {}
+                    entity_density_data[entity][threshold] = (count / total_at_threshold) * 100
+        
+        # Get top entities by their maximum percentage at any threshold
+        entity_max_percentages = {}
+        for entity, percentages in entity_density_data.items():
+            if percentages:  # Check if entity has any data
+                entity_max_percentages[entity] = max(percentages.values())
+        
+        # Get top 10 entities
+        top_entities = sorted(entity_max_percentages.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_entity_names = [e[0] for e in top_entities]
+        
+        # Create stacked 100% bar chart
+        fig_density = go.Figure()
+        
+        # Prepare data for stacked bar chart
+        # We'll show top 8 entities + "Others"
+        top_8_entities = top_entity_names[:8]
+        
+        # Add traces for each entity
+        for entity in top_8_entities:
+            y_values = []
+            for threshold in percentile_thresholds:
+                y_values.append(entity_density_data.get(entity, {}).get(threshold, 0))
+            
+            fig_density.add_trace(go.Bar(
+                name=entity[:25] + '...' if len(entity) > 25 else entity,
+                x=[f"P{p}" for p in percentile_thresholds],
+                y=y_values,
+                text=[f"{v:.1f}%" if v > 5 else "" for v in y_values],  # Only show text for bars > 5%
+                textposition='inside',
+                textfont=dict(size=10),
+                hovertemplate='%{fullData.name}<br>%{y:.1f}%<extra></extra>'
+            ))
+        
+        # Calculate and add "Others" category
+        others_values = []
+        for threshold in percentile_thresholds:
+            total_top8 = sum(entity_density_data.get(entity, {}).get(threshold, 0) for entity in top_8_entities)
+            others_values.append(100 - total_top8)
+        
+        fig_density.add_trace(go.Bar(
+            name='Others',
+            x=[f"P{p}" for p in percentile_thresholds],
+            y=others_values,
+            text=[f"{v:.1f}%" if v > 5 else "" for v in others_values],
+            textposition='inside',
+            textfont=dict(size=10),
+            marker_color='lightgray',
+            hovertemplate='Others<br>%{y:.1f}%<extra></extra>'
+        ))
+        
+        # Add a vertical line or annotation for current threshold
+        current_threshold_idx = percentile_thresholds.index(slow_threshold) if slow_threshold in percentile_thresholds else None
+        
+        fig_density.update_layout(
+            title="Entity Distribution Across Percentile Thresholds<br><sub>Stacked 100% bar chart showing entity concentration</sub>",
+            xaxis_title="Percentile Threshold",
+            yaxis_title="Percentage of Slow Validators (%)",
+            barmode='stack',
+            height=600,
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=1.01
+            ),
+            hovermode='x unified'
+        )
+        
+        # Add annotation for current threshold if it exists
+        if current_threshold_idx is not None:
+            fig_density.add_annotation(
+                x=f"P{slow_threshold}",
+                y=105,
+                text=f"Current<br>threshold",
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=2,
+                arrowcolor="red",
+                ax=0,
+                ay=-40,
+                font=dict(size=12, color="red")
+            )
+        
+        fig_density.update_yaxes(range=[0, 100])
+        
+        st.plotly_chart(fig_density, use_container_width=True)
+        
+        # Show summary statistics
+        col1, col2, col3 = st.columns(3)
+        
+        # Find the entity with highest percentage at P99
+        if 99 in percentile_thresholds:
+            p99_percentages = [(entity, entity_density_data.get(entity, {}).get(99, 0)) for entity in top_entity_names]
+            dominant_entity_p99 = max(p99_percentages, key=lambda x: x[1])
+            
+            with col1:
+                st.metric(
+                    f"Dominant Entity at P99",
+                    dominant_entity_p99[0][:20] + '...' if len(dominant_entity_p99[0]) > 20 else dominant_entity_p99[0],
+                    f"{dominant_entity_p99[1]:.1f}%"
+                )
+        
+        # Show how concentration changes
+        if 90 in percentile_thresholds and 99 in percentile_thresholds:
+            # Get the top entity's percentage at both thresholds
+            top_entity = top_entity_names[0] if top_entity_names else None
+            if top_entity and top_entity in entity_density_data:
+                p90_pct = entity_density_data[top_entity].get(90, 0)
+                p99_pct = entity_density_data[top_entity].get(99, 0)
+                
+                with col2:
+                    st.metric(
+                        f"{top_entity[:15]}... at P90",
+                        f"{p90_pct:.1f}%",
+                        f"{p99_pct - p90_pct:+.1f}% at P99"
+                    )
+        
+        # Total validators at different thresholds
+        if 99 in total_validators_by_threshold and 90 in total_validators_by_threshold:
+            with col3:
+                st.metric(
+                    "Validators at P99",
+                    f"{total_validators_by_threshold[99]:,}",
+                    f"vs {total_validators_by_threshold[90]:,} at P90"
+                )
+        
+        # Create a complementary stacked area chart
+        with st.expander("View as Stacked Area Chart"):
+            # Prepare data for stacked area chart
+            stacked_data = []
+            
+            for threshold in percentile_thresholds:
+                row = {'threshold': threshold}
+                
+                # Add top entities
+                for entity in top_entity_names[:5]:  # Top 5 for clarity
+                    row[entity] = entity_density_data.get(entity, {}).get(threshold, 0)
+                
+                # Calculate "Others" percentage
+                total_top5 = sum(entity_density_data.get(entity, {}).get(threshold, 0) for entity in top_entity_names[:5])
+                row['Others'] = 100 - total_top5
+                
+                stacked_data.append(row)
+            
+            stacked_df = pd.DataFrame(stacked_data)
+            
+            # Create stacked area chart
+            fig_stacked = go.Figure()
+            
+            # Add traces for each entity
+            for col in stacked_df.columns[1:]:  # Skip 'threshold' column
+                fig_stacked.add_trace(go.Scatter(
+                    x=stacked_df['threshold'],
+                    y=stacked_df[col],
+                    mode='lines',
+                    stackgroup='one',
+                    name=col[:30] + '...' if len(col) > 30 else col,
+                    line=dict(width=0.5)
+                ))
+            
+            fig_stacked.update_layout(
+                title="Entity Distribution Across Percentile Thresholds (Stacked)",
+                xaxis_title="Percentile Threshold",
+                yaxis_title="Percentage of Slow Validators (%)",
+                height=400,
+                hovermode='x unified'
+            )
+            
+            fig_stacked.update_xaxes(
+                tickmode='array',
+                tickvals=percentile_thresholds,
+                ticktext=[f"P{p}" for p in percentile_thresholds]
+            )
+            
+            st.plotly_chart(fig_stacked, use_container_width=True)
+    
     # Additional analysis - show time distribution
     with st.expander("Timing Distribution Analysis"):
         st.markdown("### Propagation Time Distribution")
