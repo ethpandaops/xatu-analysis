@@ -27,11 +27,11 @@ except ImportError:
         raise ImportError("scipy is required for correlation analysis. Please install: pip install scipy>=1.7.0")
     stats = None
 
-from config_utils import get_analysis_config, get_aggregation_functions
+from pages.analysis.gas_usage_performance.config_utils import get_analysis_config, get_aggregation_functions
 
 # Import polars functions
 try:
-    from polars_metrics_calculators import (
+    from pages.analysis.gas_usage_performance.polars_metrics_calculators import (
         create_time_buckets_polars,
         create_gas_buckets_polars,
         aggregate_data_polars,

@@ -1,13 +1,5 @@
-import streamlit as st
-import sys
-import os
+"""Entry point for the Attestation CDF dashboard."""
+from pages.analysis.attestation_cdf.interactive_dashboard import main as run_dashboard
 
-# Add current directory to path for relative imports
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
-
-# Import the main dashboard
-from interactive_dashboard import main as run_dashboard
-
-# Run the dashboard
-run_dashboard()
+if __name__ == "__main__":
+    run_dashboard()

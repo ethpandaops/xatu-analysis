@@ -11,10 +11,10 @@ sys.path.append(os.path.join(current_dir, '../../..'))
 
 from shared.database import get_database_connection
 
-def check_table_schemas():
+def check_table_schemas(network="mainnet"):
     """Check actual table schemas and available columns."""
     
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     
     tables_to_check = [
         "mev_relay_proposer_payload_delivered",

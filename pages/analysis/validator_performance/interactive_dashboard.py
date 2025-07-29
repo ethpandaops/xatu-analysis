@@ -713,14 +713,6 @@ def render_main_content(config: Dict[str, Any]):
 
 def run_dashboard():
     """Main dashboard entry point."""
-    # Page configuration
-    st.set_page_config(
-        page_title="Validator Performance - Xatu Analysis",
-        page_icon="📊",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
     # Initialize session state
     initialize_session_state()
     

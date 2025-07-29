@@ -16,7 +16,7 @@ from contextlib import contextmanager
 import gc
 
 from shared.database import get_database_connection
-from config_utils import get_analysis_config
+from pages.analysis.gas_usage_performance.config_utils import get_analysis_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -102,7 +102,7 @@ def load_block_gossip_data_polars(
         # Normalize time range (no longer truncates)
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(network)
         config = get_analysis_config()
         
         # Query without LIMIT - get ALL data in time range
@@ -199,7 +199,7 @@ def load_head_time_data_polars(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(network)
         config = get_analysis_config()
         
         # Complete query getting ALL head time data without limits
@@ -334,7 +334,7 @@ def load_canonical_block_data_polars(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(network)
         
         query = """
         SELECT
@@ -423,7 +423,7 @@ def load_blob_sidecar_counts_polars(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(network)
         
         query = """
         SELECT
@@ -479,7 +479,7 @@ def load_raw_data_as_polars(
     Returns:
         Tuple of (gossip_pl, head_pl, block_pl, blob_pl)
     """
-    conn = get_database_connection()
+    conn = get_database_connection(network)
     config = get_analysis_config()
     
     # Load gossip data
