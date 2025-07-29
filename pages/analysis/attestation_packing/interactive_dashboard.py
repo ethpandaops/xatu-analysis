@@ -340,9 +340,6 @@ def main():
         🔄 **Data Coverage:** {len(data):,} blocks across {date_range_days} days
         """)
         
-        # Analysis configuration
-        st.subheader("🎯 Analysis Configuration")
-        
         # Grouping type selection
         col1, col2 = st.columns(2)
         with col1:

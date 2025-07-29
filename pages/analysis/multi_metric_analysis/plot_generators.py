@@ -457,7 +457,8 @@ def create_multi_y_correlation_plot(
     start_y_from_zero: bool = True,
     show_attestation_deadline: bool = True,
     extrapolate_to_deadline: bool = False,
-    show_reference_line: bool = False
+    show_reference_line: bool = False,
+    show_trend_line: bool = True
 ) -> go.Figure:
     """
     Create scatter plot with multiple y-axis metrics against one x-metric.
@@ -617,8 +618,8 @@ def create_multi_y_correlation_plot(
                 )
                 color_idx += 1
             
-    # Add trend lines after all scatter plots
-    if len(data) > 10:
+    # Add trend lines after all scatter plots (if enabled)
+    if show_trend_line and len(data) > 10:
         if grouping_column:
             # For grouped data, add trend lines for each group + metric combination
             for group_value in sorted(data[grouping_column].unique()):
@@ -651,7 +652,7 @@ def create_multi_y_correlation_plot(
                                     trace_key = f"{group_value}_{y_metric}"
                                     trend_color = trace_colors.get(trace_key, colors[0])
                                     
-                                    # Always add trend line with same color as data
+                                    # Add trend line with same color as data
                                     fig.add_trace(
                                         go.Scatter(
                                             x=x_range,
@@ -719,7 +720,7 @@ def create_multi_y_correlation_plot(
                             # Use the same color as the corresponding data trace
                             trend_color = trace_colors.get(y_metric, colors[0])
                             
-                            # Always add trend line with same color as data
+                            # Add trend line with same color as data
                             fig.add_trace(
                                 go.Scatter(
                                     x=x_range,

@@ -1,0 +1,6 @@
+# Ignore all YAML files
+*.yaml
+*.yml
+
+# Except the default template
+!gas_vs_block_propagation.yaml

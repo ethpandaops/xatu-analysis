@@ -1,0 +1,15 @@
+name: Gas vs Block Propagation
+description: Analyze relationship between gas usage and block propagation times
+x_metric: gas_used
+y_metrics:
+  - block_gossip_time
+  - head_time
+aggregation_level: gas_used Buckets
+aggregation_function: p90
+enable_time_buckets: false
+enable_two_stage: true
+first_stage_agg: p90
+second_stage_agg: mean
+show_trend_line: true
+show_attestation_deadline: true
+start_y_from_zero: true

@@ -1,4 +1,4 @@
-# pages/analysis/gas_usage_performance/page.py
+# pages/analysis/multi_metric_analysis/page.py
 import streamlit as st
 import sys
 import os
@@ -12,7 +12,7 @@ dashboard_path = os.path.join(current_dir, "interactive_dashboard.py")
 
 try:
     # Load the module directly by file path to avoid import conflicts
-    spec = importlib.util.spec_from_file_location("gas_usage_dashboard", dashboard_path)
+    spec = importlib.util.spec_from_file_location("multi_metric_dashboard", dashboard_path)
     dashboard_module = importlib.util.module_from_spec(spec)
     
     # Add current directory to path for the dashboard's imports
