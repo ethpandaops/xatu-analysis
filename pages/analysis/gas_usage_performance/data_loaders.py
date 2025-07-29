@@ -1,8 +1,8 @@
 """
-Data loading utilities for gas usage performance analysis.
+Data loading utilities for multi-metric performance analysis.
 
 This module handles loading and caching data from ClickHouse databases
-for gas usage vs performance analysis using Polars for optimal performance.
+for multi-metric performance analysis using Polars for optimal performance.
 """
 
 import polars as pl

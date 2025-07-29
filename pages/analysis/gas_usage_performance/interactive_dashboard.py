@@ -1,8 +1,9 @@
 """
-Interactive dashboard for gas usage performance analysis.
+Interactive dashboard for multi-metric performance analysis.
 
-This module provides the main Streamlit interface for analyzing the relationship
-between gas usage and block arrival times in Ethereum networks.
+This module provides the main Streamlit interface for analyzing relationships
+between multiple performance metrics in Ethereum networks, including gas usage,
+block propagation times, and consensus implementation performance.
 """
 
 import streamlit as st
@@ -203,7 +204,7 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
     Returns:
         True if data loaded successfully, False otherwise
     """
-    with st.spinner("🔄 Loading gas usage and performance data..."):
+    with st.spinner("🔄 Loading performance analysis data..."):
         try:
             # Validate configuration
             validation_errors = validate_analysis_config(
@@ -316,21 +317,21 @@ def render_analysis_controls() -> Dict[str, Any]:
     with col1:
         st.write("**Metrics**")
         # Available metrics (now using raw column names from client-level data)
-        gas_metrics = st.multiselect(
-            "Gas metrics:",
+        execution_metrics = st.multiselect(
+            "Execution metrics:",
             ['gas_used', 'gas_utilization', 'blob_count'],
             default=['gas_used', 'gas_utilization', 'blob_count'],
-            key="gas_metrics"
+            key="execution_metrics"
         )
         
-        perf_metrics = st.multiselect(
-            "Performance metrics:",
+        timing_metrics = st.multiselect(
+            "Timing metrics:",
             ['block_gossip_time', 'head_time', 'time_difference'],
             default=['block_gossip_time', 'head_time', 'time_difference'],
-            key="perf_metrics"
+            key="timing_metrics"
         )
         
-        selected_metrics = gas_metrics + perf_metrics
+        selected_metrics = execution_metrics + timing_metrics
     
     with col2:
         st.write("**Aggregation Level**")
@@ -399,9 +400,9 @@ def render_analysis_controls() -> Dict[str, Any]:
                 key="agg_function"
             )
         
-        st.write("**Gas Bucket Size**")
+        st.write("**Bucket Configuration**")
         gas_bucket_size = st.selectbox(
-            "Gas bucket size (gas units):",
+            "Gas bucket size (units):",
             [500_000, 1_000_000, 2_000_000, 5_000_000, 10_000_000],
             index=2,  # Default to 2M
             format_func=lambda x: f"{x/1_000_000:.1f}M",
@@ -758,20 +759,21 @@ def render_correlation_analysis(data: pd.DataFrame, metrics: List[str], agg_func
     # Metric pair selection
     col1, col2 = st.columns(2)
     with col1:
-        gas_metrics = [m for m in available_metrics if 'gas' in m.lower()]
-        if not gas_metrics:
-            gas_metrics = available_metrics
+        # Prefer execution metrics for X-axis but allow any metric
+        execution_metrics = [m for m in available_metrics if 'gas' in m.lower() or 'blob' in m.lower()]
+        default_x_metrics = execution_metrics if execution_metrics else available_metrics
         x_metric = st.selectbox(
             "X-axis metric:",
-            gas_metrics,
+            available_metrics,
+            index=available_metrics.index(default_x_metrics[0]) if default_x_metrics else 0,
             key="corr_x_metric"
         )
     with col2:
-        perf_metrics = [m for m in available_metrics if m != x_metric]
+        other_metrics = [m for m in available_metrics if m != x_metric]
         y_metrics = st.multiselect(
             "Y-axis metrics:",
-            perf_metrics,
-            default=perf_metrics[:2] if len(perf_metrics) >= 2 else perf_metrics,
+            other_metrics,
+            default=other_metrics[:2] if len(other_metrics) >= 2 else other_metrics,
             key="corr_y_metrics"
         )
     
@@ -982,7 +984,7 @@ def render_time_series_data_table(bucketed_data: pd.DataFrame, metrics: List[str
     try:
         # Check if we have gas bucket data
         if 'gas_bucket' in bucketed_data.columns and 'gas_bucket_label' in bucketed_data.columns:
-            st.write("#### Gas Usage Bucket Analysis")
+            st.write("#### Metric Bucket Analysis")
             
             # Create readable gas bucket labels if they don't exist
             if bucketed_data['gas_bucket_label'].isna().all():
@@ -1015,13 +1017,13 @@ def render_time_series_data_table(bucketed_data: pd.DataFrame, metrics: List[str
             # Sort by gas bucket order
             gas_bucket_metrics = gas_bucket_metrics.sort_index()
             
-            st.write(f"**Data grouped by gas usage buckets** (showing {len(gas_bucket_metrics)} buckets)")
+            st.write(f"**Data grouped by metric buckets** (showing {len(gas_bucket_metrics)} buckets)")
             st.dataframe(gas_bucket_metrics, use_container_width=True)
             
             # Allow users to select specific gas buckets
             bucket_options = sorted(bucketed_data['gas_bucket_label'].dropna().unique())
             selected_buckets = st.multiselect(
-                "Select gas buckets to highlight in charts:",
+                "Select metric buckets to highlight in charts:",
                 bucket_options,
                 default=bucket_options[:3] if len(bucket_options) >= 3 else bucket_options,
                 key="selected_gas_buckets"
@@ -1106,24 +1108,24 @@ def render_distribution_analysis(data: pd.DataFrame, metrics: List[str]):
         )
         st.plotly_chart(fig, use_container_width=True)
     
-    # Gas binned analysis
-    st.write("#### Performance vs Gas Usage Analysis")
+    # Metric binned analysis
+    st.write("#### Metric Correlation Analysis")
     
-    gas_metrics = [m for m in metrics if 'gas' in m.lower()]
-    perf_metrics = [m for m in metrics if 'time' in m.lower() or 'gossip' in m.lower()]
+    execution_metrics = [m for m in metrics if 'gas' in m.lower() or 'blob' in m.lower()]
+    timing_metrics = [m for m in metrics if 'time' in m.lower() or 'gossip' in m.lower()]
     
-    if gas_metrics and perf_metrics:
-        gas_metric = st.selectbox("Gas metric:", gas_metrics, key="gas_bin_metric")
-        perf_metric = st.selectbox("Performance metric:", perf_metrics, key="perf_bin_metric")
+    if execution_metrics and timing_metrics:
+        bin_metric = st.selectbox("Binning metric:", execution_metrics, key="gas_bin_metric")
+        analysis_metric = st.selectbox("Analysis metric:", timing_metrics, key="perf_bin_metric")
         
-        # Calculate gas binned analysis
-        binned_analysis = calculate_gas_binned_analysis(data, gas_metric, perf_metric)
+        # Calculate metric binned analysis
+        binned_analysis = calculate_gas_binned_analysis(data, bin_metric, analysis_metric)
         
         if not binned_analysis.empty:
             fig = create_gas_binned_performance_plot(
                 binned_analysis,
-                f"{perf_metric}_mean",
-                title_suffix=" - Gas Binned Analysis"
+                f"{analysis_metric}_mean",
+                title_suffix=" - Metric Binned Analysis"
             )
             st.plotly_chart(fig, use_container_width=True)
 
@@ -1192,7 +1194,7 @@ def main():
     initialize_session_state()
     
     # Page title
-    st.markdown('<h1 class="main-header">⛽ Gas Usage Performance Analysis</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Multi-Metric Performance Analysis</h1>', unsafe_allow_html=True)
     
     # Sidebar configuration
     config = render_sidebar_configuration()
@@ -1231,7 +1233,7 @@ def main():
         with col1:
             st.markdown("""
             **🔗 Correlation Analysis**
-            - Gas usage vs block propagation correlation
+            - Multi-metric correlation analysis
             - Statistical significance testing
             - Trend line analysis with confidence intervals
             

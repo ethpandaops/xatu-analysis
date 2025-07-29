@@ -1,5 +1,5 @@
 """
-Metrics calculation utilities for gas usage performance analysis.
+Metrics calculation utilities for multi-metric performance analysis.
 
 This module provides statistical analysis functions including time bucketing,
 correlation analysis, trend calculations, and consensus implementation ranking

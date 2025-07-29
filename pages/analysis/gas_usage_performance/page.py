@@ -26,12 +26,12 @@ try:
     dashboard_module.main()
     
 except ImportError as e:
-    st.error(f"Failed to load Gas Usage Performance dashboard: {e}")
+    st.error(f"Failed to load Multi-Metric Performance Analysis dashboard: {e}")
     st.info("Please ensure all required dependencies are installed.")
     st.code(f"Current directory: {current_dir}")
     st.code(f"Dashboard path: {dashboard_path}")
     st.code(f"Path exists: {os.path.exists(dashboard_path)}")
 except Exception as e:
-    st.error(f"Error running Gas Usage Performance dashboard: {e}")
+    st.error(f"Error running Multi-Metric Performance Analysis dashboard: {e}")
     import traceback
     st.code(traceback.format_exc())
