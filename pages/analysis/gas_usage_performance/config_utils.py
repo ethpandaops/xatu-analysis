@@ -10,144 +10,6 @@ from datetime import datetime, timedelta
 from shared.config import get_supported_networks, get_network_config
 
 
-def get_metric_info(metric_name: str) -> Dict[str, str]:
-    """
-    Get human-readable information for metrics used in gas performance analysis.
-    
-    Args:
-        metric_name: The internal metric name (may include aggregation suffix like _mean, _p95)
-        
-    Returns:
-        Dictionary containing title, subtitle, unit, and format information
-    """
-    metric_info = {
-        "block_gossip_time": {
-            "title": "Block Gossip Time",
-            "subtitle": "Time for block gossip event to propagate from slot start to client reception",
-            "unit": "ms",
-            "format": ".2f"
-        },
-        "head_time": {
-            "title": "Head Time", 
-            "subtitle": "Maximum propagation time across head, block, and blob events to reach client",
-            "unit": "ms",
-            "format": ".2f"
-        },
-        "gas_used": {
-            "title": "Gas Used",
-            "subtitle": "Total gas consumed in execution payload",
-            "unit": "gas",
-            "format": ".2e"
-        },
-        "gas_limit": {
-            "title": "Gas Limit",
-            "subtitle": "Maximum gas allowed in execution payload",
-            "unit": "gas",
-            "format": ".2e"
-        },
-        "gas_utilization": {
-            "title": "Gas Utilization",
-            "subtitle": "Percentage of gas limit utilized (gas_used / gas_limit * 100)",
-            "unit": "%",
-            "format": ".1f"
-        },
-        "time_difference": {
-            "title": "Head vs Gossip Time Difference",
-            "subtitle": "Difference between head time and block gossip time",
-            "unit": "ms", 
-            "format": ".2f"
-        },
-        "blob_count": {
-            "title": "Blob Count",
-            "subtitle": "Number of blob sidecars associated with the block",
-            "unit": "blobs",
-            "format": ".0f"
-        },
-        "proposer_index": {
-            "title": "Proposer Index",
-            "subtitle": "Validator index of the block proposer",
-            "unit": "",
-            "format": ".0f"
-        },
-        "slot": {
-            "title": "Slot",
-            "subtitle": "Beacon chain slot number",
-            "unit": "",
-            "format": ".0f"
-        },
-        "epoch": {
-            "title": "Epoch",
-            "subtitle": "Beacon chain epoch number",
-            "unit": "",
-            "format": ".0f"
-        },
-        "meta_consensus_implementation": {
-            "title": "Consensus Implementation",
-            "subtitle": "Beacon chain client software implementation",
-            "unit": "",
-            "format": "s"
-        },
-        "meta_client_name": {
-            "title": "Client Name",
-            "subtitle": "Individual client instance identifier",
-            "unit": "",
-            "format": "s"
-        },
-        "meta_client_geo_continent_code": {
-            "title": "Continent",
-            "subtitle": "Geographic continent of the client location",
-            "unit": "",
-            "format": "s"
-        }
-    }
-    
-    # Handle aggregated metrics (e.g., block_gossip_time_mean, gas_used_p95)
-    base_metric = metric_name
-    agg_suffix = ""
-    agg_description = ""
-    
-    # Check for aggregation suffixes
-    for suffix in ['_mean', '_median', '_p90', '_p95', '_p99', '_min', '_max', '_std', '_count']:
-        if metric_name.endswith(suffix):
-            base_metric = metric_name.replace(suffix, '')
-            agg_suffix = suffix[1:]  # Remove the underscore
-            
-            # Map aggregation functions to descriptions
-            agg_descriptions = {
-                'mean': 'average',
-                'median': 'median (p50)',
-                'p90': 'p90',
-                'p95': 'p95',
-                'p99': 'p99',
-                'min': 'minimum',
-                'max': 'maximum',
-                'std': 'standard deviation',
-                'count': 'count'
-            }
-            agg_description = agg_descriptions.get(agg_suffix, agg_suffix)
-            break
-    
-    # Get base metric info
-    info = metric_info.get(base_metric, {
-        "title": base_metric.replace('_', ' ').title(),
-        "subtitle": "No description available",
-        "unit": "",
-        "format": ".2f"
-    }).copy()
-    
-    # Modify title and subtitle for aggregated metrics
-    if agg_suffix:
-        info["title"] = info['title']  # Keep original title without aggregation description
-        info["subtitle"] = f"{agg_description.title()} of {info['subtitle'].lower()}"
-        info["agg_function"] = agg_suffix
-        info["base_metric"] = base_metric
-    else:
-        info["agg_function"] = None
-        info["base_metric"] = metric_name
-    
-    return info
-
-
 def get_analysis_config() -> Dict[str, Any]:
     """
     Get default configuration parameters for gas performance analysis.
@@ -228,6 +90,10 @@ def get_default_periods() -> Dict[str, Dict[str, datetime]]:
     """
     now = datetime.now()
     return {
+        "Last 24 Hours": {
+            "start": now - timedelta(hours=24),
+            "end": now
+        },
         "Last 7 Days": {
             "start": now - timedelta(days=7),
             "end": now
@@ -284,8 +150,8 @@ def validate_analysis_config(
     # No maximum date range limit - let user request as much data as needed
     # If they request too much data, the system will error out naturally
         
-    if date_range.days < 1:
-        errors.append("Date range must be at least 1 day")
+    if date_range.total_seconds() < 3600:
+        errors.append("Date range must be at least 1 hour")
     
     # Validate time buckets
     if time_buckets < config["min_time_buckets"] or time_buckets > config["max_time_buckets"]:

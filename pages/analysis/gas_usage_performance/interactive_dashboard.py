@@ -17,38 +17,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from shared.ui_components import apply_ethPandaOps_styling
+from shared.metric_utils import get_metric_info
 from config_utils import (
-    get_metric_info, get_analysis_config, get_default_periods,
+    get_analysis_config, get_default_periods,
     validate_analysis_config
 )
-from data_loaders import load_complete_analysis_data, validate_data_quality
-# Import polars-optimized functions first, fall back to pandas if needed
-try:
-    from polars_metrics_calculators import (
-        create_time_buckets_polars as create_time_buckets,
-        create_gas_buckets_polars as create_gas_buckets, 
-        calculate_bucket_metrics_polars as calculate_bucket_metrics,
-        aggregate_data_polars as aggregate_data,
-        calculate_correlation_analysis_polars,
-        calculate_temporal_trends_polars as calculate_temporal_trends,
-        calculate_percentile_analysis_polars as calculate_percentile_analysis,
-        sample_large_dataset as prepare_large_dataset
-    )
-    # Import pandas fallbacks for functions not yet in polars
-    from metrics_calculators import (
-        calculate_consensus_performance_ranking,
-        calculate_gas_binned_analysis,
-        calculate_comparative_analysis
-    )
-    USING_POLARS_METRICS = True
-except ImportError:
-    # Fallback to pandas versions
-    from metrics_calculators import (
-        create_time_buckets, create_gas_buckets, calculate_bucket_metrics, aggregate_data, calculate_consensus_performance_ranking,
-        calculate_gas_binned_analysis, calculate_temporal_trends, calculate_percentile_analysis,
-        calculate_comparative_analysis, prepare_large_dataset
-    )
-    USING_POLARS_METRICS = False
+from data_loaders import load_complete_analysis_data
+from metrics_calculators import (
+    create_time_buckets,
+    create_gas_buckets, 
+    calculate_bucket_metrics,
+    aggregate_data,
+    calculate_correlation_analysis,
+    calculate_temporal_trends,
+    calculate_percentile_analysis,
+    prepare_large_dataset,
+    calculate_consensus_performance_ranking,
+    calculate_gas_binned_analysis,
+    calculate_comparative_analysis
+)
 from plot_generators import (
     create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
     create_box_plot_comparison, create_correlation_matrix, create_geographic_performance_plot,
@@ -251,12 +238,9 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                 )
                 st.session_state.analysis_data['period2'] = period2_data
             
-            # Validate data quality
-            period1_quality = validate_data_quality(period1_data['combined_data'])
-            if not period1_quality['valid']:
-                st.warning("⚠️ Data quality issues detected:")
-                for warning in period1_quality['warnings']:
-                    st.warning(f"• {warning}")
+            # Data quality check
+            if period1_data['combined_data'].empty:
+                st.warning("⚠️ No data found for the selected period")
             
             # Create time buckets using Polars-optimized functions
             if not period1_data['combined_data'].empty:
@@ -637,9 +621,7 @@ def render_analysis_dashboard():
                 
         else:
             # Regular single-stage aggregation
-            with st.spinner(f"Aggregating {len(source_data):,} records using Polars..."):
-                if USING_POLARS_METRICS:
-                    logger.info(f"Using Polars aggregation for {len(source_data):,} records")
+            with st.spinner(f"Aggregating {len(source_data):,} records..."):
                 aggregated_data = aggregate_data(
                     source_data,
                     group_by=analysis_config['group_by'],
