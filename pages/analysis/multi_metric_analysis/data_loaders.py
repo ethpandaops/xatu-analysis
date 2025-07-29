@@ -420,7 +420,8 @@ def combine_performance_data(
     gossip_df: pd.DataFrame,
     head_df: pd.DataFrame,
     block_df: pd.DataFrame,
-    blob_df: Optional[pd.DataFrame] = None
+    blob_df: Optional[pd.DataFrame] = None,
+    attestation_df: Optional[pl.DataFrame] = None
 ) -> pd.DataFrame:
     """
     Combine performance data using Polars for efficient joins and processing.
@@ -430,6 +431,7 @@ def combine_performance_data(
         head_df: Head timing data  
         block_df: Canonical block data with gas usage
         blob_df: Optional blob sidecar count data
+        attestation_df: Optional attestation timing data
         
     Returns:
         Combined DataFrame optimized for performance
@@ -483,17 +485,30 @@ def combine_performance_data(
                 pl.lit(0).alias("blob_count")
             )
         
+        # Add attestation timing data if available
+        if attestation_df is not None and len(attestation_df) > 0:
+            combined_pl = combined_pl.join(attestation_df, on="slot", how="left")
+        
         # Data type optimization and cleaning
-        combined_pl = (combined_pl
-            .with_columns([
-                pl.col("block_gossip_time").cast(pl.Float64),
-                pl.col("head_time").cast(pl.Float64),
-                pl.col("time_difference").cast(pl.Float64),
-                pl.col("gas_used").cast(pl.Int64),
-                pl.col("gas_limit").cast(pl.Int64),
-                pl.col("gas_utilization").cast(pl.Float64),
-                pl.col("blob_count").cast(pl.Int32)
+        cast_columns = [
+            pl.col("block_gossip_time").cast(pl.Float64),
+            pl.col("head_time").cast(pl.Float64),
+            pl.col("time_difference").cast(pl.Float64),
+            pl.col("gas_used").cast(pl.Int64),
+            pl.col("gas_limit").cast(pl.Int64),
+            pl.col("gas_utilization").cast(pl.Float64),
+            pl.col("blob_count").cast(pl.Int32)
+        ]
+        
+        # Add attestation columns only if they exist
+        if "optimal_inclusion_attestations_in_next_slot_count" in combined_pl.columns:
+            cast_columns.extend([
+                pl.col("optimal_inclusion_attestations_in_next_slot_count").cast(pl.Int64),
+                pl.col("total_attestations").cast(pl.Int64)
             ])
+        
+        combined_pl = (combined_pl
+            .with_columns(cast_columns)
             .with_columns([
                 (pl.col("gas_used").is_not_null() & (pl.col("gas_used") > 0)).alias("has_gas_data")
             ])
@@ -589,9 +604,10 @@ def load_complete_analysis_data(
         head_df = load_head_time_data(network, start_date, end_date)
         block_df = load_canonical_block_data(network, start_date, end_date)
         blob_df = load_blob_sidecar_counts(network, start_date, end_date)
+        attestation_df = load_attestation_timing_data(network, start_date, end_date)
         
         # Combine all data
-        combined_df = combine_performance_data(gossip_df, head_df, block_df, blob_df)
+        combined_df = combine_performance_data(gossip_df, head_df, block_df, blob_df, attestation_df)
         
         # Calculate summary statistics
         summary_stats = calculate_summary_stats(combined_df, start_date, end_date)
@@ -604,6 +620,7 @@ def load_complete_analysis_data(
             'head_data': head_df,
             'block_data': block_df,
             'blob_data': blob_df,
+            'attestation_data': attestation_df.to_pandas() if attestation_df is not None else pd.DataFrame(),
             'summary_stats': summary_stats,
             'period_name': period_name,
             'network': network,
@@ -652,9 +669,10 @@ def load_chunked_analysis_data(
             gossip_chunk = load_block_gossip_data(network, chunk_start, chunk_end)
             head_chunk = load_head_time_data(network, chunk_start, chunk_end)
             block_chunk = load_canonical_block_data(network, chunk_start, chunk_end)
+            attestation_chunk = load_attestation_timing_data(network, chunk_start, chunk_end)
             
             if not gossip_chunk.empty and not head_chunk.empty and not block_chunk.empty:
-                chunk_combined = combine_performance_data(gossip_chunk, head_chunk, block_chunk)
+                chunk_combined = combine_performance_data(gossip_chunk, head_chunk, block_chunk, None, attestation_chunk)
                 if not chunk_combined.empty:
                     combined_dfs.append(chunk_combined)
                     
@@ -699,6 +717,7 @@ def load_chunked_analysis_data(
         'head_data': pd.DataFrame(),
         'block_data': pd.DataFrame(),
         'blob_data': pd.DataFrame(),
+        'attestation_data': pd.DataFrame(),  # Not preserved in chunked mode
         'summary_stats': summary_stats,
         'period_name': period_name,
         'network': network,
@@ -707,3 +726,95 @@ def load_chunked_analysis_data(
         'optimization_used': 'chunked_loading',
         'chunks_loaded': len(combined_dfs)
     }
+
+
+@st.cache_data(ttl=3600)
+def load_attestation_timing_data(
+    network: str,
+    start_date: datetime,
+    end_date: datetime
+) -> Optional[pl.DataFrame]:
+    """
+    Load attestation timing data showing optimal inclusion counts.
+    
+    Returns DataFrame with columns:
+    - slot: The attestation slot
+    - slot_start_date_time: Timestamp of the slot
+    - optimal_inclusion_attestations_in_next_slot_count: Count of attestations included in next slot
+    - total_attestations: Total unique attestations in the slot
+    """
+    with memory_efficient_context():
+        # Normalize time range
+        norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
+        
+        conn = get_database_connection()
+        if conn is None:
+            raise RuntimeError("Failed to get database connection")
+        
+        # Attestation timing query with deduplication logic
+        query = """
+        WITH validator_attestations AS (
+            SELECT 
+                slot,
+                block_slot,
+                epoch,
+                slot_start_date_time,
+                arrayJoin(validators) as validator_index
+            FROM canonical_beacon_elaborated_attestation
+            WHERE meta_network_name = %(network)s
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        ),
+        first_inclusions AS (
+            SELECT 
+                slot,
+                validator_index,
+                MIN(block_slot) as first_block_slot,
+                MIN(block_slot) - slot as inclusion_delay,
+                MIN(slot_start_date_time) as slot_start_date_time
+            FROM validator_attestations
+            GROUP BY slot, validator_index
+        )
+        SELECT 
+            slot,
+            slot_start_date_time,
+            COUNT(DISTINCT CASE WHEN inclusion_delay = 1 THEN validator_index END) as optimal_inclusion_attestations_in_next_slot_count,
+            COUNT(DISTINCT validator_index) as total_attestations
+        FROM first_inclusions
+        GROUP BY slot, slot_start_date_time
+        ORDER BY slot
+        """
+        
+        params = {
+            'network': network,
+            'start_date': norm_start,
+            'end_date': norm_end
+        }
+        
+        logger.info(f"Loading attestation timing data for {network} from {norm_start} to {norm_end}")
+        
+        try:
+            # Load into pandas first, then convert to Polars for processing
+            df_pandas = pd.read_sql(query, conn, params=params)
+            
+            if df_pandas.empty:
+                logger.warning("No attestation timing data found")
+                return None
+            
+            # Convert to Polars for efficient processing
+            df_polars = (pl.from_pandas(df_pandas)
+                .with_columns([
+                    pl.col("optimal_inclusion_attestations_in_next_slot_count").cast(pl.Int64),
+                    pl.col("total_attestations").cast(pl.Int64)
+                ])
+                .filter(pl.col("total_attestations") > 0)
+                .sort("slot")
+            )
+            
+            logger.info(f"Loaded and processed {len(df_polars):,} attestation timing records")
+            
+            return df_polars
+            
+        except Exception as e:
+            logger.error(f"Error loading attestation timing data: {e}")
+            st.error(f"Failed to load attestation timing data: {str(e)}")
+            return None

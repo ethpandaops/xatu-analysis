@@ -246,31 +246,6 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
             
             st.session_state.data_loaded = True
             st.success("✅ Data loaded successfully!")
-            
-            # Display data summary
-            summary = period1_data['summary_stats']
-            
-            # Check if we have gas data
-            has_gas_data = summary.get('avg_gas_used', 0) > 0
-            
-            if has_gas_data:
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Records", f"{summary.get('total_blocks', 0):,}")
-                with col2:
-                    st.metric("Avg Gas Used", f"{summary.get('avg_gas_used', 0):.0f}")
-                with col3:
-                    st.metric("Avg Gas Utilization", f"{summary.get('avg_gas_utilization', 0):.1f}%")
-            else:
-                st.info("ℹ️ **Timing-Only Analysis Mode**: No gas usage data available for this network/period. Analysis will focus on block propagation timing metrics.")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total Records", f"{summary.get('total_blocks', 0):,}")
-                with col2:
-                    st.metric("Avg Block Gossip Time", f"{summary.get('avg_block_gossip_time', 0):.1f}ms")
-                with col3:
-                    st.metric("Avg Head Time", f"{summary.get('avg_head_time', 0):.1f}ms")
-            
             return True
             
         except Exception as e:

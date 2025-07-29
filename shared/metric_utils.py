@@ -131,6 +131,12 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
             "subtitle": "Geographic continent of the client location",
             "unit": "",
             "format": "s"
+        },
+        "optimal_inclusion_attestations_in_next_slot_count": {
+            "title": "Optimal Inclusion Attestations",
+            "subtitle": "Count of attestations included in the slot immediately following",
+            "unit": "attestations",
+            "format": ",d"
         }
     }
     
