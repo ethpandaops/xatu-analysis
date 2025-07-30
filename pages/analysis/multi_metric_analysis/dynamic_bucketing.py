@@ -67,6 +67,9 @@ def create_dynamic_buckets(
         result_df[f'{bucket_column_name}_start'] = result_df[bucket_column_name] * bucket_size + min_val
         result_df[f'{bucket_column_name}_end'] = result_df[f'{bucket_column_name}_start'] + bucket_size
         
+        # Add bucket midpoint for plotting
+        result_df[f'{bucket_column_name}_midpoint'] = (result_df[f'{bucket_column_name}_start'] + result_df[f'{bucket_column_name}_end']) / 2
+        
         # Create human-readable labels
         result_df[f'{bucket_column_name}_label'] = result_df.apply(
             lambda row: f"{row[f'{bucket_column_name}_start']:.0f}-{row[f'{bucket_column_name}_end']:.0f}"

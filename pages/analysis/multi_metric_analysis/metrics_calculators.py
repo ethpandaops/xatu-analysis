@@ -75,7 +75,7 @@ def aggregate_data(df: pd.DataFrame, group_by: List[str] = None, metrics: List[s
         return pd.DataFrame()
     
     group_by = group_by or ['slot']
-    metrics = metrics or ['block_gossip_time', 'head_time', 'gas_used', 'gas_utilization']
+    metrics = metrics or ['block_gossip_time', 'head_time', 'data_available', 'gas_used', 'gas_utilization']
     
     with memory_efficient_context():
         # Convert to Polars
@@ -117,7 +117,8 @@ def aggregate_data(df: pd.DataFrame, group_by: List[str] = None, metrics: List[s
         aggregated_pl = df_pl.group_by(available_group_cols).agg(agg_expressions)
         
         # Add metadata columns
-        metadata_cols = ['slot_start_date_time', 'bucket_start_time', 'bucket_midpoint', 'bucket_midpoint_numeric']
+        metadata_cols = ['slot_start_date_time', 'bucket_start_time', 'bucket_midpoint', 'bucket_midpoint_numeric',
+                        'x_bucket_midpoint', 'x_bucket_label', 'x_bucket_start', 'x_bucket_end']
         for col in metadata_cols:
             if col in df_pl.columns and col not in available_group_cols:
                 metadata_expr = df_pl.group_by(available_group_cols).agg([
@@ -170,7 +171,7 @@ def calculate_bucket_metrics(
         return df
     
     group_by = [bucket_col] + (group_cols or [])
-    metric_cols = metric_cols or ['gas_used', 'block_gossip_time', 'head_time', 'gas_utilization']
+    metric_cols = metric_cols or ['gas_used', 'block_gossip_time', 'head_time', 'data_available', 'gas_utilization']
     
     return aggregate_data(df, group_by, metric_cols, agg_function)
 
@@ -450,7 +451,7 @@ def calculate_comparative_analysis(
         logger.warning("Cannot perform comparative analysis: empty period data")
         return {}
     
-    metric_cols = metric_cols or ['gas_used', 'block_gossip_time', 'head_time', 'gas_utilization']
+    metric_cols = metric_cols or ['gas_used', 'block_gossip_time', 'head_time', 'data_available', 'gas_utilization']
     available_metrics = [col for col in metric_cols if col in period1_data.columns and col in period2_data.columns]
     
     if not available_metrics:

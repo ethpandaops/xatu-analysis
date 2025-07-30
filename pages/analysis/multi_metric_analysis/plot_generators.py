@@ -295,7 +295,7 @@ def create_time_series_comparison(
     
     # Define which metrics go on which axis
     gas_metrics = [m for m in metrics_to_plot if 'gas' in m.lower()]
-    timing_metrics = [m for m in metrics_to_plot if 'time' in m.lower() or 'gossip' in m.lower() or 'head' in m.lower()]
+    timing_metrics = [m for m in metrics_to_plot if 'time' in m.lower() or 'gossip' in m.lower() or 'head' in m.lower() or 'data_available' in m.lower()]
     
     colors = px.colors.qualitative.Set1
     color_idx = 0
@@ -640,7 +640,7 @@ def create_multi_y_correlation_plot(
                                         # Solve: 4000 = slope * x + intercept -> x = (4000 - intercept) / slope
                                         if correlation_data['slope'] != 0:
                                             x_at_4s = (4000 - correlation_data['intercept']) / correlation_data['slope']
-                                            if x_at_4s > 0:  # Only show positive gas values
+                                            if x_at_4s > 0:  # Only show positive x-axis values
                                                 deadline_intersection = x_at_4s
                                                 x_max = max(x_max, x_at_4s)
                                     
@@ -673,12 +673,21 @@ def create_multi_y_correlation_plot(
                                     
                                     # Add annotation for 4s intersection if available
                                     if deadline_intersection:
-                                        # Round to nearest million for cleaner display
-                                        gas_millions = round(deadline_intersection / 1_000_000)
+                                        # Format based on x-axis metric
+                                        x_info = get_metric_info(x_metric)
+                                        if 'gas' in x_metric.lower():
+                                            # Round to nearest million for gas
+                                            value_str = f"{round(deadline_intersection / 1_000_000)}M gas"
+                                        else:
+                                            # Use appropriate formatting for other metrics
+                                            format_str = x_info.get('format', '.2f')
+                                            unit = x_info.get('unit', '')
+                                            value_str = f"{deadline_intersection:{format_str}}{' ' + unit if unit else ''}"
+                                        
                                         annotations.append(dict(
                                             x=deadline_intersection,
                                             y=4000,
-                                            text=f"{group_value}<br>{gas_millions}M gas",
+                                            text=f"{group_value}<br>{value_str}",
                                             showarrow=True,
                                             arrowhead=2,
                                             arrowsize=1,
@@ -709,7 +718,7 @@ def create_multi_y_correlation_plot(
                                 # Solve: 4000 = slope * x + intercept -> x = (4000 - intercept) / slope
                                 if correlation_data['slope'] != 0:
                                     x_at_4s = (4000 - correlation_data['intercept']) / correlation_data['slope']
-                                    if x_at_4s > 0:  # Only show positive gas values
+                                    if x_at_4s > 0:  # Only show positive x-axis values
                                         deadline_intersection = x_at_4s
                                         x_max = max(x_max, x_at_4s)
                             
@@ -741,12 +750,21 @@ def create_multi_y_correlation_plot(
                             
                             # Add annotation for 4s intersection if available
                             if deadline_intersection:
-                                # Round to nearest million for cleaner display
-                                gas_millions = round(deadline_intersection / 1_000_000)
+                                # Format based on x-axis metric
+                                x_info = get_metric_info(x_metric)
+                                if 'gas' in x_metric.lower():
+                                    # Round to nearest million for gas
+                                    value_str = f"{round(deadline_intersection / 1_000_000)}M gas"
+                                else:
+                                    # Use appropriate formatting for other metrics
+                                    format_str = x_info.get('format', '.2f')
+                                    unit = x_info.get('unit', '')
+                                    value_str = f"{deadline_intersection:{format_str}}{' ' + unit if unit else ''}"
+                                
                                 annotations.append(dict(
                                     x=deadline_intersection,
                                     y=4000,
-                                    text=f"{y_info['title']}<br>{gas_millions}M gas",
+                                    text=f"{y_info['title']}<br>{value_str}",
                                     showarrow=True,
                                     arrowhead=2,
                                     arrowsize=1,

@@ -4,6 +4,7 @@ x_metric: gas_used
 y_metrics:
   - block_gossip_time
   - head_time
+  - data_available
 aggregation_level: gas_used Buckets
 aggregation_function: p90
 enable_time_buckets: false

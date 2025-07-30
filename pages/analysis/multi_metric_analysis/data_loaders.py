@@ -210,10 +210,17 @@ def load_head_time_data(
             slot,
             slot_start_date_time,
             MAX(arrival_time) as head_time,
+            MAX(CASE WHEN source = 'blob' THEN arrival_time END) as data_available,
             meta_client_name,
             meta_consensus_implementation,
             meta_client_geo_continent_code
-        FROM all_events
+        FROM (
+            SELECT *, 'head' as source FROM head_events
+            UNION ALL
+            SELECT *, 'block' as source FROM block_events  
+            UNION ALL
+            SELECT *, 'blob' as source FROM blob_events
+        ) all_events_with_source
         GROUP BY slot, slot_start_date_time, meta_client_name,
                  meta_consensus_implementation, meta_client_geo_continent_code
         ORDER BY slot_start_date_time
@@ -243,6 +250,7 @@ def load_head_time_data(
             df_polars = (df_polars
                 .with_columns([
                     pl.col("head_time").cast(pl.Float64),
+                    pl.col("data_available").cast(pl.Float64),
                     pl.col("meta_client_name").str.strip_chars(),
                     pl.col("meta_consensus_implementation").str.strip_chars().fill_null("unknown")
                 ])
@@ -454,7 +462,7 @@ def combine_performance_data(
         # Join gossip with head data
         combined_pl = (gossip_pl
             .join(
-                head_pl.select(["slot", "meta_client_name", "head_time"]),
+                head_pl.select(["slot", "meta_client_name", "head_time", "data_available"]),
                 on=["slot", "meta_client_name"],
                 how="left"
             )
@@ -493,6 +501,7 @@ def combine_performance_data(
         cast_columns = [
             pl.col("block_gossip_time").cast(pl.Float64),
             pl.col("head_time").cast(pl.Float64),
+            pl.col("data_available").cast(pl.Float64),
             pl.col("time_difference").cast(pl.Float64),
             pl.col("gas_used").cast(pl.Int64),
             pl.col("gas_limit").cast(pl.Int64),
@@ -548,7 +557,8 @@ def calculate_summary_stats(df: pd.DataFrame, start_date: datetime, end_date: da
             pl.col("gas_used").mean().alias("avg_gas_used"),
             pl.col("gas_utilization").mean().alias("avg_gas_utilization"),
             pl.col("block_gossip_time").mean().alias("avg_block_gossip_time"),
-            pl.col("head_time").mean().alias("avg_head_time")
+            pl.col("head_time").mean().alias("avg_head_time"),
+            pl.col("data_available").mean().alias("avg_data_available")
         ]).to_pandas().iloc[0].to_dict()
         
         # Convert to regular Python types and handle NaN
@@ -559,6 +569,7 @@ def calculate_summary_stats(df: pd.DataFrame, start_date: datetime, end_date: da
             'avg_gas_utilization': float(stats.get('avg_gas_utilization', 0)) if pd.notna(stats.get('avg_gas_utilization')) else 0,
             'avg_block_gossip_time': float(stats.get('avg_block_gossip_time', 0)) if pd.notna(stats.get('avg_block_gossip_time')) else 0,
             'avg_head_time': float(stats.get('avg_head_time', 0)) if pd.notna(stats.get('avg_head_time')) else 0,
+            'avg_data_available': float(stats.get('avg_data_available', 0)) if pd.notna(stats.get('avg_data_available')) else 0,
             'unique_slots': int(stats.get('unique_slots', 0)),
             'unique_clients': int(stats.get('unique_clients', 0))
         }

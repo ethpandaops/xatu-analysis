@@ -66,6 +66,12 @@ def get_metric_info(metric_name: str) -> Dict[str, str]:
             "unit": "ms",
             "format": ".2f"
         },
+        "data_available": {
+            "title": "Data Available Time",
+            "subtitle": "Maximum time for a client to see all blobs for a slot (0 blobs is valid)",
+            "unit": "ms",
+            "format": ".2f"
+        },
         "gas_used": {
             "title": "Gas Used",
             "subtitle": "Total gas consumed in execution payload",

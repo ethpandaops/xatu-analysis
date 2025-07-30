@@ -371,10 +371,14 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
             )
         
         with adv_col2:
+            # Ensure default y_metrics are in the available options
+            available_y_options = [m for m in available_metrics if m != x_metric]
+            default_y_metrics = [m for m in y_metrics if m in available_y_options]
+            
             y_metrics = st.multiselect(
                 "Y-axis metric(s):",
-                [m for m in available_metrics if m != x_metric],
-                default=y_metrics,
+                available_y_options,
+                default=default_y_metrics,
                 key="y_axis_metrics",
                 help="Select one or more metrics to plot on the Y-axis"
             )
@@ -1070,8 +1074,11 @@ def render_correlation_analysis(data: pd.DataFrame, x_metric: str, y_metrics: Li
     # Handle aggregated data - map original metrics to their aggregated versions
     metric_mapping = {}  # original -> aggregated column name
     
-    # Map X metric
-    if x_metric in data.columns:
+    # Map X metric - special handling for bucketed data
+    if 'x_bucket' in analysis_config.get('group_by', []) and 'x_bucket_midpoint' in data.columns:
+        # Use bucket midpoint for x-axis when grouping by x_bucket
+        metric_mapping[x_metric] = 'x_bucket_midpoint'
+    elif x_metric in data.columns:
         metric_mapping[x_metric] = x_metric
     else:
         # Look for aggregated version
@@ -1587,7 +1594,7 @@ def main():
         
         # Show example metric information
         st.markdown("### 📋 Available Metrics")
-        example_metrics = ['gas_used', 'block_gossip_time', 'head_time', 'gas_utilization']
+        example_metrics = ['gas_used', 'block_gossip_time', 'head_time', 'data_available', 'gas_utilization']
         
         metric_info_data = []
         for metric in example_metrics:

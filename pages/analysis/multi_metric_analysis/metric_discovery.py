@@ -51,14 +51,19 @@ class MetricInfo:
         
     def _calculate_bucket_size(self, data: pd.Series) -> Optional[float]:
         """Calculate a sensible bucket size for numeric data."""
-        if not self.is_numeric or self.unique_count < 10:
+        if not self.is_numeric:
             return None
             
         data_range = self.max - self.min
         if data_range == 0:
             return None
+        
+        # Special handling for small discrete values (like blob counts)
+        if data_range <= 10 and self.unique_count <= 10:
+            # Use bucket size of 1 for small discrete values
+            return 1.0
             
-        # Aim for 10-20 buckets
+        # Aim for 10-20 buckets for larger ranges
         raw_bucket_size = data_range / 15
         
         # Round to nice numbers
