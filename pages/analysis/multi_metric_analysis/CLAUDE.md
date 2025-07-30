@@ -1,13 +1,13 @@
-# Gas Usage Performance Analysis
+# Multi-Metric Performance Analysis
 
-Interactive Streamlit dashboard for analyzing the relationship between gas usage and block arrival times in Ethereum networks, with support for multi-period comparisons and detailed consensus implementation analysis.
+Interactive Streamlit dashboard for analyzing relationships between multiple performance metrics in Ethereum networks, including gas usage, block propagation times, and consensus implementation performance, with support for multi-period comparisons.
 
 ## Architecture  
 Claude MUST read the `./CURSOR.mdc` file before making any changes to this component.
 
 ## Component Overview
 
-This analysis module provides comprehensive gas usage vs performance correlation analysis through:
+This analysis module provides comprehensive multi-metric performance correlation analysis through:
 
 - **Multi-source Data Integration**: Complex ClickHouse queries combining block gossip, head events, and canonical block data
 - **Statistical Analysis**: Time bucketing, correlation analysis, trend calculations, and consensus implementation ranking
@@ -16,12 +16,14 @@ This analysis module provides comprehensive gas usage vs performance correlation
 
 ## Key Features
 
-- Real-time correlation analysis between gas usage and block propagation times
+- Real-time correlation analysis between multiple performance metrics
+- Flexible metric selection for gas usage, block propagation times, and other performance indicators
 - Consensus implementation performance ranking and comparison
 - Geographic performance analysis by continent
 - Time bucket-based temporal analysis with configurable granularity
-- Gas utilization binned analysis for performance impact assessment
+- Metric-based binned analysis for performance impact assessment
 - Statistical validation with significance testing
+- Support for timing-only analysis when gas data is unavailable
 
 ## Data Sources
 

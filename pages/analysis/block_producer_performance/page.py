@@ -1,3 +1,4 @@
+# pages/analysis/block_producer_performance/page.py
 import streamlit as st
 import sys
 import os
@@ -15,7 +16,7 @@ def isolated_import_context(directory_path, clear_cache=True):
         if clear_cache:
             conflicting_modules = [
                 'config_utils', 'data_loaders', 'metrics_calculators', 
-                'plot_generators', 'interactive_dashboard', 'polars_data_loaders'
+                'plot_generators', 'interactive_dashboard'
             ]
             for module_name in conflicting_modules:
                 if module_name in sys.modules:
@@ -48,7 +49,7 @@ try:
     # Use isolated import context to prevent contamination
     with isolated_import_context(current_dir):
         # Load the module directly by file path with unique name
-        module_name = f"attestation_cdf_dashboard_{id(current_dir)}"
+        module_name = f"block_producer_performance_dashboard_{id(current_dir)}"
         spec = importlib.util.spec_from_file_location(module_name, dashboard_path)
         dashboard_module = importlib.util.module_from_spec(spec)
         
@@ -59,12 +60,12 @@ try:
         dashboard_module.main()
     
 except ImportError as e:
-    st.error(f"Failed to load Attestation CDF Analysis dashboard: {e}")
+    st.error(f"Failed to load Block Producer Performance dashboard: {e}")
     st.info("Please ensure all required dependencies are installed.")
     st.code(f"Current directory: {current_dir}")
     st.code(f"Dashboard path: {dashboard_path}")
     st.code(f"Path exists: {os.path.exists(dashboard_path)}")
 except Exception as e:
-    st.error(f"Error running Attestation CDF Analysis dashboard: {e}")
+    st.error(f"Error running Block Producer Performance dashboard: {e}")
     import traceback
     st.code(traceback.format_exc())
