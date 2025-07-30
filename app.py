@@ -19,11 +19,11 @@ home_page = st.Page(
     default=True
 )
 
-attestation_packing_page = st.Page(
-    "pages/analysis/attestation_packing/page.py",
-    title="Attestation Packing",
-    icon="📦",
-    url_path="attestation-packing"
+block_producer_performance_page = st.Page(
+    "pages/analysis/block_producer_performance/page.py",
+    title="Block Producer Performance",
+    icon="🏗️",
+    url_path="block-producer-performance"
 )
 
 multi_metric_analysis_page = st.Page(
@@ -50,7 +50,7 @@ validator_performance_page = st.Page(
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [attestation_packing_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page]
 })
 
 # Run the selected page

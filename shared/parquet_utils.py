@@ -10,7 +10,25 @@ from .filesystem import get_cache_dir
 
 
 def calculate_parquet_urls(start_date_str, end_date_str, network, table_name):
-    """Calculate the parquet file URLs needed for a date range."""
+    """Calculate the parquet file URLs needed for a date range.
+    
+    Automatically detects whether the table uses hourly or daily partitioning.
+    """
+    # Tables that use hourly partitioning
+    hourly_tables = [
+        'libp2p_gossipsub_beacon_attestation',
+        'libp2p_gossipsub_beacon_block',
+        # Add other hourly tables here as needed
+    ]
+    
+    if table_name in hourly_tables:
+        return calculate_hourly_parquet_urls(start_date_str, end_date_str, network, table_name)
+    else:
+        return calculate_daily_parquet_urls(start_date_str, end_date_str, network, table_name)
+
+
+def calculate_daily_parquet_urls(start_date_str, end_date_str, network, table_name):
+    """Calculate daily partitioned parquet file URLs for a date range."""
     start_date = datetime.strptime(start_date_str.replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
     end_date = datetime.strptime(end_date_str.replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
     
@@ -27,6 +45,28 @@ def calculate_parquet_urls(start_date_str, end_date_str, network, table_name):
         url = f"https://data.ethPandaOps.io/xatu/{network}/databases/default/{table_name}/{current_date.year}/{current_date.month}/{current_date.day}.parquet"
         urls.append((url, current_date))
         current_date += timedelta(days=1)
+    
+    return urls
+
+
+def calculate_hourly_parquet_urls(start_date_str, end_date_str, network, table_name):
+    """Calculate hourly partitioned parquet file URLs for a date range."""
+    start_date = datetime.strptime(start_date_str.replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
+    end_date = datetime.strptime(end_date_str.replace('Z', ''), '%Y-%m-%dT%H:%M:%S')
+    
+    urls = []
+    current_hour = start_date.replace(minute=0, second=0, microsecond=0)
+    end_hour = end_date.replace(minute=0, second=0, microsecond=0)
+    
+    # Calculate total hours
+    total_hours = int((end_hour - current_hour).total_seconds() / 3600) + 1
+    st.info(f"📅 Will download {total_hours} hour(s) from {current_hour} to {end_hour}")
+    
+    while current_hour <= end_hour:
+        # Format: https://data.ethPandaOps.io/xatu/NETWORK/databases/DATABASE/TABLE/YYYY/M/D/H.parquet
+        url = f"https://data.ethPandaOps.io/xatu/{network}/databases/default/{table_name}/{current_hour.year}/{current_hour.month}/{current_hour.day}/{current_hour.hour}.parquet"
+        urls.append((url, current_hour))
+        current_hour += timedelta(hours=1)
     
     return urls
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Interactive Attestation Packing Analysis Dashboard
+Interactive Block Producer Performance Dashboard
 
-This Streamlit app provides an interactive interface for analyzing attestation packing metrics
-from the Ethereum beacon chain. Users can select different parameters and view metrics dynamically.
+This Streamlit app provides an interactive interface for analyzing block producer performance metrics
+including attestation packing efficiency from the Ethereum beacon chain. Users can select different 
+parameters and view metrics dynamically.
 
 Run with: streamlit run interactive_dashboard.py
 """
@@ -32,6 +33,7 @@ from shared.ui_components import apply_ethPandaOps_styling
 from shared.filesystem import get_cache_dir
 
 # Additional imports needed for main functionality
+import streamlit as st
 import shutil
 import traceback
 from datetime import datetime, timedelta, time
@@ -52,7 +54,7 @@ def main():
         st.session_state.entities = {}
     
     # Header
-    st.title("🔍 Attestation Packing")
+    st.title("🏗️ Block Producer Performance")
     
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")

@@ -17,5 +17,5 @@ Interactive Streamlit dashboard for analyzing Ethereum attestation packing effic
 
 ## Important Constraints
 - **Performance Critical**: Must use local Parquet caching with 1-hour TTL for expensive queries
-- **Session State Prefix**: All keys must use `attestation_packing_` prefix
+- **Session State Prefix**: All keys must use `block_producer_performance_` prefix
 - **Dual Aggregation Support**: Handle both consensus client and validator entity groupings with percentile statistics
