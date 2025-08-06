@@ -639,6 +639,11 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
     with col1:
         st.markdown("### Entity Breakdown")
         if entity_counts:
+            # Check if all entities are 'unknown' (indicating no entity resolution data)
+            if len(entity_counts) == 1 and 'unknown' in entity_counts:
+                st.info(f"Entity resolution data not available for {network}. All validators shown as 'unknown'.")
+                # Still show the chart for consistency
+            
             # Sort by count and take top 20
             sorted_entities = sorted(entity_counts.items(), key=lambda x: x[1], reverse=True)[:20]
             
@@ -662,12 +667,13 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             
             st.plotly_chart(fig_entity, use_container_width=True)
             
-            # Show percentage breakdown
-            total_slow = len(slow_validator_indices)
-            with st.expander("Entity Details"):
-                for entity, count in sorted_entities[:10]:
-                    pct = (count / total_slow) * 100
-                    st.write(f"**{entity}**: {count} validators ({pct:.1f}%)")
+            # Show percentage breakdown only if we have real entity data
+            if not (len(entity_counts) == 1 and 'unknown' in entity_counts):
+                total_slow = len(slow_validator_indices)
+                with st.expander("Entity Details"):
+                    for entity, count in sorted_entities[:10]:
+                        pct = (count / total_slow) * 100
+                        st.write(f"**{entity}**: {count} validators ({pct:.1f}%)")
         else:
             st.info("No entity data available")
     
@@ -722,6 +728,14 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         proposer_duties_df = load_proposer_duties_for_missed_slots(missed_slots_list, network)
         
         if not proposer_duties_df.empty:
+            # Check if entity data is available
+            unique_entities = proposer_duties_df['proposer_validator_index'].map(
+                lambda x: entities.get(x, 'unknown') if pd.notna(x) else 'unknown'
+            ).unique()
+            
+            if len(unique_entities) == 1 and unique_entities[0] == 'unknown' and not entities:
+                st.info(f"Entity resolution data not available for {network}. Showing validators without entity grouping.")
+            
             # Create the chart
             missed_slots_fig = create_missed_slots_by_proposer_entity_chart(proposer_duties_df, entities, top_n=20)
             st.plotly_chart(missed_slots_fig, use_container_width=True)
@@ -747,6 +761,10 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
     st.divider()
     st.subheader("📊 Entity Density Analysis Across Percentile Thresholds")
     st.markdown("Shows how entity concentration changes as we vary the slowness threshold")
+    
+    # Check if we have entity data
+    if not entities:
+        st.info(f"Entity resolution data not available for {network}. Analysis will show all validators as 'unknown'.")
     
     with st.spinner("Calculating entity density across percentile thresholds..."):
         # Define percentile thresholds to analyze
@@ -1084,7 +1102,9 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         st.markdown("### Entity vs Observer Node Heatmap")
         
         # Add entity information to slow attestations
-        slow_observer_attestations['entity'] = slow_observer_attestations['attesting_validator_index'].map(entities)
+        slow_observer_attestations['entity'] = slow_observer_attestations['attesting_validator_index'].map(
+            lambda x: entities.get(x, 'unknown')
+        )
         
         # Aggregate by entity and observer node
         entity_observer_matrix = slow_observer_attestations.groupby(['entity', 'observer_node']).size().reset_index(name='attestation_count')
@@ -1125,7 +1145,9 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         st.markdown("### Client vs Observer Node Analysis")
         
         # Add client information
-        slow_observer_attestations['client'] = slow_observer_attestations['attesting_validator_index'].map(clients)
+        slow_observer_attestations['client'] = slow_observer_attestations['attesting_validator_index'].map(
+            lambda x: clients.get(x, 'unknown')
+        )
         
         # Aggregate by client and observer node
         client_observer_matrix = slow_observer_attestations.groupby(['client', 'observer_node']).size().reset_index(name='attestation_count')
@@ -1208,8 +1230,12 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             top_slot_validators = slot_occurrences.nlargest(10, 'slot_count').copy()
             
             # Add entity and client info
-            top_slot_validators['entity'] = top_slot_validators['attesting_validator_index'].map(entities)
-            top_slot_validators['client'] = top_slot_validators['attesting_validator_index'].map(clients)
+            top_slot_validators['entity'] = top_slot_validators['attesting_validator_index'].map(
+                lambda x: entities.get(x, 'unknown')
+            )
+            top_slot_validators['client'] = top_slot_validators['attesting_validator_index'].map(
+                lambda x: clients.get(x, 'unknown')
+            )
             
             # Get average propagation time
             validator_avg_times = slow_observer_attestations.groupby('attesting_validator_index')['propagation_time'].mean()
@@ -1248,8 +1274,12 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             )
         
         # Add entity and client info
-        multi_observer_validators['entity'] = multi_observer_validators['attesting_validator_index'].map(entities)
-        multi_observer_validators['client'] = multi_observer_validators['attesting_validator_index'].map(clients)
+        multi_observer_validators['entity'] = multi_observer_validators['attesting_validator_index'].map(
+            lambda x: entities.get(x, 'unknown')
+        )
+        multi_observer_validators['client'] = multi_observer_validators['attesting_validator_index'].map(
+            lambda x: clients.get(x, 'unknown')
+        )
         
         # Sort by observer count
         multi_observer_validators = multi_observer_validators.sort_values('observer_count', ascending=False).head(20)

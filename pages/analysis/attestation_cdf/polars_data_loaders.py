@@ -13,6 +13,7 @@ from typing import Dict, Any
 import logging
 
 from shared.database import get_database_connection
+from shared.config import get_network_genesis_timestamp
 from config_utils import get_data_source_options
 
 # Set up logging
@@ -41,8 +42,10 @@ def load_attestation_timing_data_polars(start_time, end_time, network="mainnet",
         end_time_utc = end_time.astimezone(timezone.utc)
     
     # Convert to slot numbers for partition filtering
-    start_slot = int((start_time_utc.timestamp() - 1606824023) // 12)  # Genesis timestamp
-    end_slot = int((end_time_utc.timestamp() - 1606824023) // 12)
+    genesis_time = get_network_genesis_timestamp(network)
+    
+    start_slot = int((start_time_utc.timestamp() - genesis_time) // 12)
+    end_slot = int((end_time_utc.timestamp() - genesis_time) // 12)
     
     logger.info(f"Slot range: {start_slot} to {end_slot} ({end_slot - start_slot + 1} slots)")
     
@@ -199,8 +202,10 @@ def load_raw_attestation_data_for_slow_analysis(start_time, end_time, network="m
         
         # If no missed slots provided, we need to find them first
         if missed_slots is None:
-            start_slot = int((start_time_utc.timestamp() - 1606824023) // 12)
-            end_slot = int((end_time_utc.timestamp() - 1606824023) // 12)
+            genesis_time = get_network_genesis_timestamp(network)
+            
+            start_slot = int((start_time_utc.timestamp() - genesis_time) // 12)
+            end_slot = int((end_time_utc.timestamp() - genesis_time) // 12)
             params['start_slot'] = start_slot
             params['end_slot'] = end_slot
             

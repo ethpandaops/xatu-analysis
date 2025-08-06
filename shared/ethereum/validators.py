@@ -17,7 +17,7 @@ def load_blockprint_clients(network):
         network (str): Network name (mainnet, holesky, sepolia)
         
     Returns:
-        dict: Mapping of proposer_index -> blockprint_client
+        dict: Mapping of proposer_index -> blockprint_client. Returns empty dict if no data available.
     """
     connection = get_database_connection()
     if connection is None:
@@ -76,6 +76,12 @@ def load_blockprint_clients(network):
             blockprint_map[row['proposer_index']] = client
         
         return blockprint_map
+    except Exception as e:
+        # Log the error but don't fail - return empty dict for graceful fallback
+        # This handles cases where the blockprint tables might not have data
+        import logging
+        logging.warning(f"Could not load blockprint clients for network {network}: {str(e)}")
+        return {}
     finally:
         connection.close()
 
@@ -88,7 +94,7 @@ def load_validators_from_ethseer(network):
         network (str): Network name (mainnet, holesky, sepolia)
         
     Returns:
-        dict: Mapping of proposer_index -> entity
+        dict: Mapping of proposer_index -> entity. Returns empty dict if no data available.
     """
     connection = get_database_connection()
     if connection is None:
@@ -107,6 +113,11 @@ def load_validators_from_ethseer(network):
         
         result = connection.execute(proposer_query, {"network": network}).fetchall()
         
+        # If no data is available (e.g., for non-mainnet networks), return empty dict
+        # The calling code should handle this gracefully with fallback to 'unknown'
+        if not result:
+            return {}
+        
         # Convert the result to a pandas DataFrame
         validator_entities_df = pd.DataFrame(result, columns=['proposer_index', 'entity'])
         
@@ -119,5 +130,12 @@ def load_validators_from_ethseer(network):
             validators_map[row['proposer_index']] = entity
         
         return validators_map
+    except Exception as e:
+        # Log the error but don't fail - return empty dict for graceful fallback
+        # This handles cases where the ethseer_validator_entity table might not exist
+        # or have data for certain networks
+        import logging
+        logging.warning(f"Could not load validator entities for network {network}: {str(e)}")
+        return {}
     finally:
         connection.close()

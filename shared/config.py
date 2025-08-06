@@ -31,6 +31,22 @@ def get_supported_networks() -> list:
     ]
 
 
+def get_network_genesis_timestamp(network: str) -> int:
+    """Get the genesis timestamp for a specific network.
+    
+    Args:
+        network: Network name (mainnet, holesky, sepolia, etc.)
+        
+    Returns:
+        Genesis timestamp in seconds since epoch, or mainnet genesis if network not found
+    """
+    config = get_network_config()
+    if network in config and config[network].get('genesis_timestamp'):
+        return config[network]['genesis_timestamp']
+    # Default to mainnet genesis if not found
+    return 1606824023
+
+
 def get_network_config() -> Dict[str, Dict[str, Any]]:
     """Get detailed configuration for each supported network"""
     return {
@@ -38,6 +54,7 @@ def get_network_config() -> Dict[str, Dict[str, Any]]:
             'name': 'Ethereum Mainnet',
             'chain_id': 1,
             'description': 'Ethereum production network',
+            'genesis_timestamp': 1606824023,  # December 1, 2020, 12:00:23 PM UTC
             'has_gas_data': True,
             'has_blob_data': True
         },
@@ -45,6 +62,7 @@ def get_network_config() -> Dict[str, Dict[str, Any]]:
             'name': 'Holesky Testnet',
             'chain_id': 17000,
             'description': 'Ethereum staking testnet',
+            'genesis_timestamp': 1695902400,  # September 28, 2023, 12:00:00 PM UTC
             'has_gas_data': True,
             'has_blob_data': True
         },
@@ -52,6 +70,7 @@ def get_network_config() -> Dict[str, Dict[str, Any]]:
             'name': 'Sepolia Testnet', 
             'chain_id': 11155111,
             'description': 'Ethereum application testnet',
+            'genesis_timestamp': 1655733600,  # June 20, 2022, 12:00:00 PM UTC
             'has_gas_data': True,
             'has_blob_data': True
         },
@@ -59,6 +78,7 @@ def get_network_config() -> Dict[str, Dict[str, Any]]:
             'name': 'Hoodi Network',
             'chain_id': None,  # Add chain_id when available
             'description': 'Hoodi development network',
+            'genesis_timestamp': 1742213400,  # January 18, 2025, 11:30:00 AM UTC
             'has_gas_data': True,
             'has_blob_data': True
         }
