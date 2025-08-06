@@ -1,4 +1,5 @@
 from datetime import timedelta
+from shared.config import get_supported_networks as get_networks_from_config
 
 
 def get_metric_info(metric_name):
@@ -73,8 +74,8 @@ def get_default_time_ranges():
 
 
 def get_supported_networks():
-    """Get supported network options.""" 
-    return ["mainnet", "holesky", "sepolia"]
+    """Get supported network options from centralized config.""" 
+    return get_networks_from_config()
 
 
 def get_grouping_options():
