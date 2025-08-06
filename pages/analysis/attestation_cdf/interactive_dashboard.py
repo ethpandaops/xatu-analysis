@@ -117,7 +117,34 @@ def main():
     
     # Data loading section
     st.sidebar.subheader("Data Loading")
-    load_button = st.sidebar.button("🔄 Load Missed Slot Data", type="primary")
+    
+    # Add clear cache button
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        load_button = st.button("🔄 Load Missed Slot Data", type="primary")
+    with col2:
+        clear_cache_button = st.button("🗑️ Clear Cache", type="secondary")
+    
+    # Handle clear cache button
+    if clear_cache_button:
+        # Clear session state related to attestation CDF
+        if 'attestation_cdf_data_loaded' in st.session_state:
+            st.session_state.attestation_cdf_data_loaded = False
+        if 'attestation_cdf_data' in st.session_state:
+            st.session_state.attestation_cdf_data = None
+        if 'attestation_cdf_metrics' in st.session_state:
+            st.session_state.attestation_cdf_metrics = None
+        if 'start_time' in st.session_state:
+            del st.session_state.start_time
+        if 'end_time' in st.session_state:
+            del st.session_state.end_time
+        
+        # Clear Streamlit cache
+        st.cache_data.clear()
+        
+        # Show success message
+        st.sidebar.success("✅ Cache cleared successfully!")
+        st.rerun()
     
     if load_button:
         with st.spinner("Loading missed slot attestation data..."):
