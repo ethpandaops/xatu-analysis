@@ -16,6 +16,7 @@ from data_loaders import load_combined_analysis_data
 from polars_data_loaders import load_raw_attestation_data_for_slow_analysis, load_proposer_duties_for_missed_slots
 from metrics_calculators import calculate_node_cdf_metrics
 from plot_generators import create_cdf_comparison_plot, create_missed_slots_by_proposer_entity_chart
+from shared.ui_components import add_ethPandaOps_logo
 
 # Import shared components  
 from shared.ui_components import apply_ethPandaOps_styling
@@ -57,32 +58,67 @@ def main():
     )
     
     # Time range selection
-    time_ranges = get_default_time_ranges()
-    time_range_option = st.sidebar.selectbox(
-        "Select Time Range",
-        list(time_ranges.keys()),
-        index=0,  # Default to "Last 1 Hour"
-        help="Choose the time period for analysis"
-    )
-    
-    # Calculate actual time range in UTC (database uses UTC)
     from datetime import timezone
-    end_time = datetime.now(timezone.utc)
-    start_time = end_time - time_ranges[time_range_option]
     
     # Custom time range option
     use_custom_range = st.sidebar.checkbox("Use Custom Time Range")
-    if use_custom_range:
+    
+    if not use_custom_range:
+        # Only show preset options when custom is NOT selected
+        time_ranges = get_default_time_ranges()
+        time_range_option = st.sidebar.selectbox(
+            "Select Time Range",
+            list(time_ranges.keys()),
+            index=0,  # Default to "Last 1 Hour"
+            help="Choose the time period for analysis"
+        )
+        
+        # Calculate actual time range in UTC (database uses UTC)
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - time_ranges[time_range_option]
+    else:
+        # Custom time range inputs
+        # Use session state to persist custom values or default to last hour
+        default_end = datetime.now(timezone.utc)
+        default_start = default_end - timedelta(hours=1)
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
-            start_date = st.date_input("Start Date", start_time.date())
-            start_time_input = st.time_input("Start Time", start_time.time())
+            start_date = st.date_input(
+                "Start Date", 
+                value=st.session_state.get('custom_start_date', default_start.date()),
+                min_value=datetime(2020, 12, 1).date(),  # Ethereum beacon chain genesis
+                max_value=datetime.now(timezone.utc).date(),
+                key='custom_start_date'
+            )
+            start_time_input = st.time_input(
+                "Start Time (UTC)", 
+                value=st.session_state.get('custom_start_time', default_start.time()),
+                key='custom_start_time'
+            )
         with col2:
-            end_date = st.date_input("End Date", end_time.date())
-            end_time_input = st.time_input("End Time", end_time.time())
+            end_date = st.date_input(
+                "End Date", 
+                value=st.session_state.get('custom_end_date', default_end.date()),
+                min_value=datetime(2020, 12, 1).date(),
+                max_value=datetime.now(timezone.utc).date(),
+                key='custom_end_date'
+            )
+            end_time_input = st.time_input(
+                "End Time (UTC)", 
+                value=st.session_state.get('custom_end_time', default_end.time()),
+                key='custom_end_time'
+            )
         
-        start_time = datetime.combine(start_date, start_time_input)
-        end_time = datetime.combine(end_date, end_time_input)
+        # Combine and add UTC timezone
+        start_time = datetime.combine(start_date, start_time_input).replace(tzinfo=timezone.utc)
+        end_time = datetime.combine(end_date, end_time_input).replace(tzinfo=timezone.utc)
+        
+        # Validate time range
+        if start_time >= end_time:
+            st.sidebar.error("Start time must be before end time")
+        if (end_time - start_time).days > 30:
+            st.sidebar.warning("Large time ranges may take longer to load")
     
     # Analysis configuration
     st.sidebar.subheader("Analysis Settings")
@@ -398,11 +434,25 @@ def render_analysis_dashboard(combined_data, cdf_metrics):
     if has_raw_cdf and plot_data is not None:
         # Create CDF plot with client data only (no aggregated conditions)
         try:
+            # Get total missed slots count from filtered_data
+            slots_data = filtered_data.get('slots', pd.DataFrame())
+            total_missed_slots = len(slots_data) if not slots_data.empty else len(available_slots)
+            
             # Set plot title based on view mode
             if view_mode == "Per Slot" and slot_filter is not None:
+                # Don't show time range for single slot view
                 plot_title = f"Attestation Propagation CDF - Slot {slot_filter}"
             else:
-                plot_title = "Attestation Propagation CDF - All Missed Slots"
+                # Get time range from session state for subtitle (only for aggregated view)
+                time_range_str = ""
+                if 'start_time' in st.session_state and 'end_time' in st.session_state:
+                    start_time = st.session_state.start_time
+                    end_time = st.session_state.end_time
+                    # Format as UTC strings
+                    start_str = start_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    end_str = end_time.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    time_range_str = f"<br><sub>{start_str} to {end_str}</sub>"
+                plot_title = f"Attestation Propagation CDF - {total_missed_slots} Missed Slots{time_range_str}"
             
             fig = create_cdf_comparison_plot(
                 aggregated_data=None,
@@ -913,7 +963,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         
         fig_density.update_yaxes(range=[0, 100])
         
-        st.plotly_chart(fig_density, use_container_width=True)
+        st.plotly_chart(add_ethPandaOps_logo(fig_density), use_container_width=True)
         
         # Show summary statistics
         col1, col2, col3 = st.columns(3)
@@ -1002,7 +1052,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
                 ticktext=[f"P{p}" for p in percentile_thresholds]
             )
             
-            st.plotly_chart(fig_stacked, use_container_width=True)
+            st.plotly_chart(add_ethPandaOps_logo(fig_stacked), use_container_width=True)
     
     # Additional analysis - show time distribution
     with st.expander("Timing Distribution Analysis"):
@@ -1024,7 +1074,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             annotation_text=f"P{slow_threshold} threshold"
         )
         
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(add_ethPandaOps_logo(fig_dist), use_container_width=True)
         
         # Show timing statistics for slow attestations
         st.markdown("### Timing Statistics for Slow Attestations")

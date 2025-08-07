@@ -16,6 +16,9 @@ def create_cdf_comparison_plot(aggregated_data, comparison_dimension=None, clien
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
     color_idx = 0
     
+    # Collect all times for percentile calculations
+    all_combined_times = []
+    
     # If client_data is provided, show individual client CDFs
     if client_data is not None and not client_data.empty:
         # Check which column to use for grouping (backward compatibility)
@@ -45,6 +48,9 @@ def create_cdf_comparison_plot(aggregated_data, comparison_dimension=None, clien
                 if all_times:
                     sorted_times = np.sort(all_times)
                     probabilities = np.arange(1, len(sorted_times) + 1) / len(sorted_times)
+                    
+                    # Add to combined times for percentile calculation
+                    all_combined_times.extend(all_times)
                     
                     # Include attestation count in the legend name
                     legend_name = f"{client_name} ({total_attestations:,} atts)"
@@ -103,11 +109,23 @@ def create_cdf_comparison_plot(aggregated_data, comparison_dimension=None, clien
         title_font_size=16
     )
     
-    # Add reference lines for key percentiles
-    fig.add_hline(y=0.5, line_dash="dot", line_color="gray", opacity=0.5,
-                 annotation_text="50th Percentile", annotation_position="top right")
-    fig.add_hline(y=0.9, line_dash="dot", line_color="gray", opacity=0.5,
-                 annotation_text="90th Percentile", annotation_position="top right")
+    # Calculate percentile times from combined data and add vertical reference lines
+    if all_combined_times:
+        sorted_all_times = np.sort(all_combined_times)
+        p66_time = np.percentile(sorted_all_times, 66)
+        p95_time = np.percentile(sorted_all_times, 95)
+        
+        # Add vertical lines at percentile times (only P66 and P95)
+        fig.add_vline(x=p66_time, line_dash="dot", line_color="orange", opacity=0.5,
+                     annotation_text=f"P66: {p66_time:.2f}s", annotation_position="top")
+        fig.add_vline(x=p95_time, line_dash="dot", line_color="red", opacity=0.5,
+                     annotation_text=f"P95: {p95_time:.2f}s", annotation_position="top")
+    else:
+        # Fallback to horizontal lines if no data for percentiles
+        fig.add_hline(y=0.66, line_dash="dot", line_color="orange", opacity=0.5,
+                     annotation_text="P66", annotation_position="top right")
+        fig.add_hline(y=0.95, line_dash="dot", line_color="red", opacity=0.5,
+                     annotation_text="P95", annotation_position="top right")
     
     return add_ethPandaOps_logo(fig)
 
