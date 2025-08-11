@@ -54,18 +54,10 @@ validator_performance_page = st.Page(
     url_path="validator-performance"
 )
 
-cluster_test_page = st.Page(
-    "pages/cluster_test.py",
-    title="Cluster Configuration Test",
-    icon="🔧",
-    url_path="cluster-test"
-)
-
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page],
-    "Admin": [cluster_test_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page]
 })
 
 # Run the selected page
