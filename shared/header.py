@@ -1,6 +1,6 @@
 """
-Centralized header component for cluster and network selection.
-Provides a consistent header across all dashboards with data source configuration.
+Improved centralized header using native Streamlit components.
+Uses st.container with border for a cleaner, more native appearance.
 """
 import streamlit as st
 from typing import Optional, Tuple
@@ -24,20 +24,11 @@ def initialize_session_state():
 
 
 def test_cluster_connection(cluster_name: str) -> bool:
-    """
-    Test connection to a specific ClickHouse cluster.
-    
-    Args:
-        cluster_name: Name of the cluster to test.
-        
-    Returns:
-        True if connection successful, False otherwise.
-    """
+    """Test connection to a specific ClickHouse cluster."""
     from .database import get_database_connection
     try:
         conn = get_database_connection(cluster_name)
         if conn:
-            # Try a simple query
             result = conn.execute("SELECT 1")
             conn.close()
             return True
@@ -48,7 +39,7 @@ def test_cluster_connection(cluster_name: str) -> bool:
 
 def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     """
-    Render the global header with cluster and network selection.
+    Render the global header with cluster and network selection using native Streamlit components.
     
     Returns:
         Tuple of (selected_cluster, selected_network)
@@ -56,49 +47,29 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     # Initialize session state
     initialize_session_state()
     
-    # Create header container with custom styling
-    header_container = st.container()
-    
-    with header_container:
-        # Add custom CSS for header styling
-        st.markdown("""
-        <style>
-        .global-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 1rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        .header-title {
-            color: white;
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-        }
-        .connection-status {
-            display: inline-block;
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            font-size: 0.875rem;
-            margin-left: 0.5rem;
-        }
-        .status-connected {
-            background-color: #10b981;
-            color: white;
-        }
-        .status-disconnected {
-            background-color: #ef4444;
-            color: white;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+    # Use a container with border for the header
+    with st.container(border=True):
+        # Title and controls in columns
+        col1, col2, col3 = st.columns([1, 3, 1])
         
-        # Header with gradient background
-        st.markdown('<div class="global-header">', unsafe_allow_html=True)
+        with col1:
+            st.markdown("### 🔧 Data Source")
         
-        # Create columns for cluster and network selection
-        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+        with col3:
+            # Settings popover for additional options
+            with st.popover("⚙️ Settings"):
+                if st.button("🔄 Refresh Networks", use_container_width=True):
+                    config_loader._discovered_networks = None
+                    config_loader._network_cache_time = None
+                    st.session_state.last_discovery_cluster = None
+                    st.rerun()
+                
+                if st.button("📋 Reload Config", use_container_width=True):
+                    config_loader.reload_config()
+                    st.rerun()
+        
+        # Main selection row
+        col1, col2, col3, col4 = st.columns([3, 3, 1, 1])
         
         with col1:
             # Cluster selection
@@ -110,7 +81,8 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                 cluster_options = []
                 for name in cluster_names:
                     desc = clusters[name].get('description', name)
-                    cluster_options.append(f"{name}: {desc}")
+                    host = clusters[name].get('host', '')
+                    cluster_options.append(f"{name} ({host})")
                 
                 # Find current index
                 try:
@@ -120,11 +92,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                     st.session_state.global_cluster = cluster_names[0]
                 
                 selected_idx = st.selectbox(
-                    "🔧 ClickHouse Cluster",
+                    "ClickHouse Cluster",
                     range(len(cluster_names)),
                     format_func=lambda x: cluster_options[x],
                     index=current_idx,
                     key="global_cluster_selector",
+                    label_visibility="collapsed",
                     help="Select which ClickHouse cluster to query data from"
                 )
                 
@@ -140,14 +113,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                 # Check if we need to rediscover networks (cluster changed)
                 if st.session_state.last_discovery_cluster != selected_cluster:
                     with st.spinner("Discovering networks..."):
-                        # Force network discovery for new cluster
                         config_loader._discovered_networks = None
                         config_loader._network_cache_time = None
                         networks = config_loader.get_networks()
                         st.session_state.discovered_networks = list(networks.keys())
                         st.session_state.last_discovery_cluster = selected_cluster
                 else:
-                    # Use cached networks
                     networks = {name: config_loader.get_network_config(name) 
                                for name in st.session_state.discovered_networks}
                 
@@ -161,13 +132,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                         display = config.get('name', name.title())
                         if config.get('discovered'):
                             display += " 🔍"
-                        network_options.append(f"{name}: {display}")
+                        network_options.append(display)
                     
                     # Find current index
                     try:
                         current_idx = network_names.index(st.session_state.global_network)
                     except ValueError:
-                        # Default to mainnet if available, otherwise first network
                         if 'mainnet' in network_names:
                             current_idx = network_names.index('mainnet')
                         else:
@@ -175,11 +145,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                         st.session_state.global_network = network_names[current_idx]
                     
                     selected_idx = st.selectbox(
-                        "🌐 Network",
+                        "Network",
                         range(len(network_names)),
-                        format_func=lambda x: network_options[x],
+                        format_func=lambda x: f"{network_names[x]}: {network_options[x]}",
                         index=current_idx,
                         key="global_network_selector",
+                        label_visibility="collapsed",
                         help="Select which Ethereum network to analyze (🔍 = discovered)"
                     )
                     
@@ -192,70 +163,49 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                 selected_network = None
         
         with col3:
-            # Connection status
+            # Connection status with status component
             if selected_cluster:
-                if st.button("🔄 Test Connection", key="test_cluster_connection"):
-                    with st.spinner("Testing..."):
+                if st.button("🔌 Test", key="test_connection", help="Test cluster connection"):
+                    with st.status("Testing connection...", expanded=False) as status:
                         if test_cluster_connection(selected_cluster):
-                            st.success("Connected")
+                            status.update(label="✅ Connected", state="complete")
                         else:
-                            st.error("Failed")
+                            status.update(label="❌ Failed", state="error")
         
         with col4:
-            # Refresh button
-            if st.button("🔄 Refresh Networks", key="refresh_networks"):
-                # Clear discovery cache
-                config_loader._discovered_networks = None
-                config_loader._network_cache_time = None
-                st.session_state.last_discovery_cluster = None
-                st.rerun()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Show connection info in expander
-        with st.expander("📊 Data Source Details", expanded=False):
-            if selected_cluster:
-                cluster_info = clusters[selected_cluster]
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**Cluster Information:**")
+            # Info popover with cluster/network details
+            with st.popover("ℹ️ Info"):
+                if selected_cluster:
+                    cluster_info = clusters[selected_cluster]
+                    st.markdown("**Cluster Details:**")
                     st.text(f"Host: {cluster_info.get('host', 'N/A')}")
                     st.text(f"Port: {cluster_info.get('port', 'N/A')}")
                     st.text(f"Database: {cluster_info.get('database', 'default')}")
-                
-                with col2:
+                    st.text(f"Protocol: {cluster_info.get('protocol', 'N/A')}")
+                    
                     if selected_network and selected_network in networks:
-                        st.markdown("**Network Information:**")
+                        st.divider()
+                        st.markdown("**Network Details:**")
                         network_info = networks[selected_network]
                         st.text(f"Name: {network_info.get('name', selected_network)}")
                         if 'chain_id' in network_info:
                             st.text(f"Chain ID: {network_info.get('chain_id', 'N/A')}")
-                        if network_info.get('discovered'):
-                            st.text("Source: Discovered from cluster")
-                        else:
-                            st.text("Source: Configuration file")
+                        if 'genesis_timestamp' in network_info:
+                            import datetime
+                            genesis = datetime.datetime.fromtimestamp(network_info['genesis_timestamp'])
+                            st.text(f"Genesis: {genesis.strftime('%Y-%m-%d')}")
+                        st.text(f"Source: {'Discovered' if network_info.get('discovered') else 'Config'}")
     
     return selected_cluster, selected_network
 
 
 def get_global_cluster() -> Optional[str]:
-    """
-    Get the globally selected cluster from session state.
-    
-    Returns:
-        Selected cluster name or None if not set.
-    """
+    """Get the globally selected cluster from session state."""
     initialize_session_state()
     return st.session_state.get('global_cluster')
 
 
 def get_global_network() -> Optional[str]:
-    """
-    Get the globally selected network from session state.
-    
-    Returns:
-        Selected network name or None if not set.
-    """
+    """Get the globally selected network from session state."""
     initialize_session_state()
     return st.session_state.get('global_network')
