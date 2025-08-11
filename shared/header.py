@@ -22,12 +22,6 @@ def initialize_session_state():
         st.session_state.last_discovery_cluster = None
 
 
-def add_logo_to_sidebar():
-    """Add ethPandaOps logo to the sidebar."""
-    st.sidebar.image("branding/ethpandaops.png", width=200)
-    st.sidebar.divider()
-
-
 def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     """
     Render minimal header with cluster and network selection.
@@ -38,12 +32,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     # Initialize session state
     initialize_session_state()
     
-    # Add logo to sidebar
-    add_logo_to_sidebar()
-    
-    # Minimal header with just selectors
+    # Logo and header in same container
     with st.container(border=True):
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col_logo, col1, col2, col3 = st.columns([0.5, 2, 2, 0.5])
+        
+        with col_logo:
+            st.image("branding/ethpandaops.png", width=40)
         
         with col1:
             # Cluster selection
