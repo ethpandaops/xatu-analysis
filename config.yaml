@@ -9,7 +9,7 @@
 clickhouse:
   clusters:
     xatu:
-      host: clickhouse.xatu.ethPandaOps.io
+      host: clickhouse.xatu.ethpandaops.io
       port: 443
       database: default
       protocol: https
@@ -70,27 +70,6 @@ networks:
     has_gas_data: true
     has_blob_data: true
     enabled: true
-
-# Application settings
-app:
-  # Data cache directory
-  data_cache_dir: "./.data_cache"
-  
-  # Session state settings
-  session_state:
-    # Session timeout in minutes
-    timeout: 120
-    
-  # Performance settings
-  performance:
-    # Maximum records to fetch in a single query
-    max_query_records: 1000000
-    # Query timeout in seconds
-    query_timeout: 300
-    # Enable query result caching
-    enable_cache: true
-    # Cache TTL in hours
-    cache_ttl_hours: 1
 
 # API integrations
 integrations:

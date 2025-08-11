@@ -32,12 +32,40 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     # Initialize session state
     initialize_session_state()
     
-    # Add logo to sidebar using Streamlit's native logo feature
-    st.logo("branding/ethpandaops.png", icon_image="branding/ethpandaops.png")
+    # Add logo using st.logo - this puts it in the upper-left corner
+    st.logo("branding/ethpandaops.png", size="large", link="https://ethpandaops.io")
+    
+    # Add branding text after the logo using CSS injection
+    st.markdown("""
+    <style>
+        /* Add ethPandaOps text next to the logo in sidebar */
+        div[data-testid="stSidebarHeader"] > div:first-child::after {
+            content: "ethPandaOps";
+            position: absolute;
+            left: 50px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.02em;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            white-space: nowrap;
+        }
+        
+        /* Ensure the logo container has relative positioning */
+        div[data-testid="stSidebarHeader"] > div:first-child {
+            position: relative;
+        }
+    </style>
+    """, unsafe_allow_html=True)
     
     # Minimal header with just selectors
     with st.container(border=True):
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col1, col2 = st.columns([1, 1])
         
         with col1:
             # Cluster selection
@@ -104,19 +132,6 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                     selected_network = None
             else:
                 selected_network = None
-        
-        with col3:
-            # Settings popover
-            with st.popover("⚙️"):
-                if st.button("Refresh Networks", use_container_width=True):
-                    config_loader._discovered_networks = None
-                    config_loader._network_cache_time = None
-                    st.session_state.last_discovery_cluster = None
-                    st.rerun()
-                
-                if st.button("Reload Config", use_container_width=True):
-                    config_loader.reload_config()
-                    st.rerun()
     
     return selected_cluster, selected_network
 
