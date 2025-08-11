@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 
 from shared.config import get_supported_networks
+from shared.ui_utils import render_cluster_selector, render_network_selector
 from pages.analysis.validator_performance.config_utils import (
     parse_validator_pubkeys, 
     format_pubkey_for_display, 
@@ -191,14 +192,17 @@ def render_configuration_sidebar() -> Dict[str, Any]:
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # Network selection (limited to mainnet for now)
-        networks = ['mainnet']  # Only mainnet supported for now due to Rated API limitation
-        network = st.selectbox(
-            "Network",
-            options=networks,
-            index=0,  # Always mainnet
-            help="Select the Ethereum network to analyze (currently only mainnet is supported)"
-        )
+        # Cluster selection
+        st.subheader("Data Source")
+        cluster = render_cluster_selector("validator_performance")
+        
+        # Network selection
+        st.subheader("Network")
+        network = render_network_selector("validator_performance", cluster, include_discovered=True)
+        
+        if not network:
+            st.error("No networks available")
+            return None
         
         # Time range configuration
         st.subheader("Time Range")
@@ -353,6 +357,7 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         # Configuration summary
         st.divider()
         st.subheader("Configuration Summary")
+        st.info(f"**Cluster:** {cluster}")
         st.info(f"**Network:** {network}")
         
         # Time range summary
@@ -409,6 +414,7 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         
         # Check if configuration changed
         current_config = {
+            'cluster': cluster,
             'network': network,
             'time_range': time_range_config,
             'validator_pubkeys': validator_pubkeys,
@@ -423,7 +429,8 @@ def render_configuration_sidebar() -> Dict[str, Any]:
             config_changed = True
         else:
             # Compare each component individually
-            if (last_config.get('network') != network or
+            if (last_config.get('cluster') != cluster or
+                last_config.get('network') != network or
                 last_config.get('time_range') != time_range_config or
                 last_config.get('validator_pubkeys') != validator_pubkeys or
                 last_config.get('excluded_ranges') != st.session_state['validator_performance_excluded_ranges']):
@@ -442,6 +449,7 @@ def render_configuration_sidebar() -> Dict[str, Any]:
             clear_validator_mappings()
         
         return {
+            'cluster': cluster,
             'network': network,
             'time_range': time_range_config,
             'validator_pubkeys': validator_pubkeys,
@@ -535,7 +543,7 @@ def render_main_content(config: Dict[str, Any]):
             
             # Load validator indices from ClickHouse
             with st.spinner("Loading validator indices..."):
-                pubkey_to_index, missing_pubkeys = load_validator_indices(validator_pubkeys, network)
+                pubkey_to_index, missing_pubkeys = load_validator_indices(validator_pubkeys, network, config['cluster'])
             
             # Display warnings for missing pubkeys in an expandable section
             if missing_pubkeys:

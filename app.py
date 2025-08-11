@@ -3,6 +3,13 @@ ethPandaOps Analysis Dashboard
 Main application entry point using modern Streamlit st.navigation API
 """
 import streamlit as st
+import dotenv
+
+# Load environment variables
+dotenv.load_dotenv()
+
+# Initialize configuration system
+from shared.config_loader import config_loader
 
 st.set_page_config(
     page_title="ethPandaOps Analysis Dashboard",
@@ -47,10 +54,18 @@ validator_performance_page = st.Page(
     url_path="validator-performance"
 )
 
+cluster_test_page = st.Page(
+    "pages/cluster_test.py",
+    title="Cluster Configuration Test",
+    icon="🔧",
+    url_path="cluster-test"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page],
+    "Admin": [cluster_test_page]
 })
 
 # Run the selected page

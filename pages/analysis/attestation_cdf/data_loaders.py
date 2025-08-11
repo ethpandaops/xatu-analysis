@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 # All data loading now handled by polars_data_loaders.py
 
 
-def load_combined_analysis_data(start_time, end_time, network="mainnet", data_source="beacon_api"):
+def load_combined_analysis_data(start_time, end_time, network="mainnet", data_source="beacon_api", cluster_name=None):
     """Load and combine all data needed for CDF analysis using Polars."""
     
     logger.info("Using Polars-optimized data loading for attestation CDF analysis")
-    return load_combined_analysis_data_polars(start_time, end_time, network, data_source)
+    return load_combined_analysis_data_polars(start_time, end_time, network, data_source, cluster_name)

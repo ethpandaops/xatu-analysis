@@ -6,13 +6,14 @@ from sqlalchemy import text
 from shared.database import get_database_connection
 
 
-def load_validator_indices(pubkeys: List[str], network: str) -> Tuple[Dict[str, int], List[str]]:
+def load_validator_indices(pubkeys: List[str], network: str, cluster_name: Optional[str] = None) -> Tuple[Dict[str, int], List[str]]:
     """
     Load validator indices from ClickHouse for given pubkeys.
     
     Args:
         pubkeys: List of cleaned, validated pubkeys (0x-prefixed, lowercase)
         network: Network name ('mainnet', 'holesky', etc.)
+        cluster_name: Optional ClickHouse cluster name to query from
         
     Returns:
         Tuple of (mapping dict, list of missing pubkeys)
@@ -24,7 +25,7 @@ def load_validator_indices(pubkeys: List[str], network: str) -> Tuple[Dict[str, 
     
     conn = None
     try:
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         
         # Build the query with proper formatting for ClickHouse IN clause
         # Convert pubkeys list to a comma-separated string of quoted values

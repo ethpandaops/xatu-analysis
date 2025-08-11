@@ -33,7 +33,8 @@ pl.Config.set_tbl_rows(10)
 def load_block_gossip_data(
     network: str, 
     start_date: datetime, 
-    end_date: datetime
+    end_date: datetime,
+    cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Load block gossip data with polars optimizations and normalization.
@@ -50,7 +51,7 @@ def load_block_gossip_data(
         # Normalize time range (no longer truncates)
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         config = get_analysis_config()
         
         # Query without LIMIT - get ALL data in time range
@@ -130,7 +131,8 @@ def load_block_gossip_data(
 def load_head_time_data(
     network: str, 
     start_date: datetime, 
-    end_date: datetime
+    end_date: datetime,
+    cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Load head time data with polars optimizations using streaming approach.
@@ -147,7 +149,7 @@ def load_head_time_data(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         config = get_analysis_config()
         
         # Complete query getting ALL head time data without limits
@@ -273,7 +275,8 @@ def load_head_time_data(
 def load_canonical_block_data(
     network: str, 
     start_date: datetime, 
-    end_date: datetime
+    end_date: datetime,
+    cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Load canonical block data with gas usage optimizations using polars.
@@ -290,7 +293,7 @@ def load_canonical_block_data(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         
         query = """
         SELECT
@@ -362,7 +365,8 @@ def load_canonical_block_data(
 def load_blob_sidecar_counts(
     network: str, 
     start_date: datetime, 
-    end_date: datetime
+    end_date: datetime,
+    cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Load blob sidecar count data using polars optimizations.
@@ -379,7 +383,7 @@ def load_blob_sidecar_counts(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         
         query = """
         SELECT
@@ -583,7 +587,8 @@ def load_complete_analysis_data(
     start_date: datetime,
     end_date: datetime,
     period_name: str = "Analysis Period",
-    use_chunking: bool = True
+    use_chunking: bool = True,
+    cluster_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Load complete dataset, converting to pandas only at the end.
@@ -608,13 +613,13 @@ def load_complete_analysis_data(
         
         if use_chunking and time_diff.days > max_days_per_chunk:
             logger.info(f"Large time range detected ({time_diff.days} days). Using chunked loading.")
-            return load_chunked_analysis_data(network, start_date, end_date, period_name, max_days_per_chunk)
+            return load_chunked_analysis_data(network, start_date, end_date, period_name, max_days_per_chunk, cluster_name)
         
         # Load all data sources
-        gossip_df = load_block_gossip_data(network, start_date, end_date)
-        head_df = load_head_time_data(network, start_date, end_date)
-        block_df = load_canonical_block_data(network, start_date, end_date)
-        blob_df = load_blob_sidecar_counts(network, start_date, end_date)
+        gossip_df = load_block_gossip_data(network, start_date, end_date, cluster_name)
+        head_df = load_head_time_data(network, start_date, end_date, cluster_name)
+        block_df = load_canonical_block_data(network, start_date, end_date, cluster_name)
+        blob_df = load_blob_sidecar_counts(network, start_date, end_date, cluster_name)
         attestation_df = load_attestation_timing_data(network, start_date, end_date)
         
         # Combine all data
@@ -646,7 +651,8 @@ def load_chunked_analysis_data(
     start_date: datetime,
     end_date: datetime,
     period_name: str,
-    chunk_days: int = 7
+    chunk_days: int = 7,
+    cluster_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Load data in chunks for very large time ranges to prevent OOM.
@@ -677,10 +683,10 @@ def load_chunked_analysis_data(
         
         try:
             # Load chunk data
-            gossip_chunk = load_block_gossip_data(network, chunk_start, chunk_end)
-            head_chunk = load_head_time_data(network, chunk_start, chunk_end)
-            block_chunk = load_canonical_block_data(network, chunk_start, chunk_end)
-            attestation_chunk = load_attestation_timing_data(network, chunk_start, chunk_end)
+            gossip_chunk = load_block_gossip_data(network, chunk_start, chunk_end, cluster_name)
+            head_chunk = load_head_time_data(network, chunk_start, chunk_end, cluster_name)
+            block_chunk = load_canonical_block_data(network, chunk_start, chunk_end, cluster_name)
+            attestation_chunk = load_attestation_timing_data(network, chunk_start, chunk_end, cluster_name)
             
             if not gossip_chunk.empty and not head_chunk.empty and not block_chunk.empty:
                 chunk_combined = combine_performance_data(gossip_chunk, head_chunk, block_chunk, None, attestation_chunk)
@@ -743,7 +749,8 @@ def load_chunked_analysis_data(
 def load_attestation_timing_data(
     network: str,
     start_date: datetime,
-    end_date: datetime
+    end_date: datetime,
+    cluster_name: Optional[str] = None
 ) -> Optional[pl.DataFrame]:
     """
     Load attestation timing data showing optimal inclusion counts.
@@ -758,7 +765,7 @@ def load_attestation_timing_data(
         # Normalize time range
         norm_start, norm_end, _ = normalize_time_range(start_date, end_date)
         
-        conn = get_database_connection()
+        conn = get_database_connection(cluster_name)
         if conn is None:
             raise RuntimeError("Failed to get database connection")
         

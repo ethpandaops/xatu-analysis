@@ -20,6 +20,7 @@ from shared.ui_components import add_ethPandaOps_logo
 
 # Import shared components  
 from shared.ui_components import apply_ethPandaOps_styling
+from shared.ui_utils import render_cluster_selector, render_network_selector
 from shared.ethereum.validators import load_validators_from_ethseer, load_blockprint_clients
 
 
@@ -49,13 +50,17 @@ def main():
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
     
+    # Cluster selection
+    st.sidebar.subheader("Data Source")
+    cluster = render_cluster_selector("attestation_cdf")
+    
     # Network selection
-    network = st.sidebar.selectbox(
-        "Select Network",
-        get_supported_networks(),
-        index=0,  # Default to mainnet
-        help="Choose the Ethereum network to analyze"
-    )
+    st.sidebar.subheader("Network")
+    network = render_network_selector("attestation_cdf", cluster, include_discovered=True)
+    
+    if not network:
+        st.error("No networks available")
+        return
     
     # Time range selection
     from datetime import timezone
@@ -186,7 +191,7 @@ def main():
         with st.spinner("Loading missed slot attestation data..."):
             try:
                 # Load combined data with selected data source
-                combined_data = load_combined_analysis_data(start_time, end_time, network, data_source)
+                combined_data = load_combined_analysis_data(start_time, end_time, network, data_source, cluster)
                 
                 # Validate data quality
                 data_quality = combined_data['data_quality']
@@ -647,7 +652,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         # Load raw attestation data
         import polars as pl
         raw_attestations_pl = load_raw_attestation_data_for_slow_analysis(
-            start_time, end_time, network, data_source, missed_slots, client_filters
+            start_time, end_time, network, data_source, missed_slots, client_filters, False, cluster
         )
         
         if raw_attestations_pl.is_empty():
@@ -802,7 +807,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             missed_slots_list = missed_slots
             
         # Load proposer duties
-        proposer_duties_df = load_proposer_duties_for_missed_slots(missed_slots_list, network)
+        proposer_duties_df = load_proposer_duties_for_missed_slots(missed_slots_list, network, cluster)
         
         if not proposer_duties_df.empty:
             # Check if entity data is available
@@ -1117,7 +1122,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
         # Load detailed observer node data
         with st.spinner("Loading detailed observer node data..."):
             observer_attestations_pl = load_raw_attestation_data_for_slow_analysis(
-                start_time, end_time, network, data_source, missed_slots, client_filters, include_observer_nodes=True
+                start_time, end_time, network, data_source, missed_slots, client_filters, True, cluster
             )
             
             if observer_attestations_pl.is_empty():

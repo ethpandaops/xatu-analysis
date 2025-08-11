@@ -18,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from shared.ui_components import apply_ethPandaOps_styling
+from shared.ui_utils import render_cluster_selector, render_network_selector
 from shared.metric_utils import get_metric_info
 from config_utils import (
     get_analysis_config, get_default_periods,
@@ -75,14 +76,19 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     """
     st.sidebar.header("⚙️ Analysis Configuration")
     
+    # Cluster selection
+    st.sidebar.subheader("Data Source")
+    cluster = render_cluster_selector("multi_metric")
+    
     # Network selection
+    st.sidebar.subheader("Network")
+    network = render_network_selector("multi_metric", cluster, include_discovered=True)
+    
+    if not network:
+        st.error("No networks available")
+        return None
+    
     config = get_analysis_config()
-    network = st.sidebar.selectbox(
-        "Select Network",
-        config['supported_networks'],
-        index=0,
-        help="Ethereum network to analyze"
-    )
     
     # Time range configuration
     st.sidebar.subheader("📅 Analysis Periods")
@@ -157,6 +163,7 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     chunk_size_days = 1  # Fixed to 1 day as requested
     
     return {
+        'cluster': cluster,
         'network': network,
         'period1_start': period1_start,
         'period1_end': period1_end,
@@ -203,7 +210,9 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                 config['network'],
                 datetime.combine(config['period1_start'], datetime.min.time()),
                 datetime.combine(config['period1_end'], datetime.min.time()),
-                "Period 1"
+                "Period 1",
+                config.get('enable_chunking', True),
+                config.get('cluster')
             )
             
             st.session_state.analysis_data['period1'] = period1_data
@@ -214,7 +223,9 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                     config['network'],
                     datetime.combine(config['period2_start'], datetime.min.time()),
                     datetime.combine(config['period2_end'], datetime.min.time()),
-                    "Period 2"
+                    "Period 2",
+                    config.get('enable_chunking', True),
+                    config.get('cluster')
                 )
                 st.session_state.analysis_data['period2'] = period2_data
             
