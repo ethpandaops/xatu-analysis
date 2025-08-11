@@ -1,6 +1,5 @@
 """
-Improved centralized header using native Streamlit components.
-Uses st.container with border for a cleaner, more native appearance.
+Minimal header for cluster and network selection.
 """
 import streamlit as st
 from typing import Optional, Tuple
@@ -23,23 +22,15 @@ def initialize_session_state():
         st.session_state.last_discovery_cluster = None
 
 
-def test_cluster_connection(cluster_name: str) -> bool:
-    """Test connection to a specific ClickHouse cluster."""
-    from .database import get_database_connection
-    try:
-        conn = get_database_connection(cluster_name)
-        if conn:
-            result = conn.execute("SELECT 1")
-            conn.close()
-            return True
-        return False
-    except Exception:
-        return False
+def add_logo_to_sidebar():
+    """Add ethPandaOps logo to the sidebar."""
+    st.sidebar.image("branding/ethpandaops.png", width=200)
+    st.sidebar.divider()
 
 
 def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     """
-    Render the global header with cluster and network selection using native Streamlit components.
+    Render minimal header with cluster and network selection.
     
     Returns:
         Tuple of (selected_cluster, selected_network)
@@ -47,29 +38,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     # Initialize session state
     initialize_session_state()
     
-    # Use a container with border for the header
+    # Add logo to sidebar
+    add_logo_to_sidebar()
+    
+    # Minimal header with just selectors
     with st.container(border=True):
-        # Title and controls in columns
-        col1, col2, col3 = st.columns([1, 3, 1])
-        
-        with col1:
-            st.markdown("### 🔧 Data Source")
-        
-        with col3:
-            # Settings popover for additional options
-            with st.popover("⚙️ Settings"):
-                if st.button("🔄 Refresh Networks", use_container_width=True):
-                    config_loader._discovered_networks = None
-                    config_loader._network_cache_time = None
-                    st.session_state.last_discovery_cluster = None
-                    st.rerun()
-                
-                if st.button("📋 Reload Config", use_container_width=True):
-                    config_loader.reload_config()
-                    st.rerun()
-        
-        # Main selection row
-        col1, col2, col3, col4 = st.columns([3, 3, 1, 1])
+        col1, col2, col3 = st.columns([2, 2, 1])
         
         with col1:
             # Cluster selection
@@ -77,31 +51,20 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
             cluster_names = list(clusters.keys())
             
             if cluster_names:
-                # Get descriptions for display
-                cluster_options = []
-                for name in cluster_names:
-                    desc = clusters[name].get('description', name)
-                    host = clusters[name].get('host', '')
-                    cluster_options.append(f"{name} ({host})")
-                
-                # Find current index
                 try:
                     current_idx = cluster_names.index(st.session_state.global_cluster)
                 except ValueError:
                     current_idx = 0
                     st.session_state.global_cluster = cluster_names[0]
                 
-                selected_idx = st.selectbox(
-                    "ClickHouse Cluster",
-                    range(len(cluster_names)),
-                    format_func=lambda x: cluster_options[x],
+                selected_cluster = st.selectbox(
+                    "Cluster",
+                    cluster_names,
                     index=current_idx,
                     key="global_cluster_selector",
-                    label_visibility="collapsed",
-                    help="Select which ClickHouse cluster to query data from"
+                    help="ClickHouse cluster"
                 )
                 
-                selected_cluster = cluster_names[selected_idx]
                 st.session_state.global_cluster = selected_cluster
             else:
                 st.error("No clusters configured")
@@ -110,14 +73,13 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
         with col2:
             # Network selection
             if selected_cluster:
-                # Check if we need to rediscover networks (cluster changed)
+                # Check if we need to rediscover networks
                 if st.session_state.last_discovery_cluster != selected_cluster:
-                    with st.spinner("Discovering networks..."):
-                        config_loader._discovered_networks = None
-                        config_loader._network_cache_time = None
-                        networks = config_loader.get_networks()
-                        st.session_state.discovered_networks = list(networks.keys())
-                        st.session_state.last_discovery_cluster = selected_cluster
+                    config_loader._discovered_networks = None
+                    config_loader._network_cache_time = None
+                    networks = config_loader.get_networks()
+                    st.session_state.discovered_networks = list(networks.keys())
+                    st.session_state.last_discovery_cluster = selected_cluster
                 else:
                     networks = {name: config_loader.get_network_config(name) 
                                for name in st.session_state.discovered_networks}
@@ -125,16 +87,6 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                 if networks:
                     network_names = sorted(list(networks.keys()))
                     
-                    # Create display names
-                    network_options = []
-                    for name in network_names:
-                        config = networks[name]
-                        display = config.get('name', name.title())
-                        if config.get('discovered'):
-                            display += " 🔍"
-                        network_options.append(display)
-                    
-                    # Find current index
                     try:
                         current_idx = network_names.index(st.session_state.global_network)
                     except ValueError:
@@ -144,57 +96,33 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                             current_idx = 0
                         st.session_state.global_network = network_names[current_idx]
                     
-                    selected_idx = st.selectbox(
+                    selected_network = st.selectbox(
                         "Network",
-                        range(len(network_names)),
-                        format_func=lambda x: f"{network_names[x]}: {network_options[x]}",
+                        network_names,
                         index=current_idx,
                         key="global_network_selector",
-                        label_visibility="collapsed",
-                        help="Select which Ethereum network to analyze (🔍 = discovered)"
+                        help="Ethereum network"
                     )
                     
-                    selected_network = network_names[selected_idx]
                     st.session_state.global_network = selected_network
                 else:
-                    st.warning("No networks available")
+                    st.warning("No networks")
                     selected_network = None
             else:
                 selected_network = None
         
         with col3:
-            # Connection status with status component
-            if selected_cluster:
-                if st.button("🔌 Test", key="test_connection", help="Test cluster connection"):
-                    with st.status("Testing connection...", expanded=False) as status:
-                        if test_cluster_connection(selected_cluster):
-                            status.update(label="✅ Connected", state="complete")
-                        else:
-                            status.update(label="❌ Failed", state="error")
-        
-        with col4:
-            # Info popover with cluster/network details
-            with st.popover("ℹ️ Info"):
-                if selected_cluster:
-                    cluster_info = clusters[selected_cluster]
-                    st.markdown("**Cluster Details:**")
-                    st.text(f"Host: {cluster_info.get('host', 'N/A')}")
-                    st.text(f"Port: {cluster_info.get('port', 'N/A')}")
-                    st.text(f"Database: {cluster_info.get('database', 'default')}")
-                    st.text(f"Protocol: {cluster_info.get('protocol', 'N/A')}")
-                    
-                    if selected_network and selected_network in networks:
-                        st.divider()
-                        st.markdown("**Network Details:**")
-                        network_info = networks[selected_network]
-                        st.text(f"Name: {network_info.get('name', selected_network)}")
-                        if 'chain_id' in network_info:
-                            st.text(f"Chain ID: {network_info.get('chain_id', 'N/A')}")
-                        if 'genesis_timestamp' in network_info:
-                            import datetime
-                            genesis = datetime.datetime.fromtimestamp(network_info['genesis_timestamp'])
-                            st.text(f"Genesis: {genesis.strftime('%Y-%m-%d')}")
-                        st.text(f"Source: {'Discovered' if network_info.get('discovered') else 'Config'}")
+            # Settings popover
+            with st.popover("⚙️"):
+                if st.button("Refresh Networks", use_container_width=True):
+                    config_loader._discovered_networks = None
+                    config_loader._network_cache_time = None
+                    st.session_state.last_discovery_cluster = None
+                    st.rerun()
+                
+                if st.button("Reload Config", use_container_width=True):
+                    config_loader.reload_config()
+                    st.rerun()
     
     return selected_cluster, selected_network
 
