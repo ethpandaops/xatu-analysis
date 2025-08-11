@@ -32,12 +32,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
     # Initialize session state
     initialize_session_state()
     
-    # Logo and header in same container
+    # Add logo to sidebar using Streamlit's native logo feature
+    st.logo("branding/ethpandaops.png", icon_image="branding/ethpandaops.png")
+    
+    # Minimal header with just selectors
     with st.container(border=True):
-        col_logo, col1, col2, col3 = st.columns([0.5, 2, 2, 0.5])
-        
-        with col_logo:
-            st.image("branding/ethpandaops.png", width=40)
+        col1, col2, col3 = st.columns([2, 2, 1])
         
         with col1:
             # Cluster selection
