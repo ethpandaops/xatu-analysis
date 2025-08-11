@@ -54,10 +54,17 @@ validator_performance_page = st.Page(
     url_path="validator-performance"
 )
 
+peerdas_analysis_page = st.Page(
+    "pages/analysis/peerdas_analysis/page.py",
+    title="PeerDAS Analysis",
+    icon="🔮",
+    url_path="peerdas-analysis"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page]
 })
 
 # Run the selected page

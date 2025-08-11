@@ -15,7 +15,14 @@ clickhouse:
       protocol: https
       # Credentials from env: XATU_CLICKHOUSE_USERNAME, XATU_CLICKHOUSE_PASSWORD
       description: "Main Xatu ClickHouse cluster"
-      
+    experimental:
+      host: clickhouse.xatu-experimental.ethpandaops.io
+      port: 443
+      database: default
+      protocol: https
+      # Credentials from env: EXPERIMENTAL_CLICKHOUSE_USERNAME, EXPERIMENTAL_CLICKHOUSE_PASSWORD
+      description: "Experimental Xatu ClickHouse cluster"
+    
   # Default cluster to use if not specified
   default_cluster: xatu
   
@@ -40,8 +47,6 @@ networks:
     chain_id: 1
     description: "Ethereum production network"
     genesis_timestamp: 1606824023  # December 1, 2020, 12:00:23 PM UTC
-    has_gas_data: true
-    has_blob_data: true
     enabled: true
     
   holesky:
@@ -49,8 +54,6 @@ networks:
     chain_id: 17000
     description: "Ethereum staking testnet"
     genesis_timestamp: 1695902400  # September 28, 2023, 12:00:00 PM UTC
-    has_gas_data: true
-    has_blob_data: true
     enabled: true
     
   sepolia:
@@ -58,8 +61,6 @@ networks:
     chain_id: 11155111
     description: "Ethereum application testnet"
     genesis_timestamp: 1655733600  # June 20, 2022, 12:00:00 PM UTC
-    has_gas_data: true
-    has_blob_data: true
     enabled: true
     
   hoodi:
@@ -67,8 +68,12 @@ networks:
     chain_id: null
     description: "Hoodi development network"
     genesis_timestamp: 1742213400  # January 18, 2025, 11:30:00 AM UTC
-    has_gas_data: true
-    has_blob_data: true
+    enabled: true
+  fusaka-devnet-4:
+    name: "Fusaka Devnet 4"
+    chain_id: null
+    description: "Fusaka development network"
+    genesis_timestamp: 1754640000  # August 8, 2025, 08:00:00 AM UTC
     enabled: true
 
 # API integrations
