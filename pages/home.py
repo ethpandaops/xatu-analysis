@@ -2,6 +2,10 @@
 ethPandaOps Analysis Dashboard - Home Page
 """
 import streamlit as st
+from shared.header import render_global_header
+
+# Render the global header with cluster/network selection
+render_global_header()
 
 st.title("🐼 ethPandaOps Analysis Dashboard")
 

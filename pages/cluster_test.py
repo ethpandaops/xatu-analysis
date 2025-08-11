@@ -4,12 +4,16 @@ This page demonstrates how to use the new multi-cluster configuration system.
 """
 import streamlit as st
 import pandas as pd
-from shared.ui_utils import render_cluster_selector, render_network_selector, test_cluster_connection, get_cluster_info
+from shared.header import render_global_header, get_global_cluster, get_global_network
+from shared.ui_utils import get_cluster_info
 from shared.database import get_database_connection
 from shared.config_loader import config_loader
 
 
 def main():
+    # Render the global header
+    render_global_header()
+    
     st.title("Multi-Cluster Configuration Test")
     
     st.markdown("""
@@ -20,8 +24,9 @@ def main():
     - Query data from different clusters
     """)
     
-    # Cluster selector in sidebar
-    selected_cluster = render_cluster_selector("cluster_test")
+    # Get global selections from header
+    selected_cluster = get_global_cluster()
+    selected_network = get_global_network()
     
     if selected_cluster:
         # Show cluster info
@@ -43,6 +48,7 @@ def main():
         with col1:
             if st.button("Test Connection", key="test_conn"):
                 with st.spinner(f"Testing connection to {selected_cluster}..."):
+                    from shared.header import test_cluster_connection
                     if test_cluster_connection(selected_cluster):
                         st.success(f"✅ Successfully connected to {selected_cluster}")
                     else:
@@ -54,9 +60,8 @@ def main():
                 st.success("Configuration reloaded")
                 st.rerun()
         
-        # Network selector with discovery
+        # Network info
         st.divider()
-        selected_network = render_network_selector("cluster_test", selected_cluster, include_discovered=True)
         
         if selected_network:
             st.write(f"**Selected Network:** {selected_network}")

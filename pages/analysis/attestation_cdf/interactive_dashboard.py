@@ -20,12 +20,15 @@ from shared.ui_components import add_ethPandaOps_logo
 
 # Import shared components  
 from shared.ui_components import apply_ethPandaOps_styling
-from shared.ui_utils import render_cluster_selector, render_network_selector
+from shared.header import render_global_header, get_global_cluster, get_global_network
 from shared.ethereum.validators import load_validators_from_ethseer, load_blockprint_clients
 
 
 def main():
     """Main dashboard function."""
+    
+    # Render the global header
+    render_global_header()
     
     # Apply consistent styling
     apply_ethPandaOps_styling()
@@ -47,20 +50,16 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
+    # Get global cluster and network from header
+    cluster = get_global_cluster()
+    network = get_global_network()
+    
+    if not cluster or not network:
+        st.error("Please select a cluster and network from the header above")
+        return
+    
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
-    
-    # Cluster selection
-    st.sidebar.subheader("Data Source")
-    cluster = render_cluster_selector("attestation_cdf")
-    
-    # Network selection
-    st.sidebar.subheader("Network")
-    network = render_network_selector("attestation_cdf", cluster, include_discovered=True)
-    
-    if not network:
-        st.error("No networks available")
-        return
     
     # Time range selection
     from datetime import timezone

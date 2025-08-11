@@ -31,7 +31,7 @@ from plot_generators import (
 # Import shared UI components
 from shared.ui_components import apply_ethPandaOps_styling
 from shared.filesystem import get_cache_dir
-from shared.ui_utils import render_cluster_selector, render_network_selector
+from shared.header import render_global_header, get_global_cluster, get_global_network
 
 # Additional imports needed for main functionality
 import streamlit as st
@@ -42,6 +42,9 @@ import pandas as pd
 import numpy as np
 
 def main():
+    # Render the global header
+    render_global_header()
+    
     # Initialize session state variables
     if 'data_loaded' not in st.session_state:
         st.session_state.data_loaded = False
@@ -57,20 +60,16 @@ def main():
     # Header
     st.title("🏗️ Block Producer Performance")
     
+    # Get global cluster and network from header
+    cluster = get_global_cluster()
+    network = get_global_network()
+    
+    if not cluster or not network:
+        st.error("Please select a cluster and network from the header above")
+        return
+    
     # Sidebar configuration
     st.sidebar.header("⚙️ Configuration")
-    
-    # Cluster selection
-    st.sidebar.subheader("Data Source")
-    cluster = render_cluster_selector("block_producer")
-    
-    # Network selection
-    st.sidebar.subheader("Network")
-    network = render_network_selector("block_producer", cluster, include_discovered=True)
-    
-    if not network:
-        st.error("No networks available")
-        return
     
     # Time range configuration
     st.sidebar.subheader("Time Range Configuration")

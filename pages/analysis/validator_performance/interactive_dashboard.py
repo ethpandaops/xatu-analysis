@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 
 from shared.config import get_supported_networks
-from shared.ui_utils import render_cluster_selector, render_network_selector
+from shared.header import render_global_header, get_global_cluster, get_global_network
 from pages.analysis.validator_performance.config_utils import (
     parse_validator_pubkeys, 
     format_pubkey_for_display, 
@@ -189,20 +189,16 @@ def render_configuration_sidebar() -> Dict[str, Any]:
     Returns:
         Configuration dictionary with network, time_range, validator_pubkeys, and config_changed flag
     """
+    # Get global cluster and network from header
+    cluster = get_global_cluster()
+    network = get_global_network()
+    
+    if not cluster or not network:
+        st.error("Please select a cluster and network from the header above")
+        return None
+    
     with st.sidebar:
         st.header("⚙️ Configuration")
-        
-        # Cluster selection
-        st.subheader("Data Source")
-        cluster = render_cluster_selector("validator_performance")
-        
-        # Network selection
-        st.subheader("Network")
-        network = render_network_selector("validator_performance", cluster, include_discovered=True)
-        
-        if not network:
-            st.error("No networks available")
-            return None
         
         # Time range configuration
         st.subheader("Time Range")
@@ -357,8 +353,6 @@ def render_configuration_sidebar() -> Dict[str, Any]:
         # Configuration summary
         st.divider()
         st.subheader("Configuration Summary")
-        st.info(f"**Cluster:** {cluster}")
-        st.info(f"**Network:** {network}")
         
         # Time range summary
         time_range_config = {
@@ -728,6 +722,9 @@ def run_dashboard():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Render the global header
+    render_global_header()
     
     # Initialize session state
     initialize_session_state()

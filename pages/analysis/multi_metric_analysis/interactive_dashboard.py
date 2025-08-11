@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from shared.ui_components import apply_ethPandaOps_styling
-from shared.ui_utils import render_cluster_selector, render_network_selector
+from shared.header import render_global_header, get_global_cluster, get_global_network
 from shared.metric_utils import get_metric_info
 from config_utils import (
     get_analysis_config, get_default_periods,
@@ -74,20 +74,15 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     Returns:
         Dictionary with configuration parameters
     """
-    st.sidebar.header("⚙️ Analysis Configuration")
+    # Get global cluster and network from header
+    cluster = get_global_cluster()
+    network = get_global_network()
     
-    # Cluster selection
-    st.sidebar.subheader("Data Source")
-    cluster = render_cluster_selector("multi_metric")
-    
-    # Network selection
-    st.sidebar.subheader("Network")
-    network = render_network_selector("multi_metric", cluster, include_discovered=True)
-    
-    if not network:
-        st.error("No networks available")
+    if not cluster or not network:
+        st.error("Please select a cluster and network from the header above")
         return None
     
+    st.sidebar.header("⚙️ Analysis Configuration")
     config = get_analysis_config()
     
     # Time range configuration
@@ -1535,6 +1530,9 @@ def render_statistical_summary(data: pd.DataFrame, metrics: List[str]):
 
 def main():
     """Main dashboard function."""
+    # Render the global header
+    render_global_header()
+    
     apply_ethPandaOps_styling()
     
     # Initialize session state
