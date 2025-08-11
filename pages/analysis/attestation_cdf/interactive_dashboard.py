@@ -249,7 +249,8 @@ def main():
     if st.session_state.attestation_cdf_data_loaded and st.session_state.attestation_cdf_metrics:
         render_analysis_dashboard(
             st.session_state.attestation_cdf_data,
-            st.session_state.attestation_cdf_metrics
+            st.session_state.attestation_cdf_metrics,
+            cluster
         )
     else:
         render_welcome_screen()
@@ -300,7 +301,7 @@ def apply_client_filters(combined_data, cdf_metrics, client_filters):
     return filtered_data, filtered_metrics
 
 
-def render_analysis_dashboard(combined_data, cdf_metrics):
+def render_analysis_dashboard(combined_data, cdf_metrics, cluster=None):
     """Render the main analysis dashboard with optional client filtering."""
     
     # Client Filtering Section on Main Page
@@ -488,7 +489,7 @@ def render_analysis_dashboard(combined_data, cdf_metrics):
     
     # Pass slot filter if in per-slot view mode
     current_slot_filter = slot_filter if view_mode == "Per Slot" else None
-    render_slow_period_analysis(filtered_data, filtered_metrics, network, active_filters, current_slot_filter)
+    render_slow_period_analysis(filtered_data, filtered_metrics, network, active_filters, current_slot_filter, cluster)
     
     # Debug section - show missed slots
     with st.expander("🔍 Debug: Missed Slots Information"):
@@ -592,7 +593,7 @@ def render_welcome_screen():
     """)
 
 
-def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filters=None, slot_filter=None):
+def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filters=None, slot_filter=None, cluster=None):
     """Render slow period analysis section with entity/client breakdown."""
     
     st.subheader("🐢 Slow Period Analysis")

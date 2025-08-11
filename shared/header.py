@@ -1,19 +1,75 @@
 """
-Minimal header for cluster and network selection.
+Minimal header for cluster and network selection with persistent storage.
 """
 import streamlit as st
 from typing import Optional, Tuple
 from .config_loader import config_loader
+import json
+
+
+def get_local_storage_script():
+    """Generate JavaScript for local storage operations."""
+    return """
+    <script>
+    // Function to save to localStorage
+    function saveToLocalStorage(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (e) {
+            console.error('Failed to save to localStorage:', e);
+        }
+    }
+    
+    // Function to load from localStorage
+    function loadFromLocalStorage(key) {
+        try {
+            const item = localStorage.getItem(key);
+            return item ? JSON.parse(item) : null;
+        } catch (e) {
+            console.error('Failed to load from localStorage:', e);
+            return null;
+        }
+    }
+    
+    // Initialize from localStorage on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        const savedCluster = loadFromLocalStorage('ethpandaops_cluster');
+        const savedNetwork = loadFromLocalStorage('ethpandaops_network');
+        
+        if (savedCluster || savedNetwork) {
+            // Send saved values back to Streamlit
+            window.parent.postMessage({
+                type: 'localStorage_init',
+                cluster: savedCluster,
+                network: savedNetwork
+            }, '*');
+        }
+    });
+    </script>
+    """
 
 
 def initialize_session_state():
-    """Initialize session state for global cluster and network selection."""
+    """Initialize session state for global cluster and network selection with localStorage support."""
+    # Try to load from query params first (for sharing links)
+    query_params = st.query_params
+    
+    # Check for saved preferences in query params
+    saved_cluster = query_params.get('cluster', None)
+    saved_network = query_params.get('network', None)
+    
     if 'global_cluster' not in st.session_state:
-        default_cluster = config_loader._config.get('clickhouse', {}).get('default_cluster', 'xatu')
-        st.session_state.global_cluster = default_cluster
+        if saved_cluster:
+            st.session_state.global_cluster = saved_cluster
+        else:
+            default_cluster = config_loader._config.get('clickhouse', {}).get('default_cluster', 'xatu')
+            st.session_state.global_cluster = default_cluster
     
     if 'global_network' not in st.session_state:
-        st.session_state.global_network = 'mainnet'
+        if saved_network:
+            st.session_state.global_network = saved_network
+        else:
+            st.session_state.global_network = 'mainnet'
     
     if 'discovered_networks' not in st.session_state:
         st.session_state.discovered_networks = []
@@ -87,6 +143,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                     help="ClickHouse cluster"
                 )
                 
+                # Update session state and query params if changed
+                if selected_cluster != st.session_state.global_cluster:
+                    st.session_state.global_cluster = selected_cluster
+                    # Update query params for shareable links
+                    st.query_params['cluster'] = selected_cluster
+                
                 st.session_state.global_cluster = selected_cluster
             else:
                 st.error("No clusters configured")
@@ -125,6 +187,12 @@ def render_global_header() -> Tuple[Optional[str], Optional[str]]:
                         key="global_network_selector",
                         help="Ethereum network"
                     )
+                    
+                    # Update session state and query params if changed
+                    if selected_network != st.session_state.global_network:
+                        st.session_state.global_network = selected_network
+                        # Update query params for shareable links
+                        st.query_params['network'] = selected_network
                     
                     st.session_state.global_network = selected_network
                 else:
