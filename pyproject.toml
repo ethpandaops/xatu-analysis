@@ -26,6 +26,7 @@ dependencies = [
     "requests>=2.25.0",
     "watchdog>=6.0.0",
     "scipy>=1.7.0",
+    "PyYAML>=6.0.0",
 ]
 
 

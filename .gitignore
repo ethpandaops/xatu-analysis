@@ -196,6 +196,7 @@ Thumbs.db
 
 # Configuration files with secrets
 config.json
+config.local.yaml
 .env.local
 .env.production
 

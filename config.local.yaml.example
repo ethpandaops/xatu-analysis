@@ -1,0 +1,46 @@
+# Local Configuration Override Template
+# Copy this file to config.local.yaml and customize as needed
+# config.local.yaml is gitignored and will not be committed
+
+# Example: Add additional ClickHouse clusters
+# clickhouse:
+#   clusters:
+#     my_cluster:
+#       host: my-clickhouse.example.com
+#       port: 9000
+#       database: default
+#       protocol: http
+#       description: "My custom ClickHouse cluster"
+#       # Set environment variables:
+#       # MY_CLUSTER_CLICKHOUSE_USERNAME=myuser
+#       # MY_CLUSTER_CLICKHOUSE_PASSWORD=mypass
+#     
+#   # Override default cluster
+#   default_cluster: my_cluster
+
+# Example: Add custom networks
+# networks:
+#   devnet1:
+#     name: "Development Network 1"
+#     chain_id: 12345
+#     description: "Local development network"
+#     genesis_timestamp: 1700000000
+#     has_gas_data: true
+#     has_blob_data: false
+#     enabled: true
+#   
+#   # Disable a default network
+#   sepolia:
+#     enabled: false
+
+# Example: Override application settings
+# app:
+#   data_cache_dir: "/custom/cache/path"
+#   performance:
+#     max_query_records: 500000
+#     query_timeout: 600
+
+# Example: Override API URLs
+# integrations:
+#   beaconchain:
+#     base_url: "https://prater.beaconcha.in"

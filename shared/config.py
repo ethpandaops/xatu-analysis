@@ -3,32 +3,41 @@ Shared configuration utilities for ethPandaOps Analysis Dashboard
 """
 import os
 from typing import Dict, Any
+from .config_loader import config_loader
 
 
 def load_env_config() -> Dict[str, Any]:
-    """Load environment configuration for analysis modules"""
-    return {
-        'clickhouse_host': os.getenv('CLICKHOUSE_HOST'),
-        'clickhouse_port': os.getenv('CLICKHOUSE_PORT'),
-        'clickhouse_user': os.getenv('CLICKHOUSE_USER'),
-        'clickhouse_password': os.getenv('CLICKHOUSE_PASSWORD'),
-        'clickhouse_database': os.getenv('CLICKHOUSE_DATABASE', 'default'),
-    }
+    """Load environment configuration for analysis modules (deprecated - use config_loader)"""
+    # This function is kept for backward compatibility
+    # Returns a minimal config based on the default cluster
+    try:
+        cluster = config_loader.get_clickhouse_cluster()
+        return {
+            'clickhouse_host': cluster.get('host'),
+            'clickhouse_port': cluster.get('port'),
+            'clickhouse_user': cluster.get('username'),
+            'clickhouse_password': cluster.get('password'),
+            'clickhouse_database': cluster.get('database', 'default'),
+        }
+    except:
+        return {
+            'clickhouse_host': os.getenv('XATU_CLICKHOUSE_HOST'),
+            'clickhouse_port': os.getenv('XATU_CLICKHOUSE_PORT', '443'),
+            'clickhouse_user': os.getenv('XATU_CLICKHOUSE_USERNAME'),
+            'clickhouse_password': os.getenv('XATU_CLICKHOUSE_PASSWORD'),
+            'clickhouse_database': os.getenv('XATU_CLICKHOUSE_DATABASE', 'default'),
+        }
 
 
 def get_data_cache_dir() -> str:
     """Get the data cache directory for analysis modules"""
-    return os.getenv('DATA_CACHE_DIR', './data_cache')
+    app_config = config_loader.get_app_config()
+    return app_config.get('data_cache_dir', os.getenv('DATA_CACHE_DIR', './data_cache'))
 
 
 def get_supported_networks() -> list:
     """Get list of supported Ethereum networks across all analysis modules"""
-    return [
-        'mainnet',
-        'holesky', 
-        'sepolia',
-        'hoodi'
-    ]
+    return config_loader.get_supported_networks()
 
 
 def get_network_genesis_timestamp(network: str) -> int:
@@ -40,46 +49,9 @@ def get_network_genesis_timestamp(network: str) -> int:
     Returns:
         Genesis timestamp in seconds since epoch, or mainnet genesis if network not found
     """
-    config = get_network_config()
-    if network in config and config[network].get('genesis_timestamp'):
-        return config[network]['genesis_timestamp']
-    # Default to mainnet genesis if not found
-    return 1606824023
+    return config_loader.get_network_genesis_timestamp(network)
 
 
 def get_network_config() -> Dict[str, Dict[str, Any]]:
     """Get detailed configuration for each supported network"""
-    return {
-        'mainnet': {
-            'name': 'Ethereum Mainnet',
-            'chain_id': 1,
-            'description': 'Ethereum production network',
-            'genesis_timestamp': 1606824023,  # December 1, 2020, 12:00:23 PM UTC
-            'has_gas_data': True,
-            'has_blob_data': True
-        },
-        'holesky': {
-            'name': 'Holesky Testnet',
-            'chain_id': 17000,
-            'description': 'Ethereum staking testnet',
-            'genesis_timestamp': 1695902400,  # September 28, 2023, 12:00:00 PM UTC
-            'has_gas_data': True,
-            'has_blob_data': True
-        },
-        'sepolia': {
-            'name': 'Sepolia Testnet', 
-            'chain_id': 11155111,
-            'description': 'Ethereum application testnet',
-            'genesis_timestamp': 1655733600,  # June 20, 2022, 12:00:00 PM UTC
-            'has_gas_data': True,
-            'has_blob_data': True
-        },
-        'hoodi': {
-            'name': 'Hoodi Network',
-            'chain_id': None,  # Add chain_id when available
-            'description': 'Hoodi development network',
-            'genesis_timestamp': 1742213400,  # January 18, 2025, 11:30:00 AM UTC
-            'has_gas_data': True,
-            'has_blob_data': True
-        }
-    }
+    return config_loader.get_networks()

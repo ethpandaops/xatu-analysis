@@ -1,0 +1,108 @@
+# Xatu Analysis Dashboard Configuration
+# This file contains the default configuration for the application
+# User-specific overrides should be placed in config.local.yaml
+
+# ClickHouse cluster definitions
+# Credentials are pulled from environment variables:
+# - {cluster_name}_CLICKHOUSE_USERNAME
+# - {cluster_name}_CLICKHOUSE_PASSWORD
+clickhouse:
+  clusters:
+    xatu:
+      host: clickhouse.xatu.ethPandaOps.io
+      port: 443
+      database: default
+      protocol: https
+      # Credentials from env: XATU_CLICKHOUSE_USERNAME, XATU_CLICKHOUSE_PASSWORD
+      description: "Main Xatu ClickHouse cluster"
+      
+  # Default cluster to use if not specified
+  default_cluster: xatu
+  
+  # Network discovery configuration
+  network_discovery:
+    enabled: true
+    # Tables to query for available networks
+    tables:
+      - canonical_beacon_block
+      - libp2p_gossipsub_beacon_block
+      - beacon_api_eth_v1_events_block
+    # Number of days to look back for network discovery
+    lookback_days: 7
+    # Cache discovered networks for this duration (minutes)
+    cache_duration: 60
+
+# Network configurations
+# These are the defaults - can be overridden in config.local.yaml
+networks:
+  mainnet:
+    name: "Ethereum Mainnet"
+    chain_id: 1
+    description: "Ethereum production network"
+    genesis_timestamp: 1606824023  # December 1, 2020, 12:00:23 PM UTC
+    has_gas_data: true
+    has_blob_data: true
+    enabled: true
+    
+  holesky:
+    name: "Holesky Testnet"
+    chain_id: 17000
+    description: "Ethereum staking testnet"
+    genesis_timestamp: 1695902400  # September 28, 2023, 12:00:00 PM UTC
+    has_gas_data: true
+    has_blob_data: true
+    enabled: true
+    
+  sepolia:
+    name: "Sepolia Testnet"
+    chain_id: 11155111
+    description: "Ethereum application testnet"
+    genesis_timestamp: 1655733600  # June 20, 2022, 12:00:00 PM UTC
+    has_gas_data: true
+    has_blob_data: true
+    enabled: true
+    
+  hoodi:
+    name: "Hoodi Network"
+    chain_id: null
+    description: "Hoodi development network"
+    genesis_timestamp: 1742213400  # January 18, 2025, 11:30:00 AM UTC
+    has_gas_data: true
+    has_blob_data: true
+    enabled: true
+
+# Application settings
+app:
+  # Data cache directory
+  data_cache_dir: "./.data_cache"
+  
+  # Session state settings
+  session_state:
+    # Session timeout in minutes
+    timeout: 120
+    
+  # Performance settings
+  performance:
+    # Maximum records to fetch in a single query
+    max_query_records: 1000000
+    # Query timeout in seconds
+    query_timeout: 300
+    # Enable query result caching
+    enable_cache: true
+    # Cache TTL in hours
+    cache_ttl_hours: 1
+
+# API integrations
+integrations:
+  beaconchain:
+    base_url: "https://beaconcha.in"
+    # API key from env: BEACONCHAIN_API_KEY
+    
+  rated:
+    base_url: "https://api.rated.network"
+    # API key from env: RATED_API_KEY
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
