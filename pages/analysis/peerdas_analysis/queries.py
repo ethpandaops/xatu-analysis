@@ -6,13 +6,14 @@ These queries perform the correct aggregation on the database side:
 2. Then aggregate by chosen metric (blob count or custody count)
 """
 
-def get_blob_count_query(data_source: str, aggregation: str = "p90") -> str:
+def get_blob_count_query(data_source: str, aggregation: str = "p90", client_filter: list = None) -> str:
     """
     Query for PeerDAS metrics grouped by blob count.
     
     Args:
         data_source: Either 'libp2p' or 'beacon_api'
         aggregation: Aggregation function ('mean', 'p50', 'p90', 'p95', 'p99')
+        client_filter: Optional list of client names to include
     
     Returns:
         SQL query string
@@ -38,6 +39,11 @@ def get_blob_count_query(data_source: str, aggregation: str = "p90") -> str:
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
         blob_count_expr = 'length(kzg_commitments)'
     
+    # Build client filter clause
+    client_filter_clause = ""
+    if client_filter:
+        client_filter_clause = "AND meta_client_name IN %(client_filter)s"
+    
     query = f"""
     WITH 
     -- Step 1: Per-client, per-slot sidecar times
@@ -53,6 +59,7 @@ def get_blob_count_query(data_source: str, aggregation: str = "p90") -> str:
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
             AND column_index < %(custody_filter)s
+            {client_filter_clause}
         GROUP BY slot, meta_client_name
     ),
     -- Step 2: Per-client, per-slot block times
@@ -66,6 +73,7 @@ def get_blob_count_query(data_source: str, aggregation: str = "p90") -> str:
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
+            {client_filter_clause}
         GROUP BY slot, meta_client_name
     ),
     -- Step 3: Combine block and sidecar times
@@ -97,13 +105,14 @@ def get_blob_count_query(data_source: str, aggregation: str = "p90") -> str:
     return query
 
 
-def get_custody_count_query(data_source: str, aggregation: str = "p90") -> str:
+def get_custody_count_query(data_source: str, aggregation: str = "p90", client_filter: list = None) -> str:
     """
     Query for PeerDAS metrics grouped by custody count.
     
     Args:
         data_source: Either 'libp2p' or 'beacon_api'
         aggregation: Aggregation function ('mean', 'p50', 'p90', 'p95', 'p99')
+        client_filter: Optional list of client names to include
     
     Returns:
         SQL query string
@@ -129,6 +138,11 @@ def get_custody_count_query(data_source: str, aggregation: str = "p90") -> str:
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
         blob_count_expr = 'length(kzg_commitments)'
     
+    # Build client filter clause
+    client_filter_clause = ""
+    if client_filter:
+        client_filter_clause = "AND meta_client_name IN %(client_filter)s"
+    
     query = f"""
     WITH 
     -- Step 1: Get all sidecar data we need
@@ -145,6 +159,7 @@ def get_custody_count_query(data_source: str, aggregation: str = "p90") -> str:
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
+            {client_filter_clause}
     ),
     -- Step 2: Calculate max columns per client across all slots
     client_custody AS (
@@ -177,6 +192,7 @@ def get_custody_count_query(data_source: str, aggregation: str = "p90") -> str:
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
+            {client_filter_clause}
         GROUP BY slot, meta_client_name
     ),
     -- Step 5: Combine block and sidecar times
@@ -209,7 +225,7 @@ def get_custody_count_query(data_source: str, aggregation: str = "p90") -> str:
     return query
 
 
-def get_peerdas_query(data_source: str, aggregation: str = "p90", group_by: str = "blob_count") -> str:
+def get_peerdas_query(data_source: str, aggregation: str = "p90", group_by: str = "blob_count", client_filter: list = None) -> str:
     """
     Get THE query for PeerDAS metrics with proper aggregation.
     
@@ -225,18 +241,19 @@ def get_peerdas_query(data_source: str, aggregation: str = "p90", group_by: str 
         data_source: Either 'libp2p' or 'beacon_api'
         aggregation: Aggregation function ('mean', 'p50', 'p90', 'p95', 'p99')
         group_by: Metric to group by ('blob_count' or 'custody_count')
+        client_filter: Optional list of client names to include
         
     Returns:
         SQL query string
     """
     
     if group_by == 'custody_count':
-        return get_custody_count_query(data_source, aggregation)
+        return get_custody_count_query(data_source, aggregation, client_filter)
     else:
-        return get_blob_count_query(data_source, aggregation)
+        return get_blob_count_query(data_source, aggregation, client_filter)
 
 
-def get_node_classification_raw_query(data_source: str) -> str:
+def get_node_classification_raw_query(data_source: str, client_filter: list = None) -> str:
     """
     Query for raw PeerDAS data with node classification for box plots.
     
@@ -244,6 +261,7 @@ def get_node_classification_raw_query(data_source: str) -> str:
     
     Args:
         data_source: Either 'libp2p' or 'beacon_api'
+        client_filter: Optional list of client names to include
     
     Returns:
         SQL query string
@@ -260,6 +278,11 @@ def get_node_classification_raw_query(data_source: str) -> str:
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
         blob_count_expr = 'length(kzg_commitments)'
         consensus_impl_col = 'meta_consensus_implementation'
+    
+    # Build client filter clause
+    client_filter_clause = ""
+    if client_filter:
+        client_filter_clause = "AND meta_client_name IN %(client_filter)s"
     
     query = f"""
     WITH 
@@ -278,6 +301,7 @@ def get_node_classification_raw_query(data_source: str) -> str:
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
+            {client_filter_clause}
     ),
     -- Step 2: Calculate max columns per client across all slots
     client_custody AS (
@@ -311,6 +335,7 @@ def get_node_classification_raw_query(data_source: str) -> str:
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
             AND propagation_slot_start_diff < %(max_propagation)s
             AND meta_client_name != ''
+            {client_filter_clause}
         GROUP BY slot, meta_client_name
     ),
     -- Step 5: Combine block and sidecar times with node classification
@@ -376,6 +401,35 @@ def get_max_blob_count_query(data_source: str) -> str:
     WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND meta_client_name != ''
+    """
+    
+    return query
+
+
+def get_unique_clients_query(data_source: str) -> str:
+    """
+    Query to get unique client names from the dataset.
+    
+    Args:
+        data_source: Either 'libp2p' or 'beacon_api'
+    
+    Returns:
+        SQL query string
+    """
+    
+    # Use the appropriate table based on data source
+    if data_source == 'libp2p':
+        table = 'libp2p_gossipsub_data_column_sidecar FINAL'
+    else:
+        table = 'beacon_api_eth_v1_events_data_column_sidecar'
+    
+    query = f"""
+    SELECT DISTINCT meta_client_name
+    FROM {table}
+    WHERE meta_network_name = %(network)s
+        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND meta_client_name != ''
+    ORDER BY meta_client_name
     """
     
     return query
