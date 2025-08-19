@@ -26,7 +26,8 @@ from loader import (
     load_peerdas_aggregated_data,
     load_node_classification_raw_data,
     validate_data_availability,
-    get_max_blob_count
+    get_max_blob_count,
+    get_unique_clients
 )
 from plot_generators import (
     create_peerdas_performance_chart,
@@ -72,10 +73,20 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     st.session_state.previous_cluster = cluster
     st.session_state.previous_network = network
     
-    st.sidebar.header("⚙️ PeerDAS Configuration")
+    st.sidebar.header("📊 Analysis Configuration")
     
     # Time range selection
     st.sidebar.subheader("📅 Time Range")
+    
+    # Get query parameters for persistence
+    query_params = st.query_params
+    
+    # Check if we have saved time range in query params
+    saved_period = query_params.get("period", None)
+    saved_start = query_params.get("start", None)
+    saved_end = query_params.get("end", None)
+    saved_start_time = query_params.get("start_time", None)
+    saved_end_time = query_params.get("end_time", None)
     
     # Quick period selection
     time_options = {
@@ -88,10 +99,16 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         "Custom": None
     }
     
+    # Determine default period based on saved query params
+    if saved_period and saved_period in time_options:
+        default_period_index = list(time_options.keys()).index(saved_period)
+    else:
+        default_period_index = 1  # Default to "Last 6 Hours"
+    
     selected_period = st.sidebar.selectbox(
         "Quick Period Selection",
         options=list(time_options.keys()),
-        index=1,  # Default to "Last 6 Hours"
+        index=default_period_index,
         help="Select a predefined period or choose Custom for manual selection"
     )
     
@@ -119,21 +136,68 @@ def render_sidebar_configuration() -> Dict[str, Any]:
             )
     else:
         # Custom date selection
+        # Parse saved dates/times if available
+        from datetime import time as datetime_time
+        
+        if saved_start:
+            try:
+                default_start_date = datetime.strptime(saved_start, "%Y-%m-%d").date()
+            except:
+                default_start_date = (datetime.now() - timedelta(hours=6)).date()
+        else:
+            default_start_date = (datetime.now() - timedelta(hours=6)).date()
+        
+        if saved_end:
+            try:
+                default_end_date = datetime.strptime(saved_end, "%Y-%m-%d").date()
+            except:
+                default_end_date = datetime.now().date()
+        else:
+            default_end_date = datetime.now().date()
+        
+        if saved_start_time:
+            try:
+                default_start_time = datetime.strptime(saved_start_time, "%H:%M:%S").time()
+            except:
+                default_start_time = (datetime.now() - timedelta(hours=6)).time()
+        else:
+            default_start_time = (datetime.now() - timedelta(hours=6)).time()
+        
+        if saved_end_time:
+            try:
+                default_end_time = datetime.strptime(saved_end_time, "%H:%M:%S").time()
+            except:
+                default_end_time = datetime.now().time()
+        else:
+            default_end_time = datetime.now().time()
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
                 "Start Date",
-                value=(datetime.now() - timedelta(hours=6)).date(),
+                value=default_start_date,
                 max_value=datetime.now().date(),
                 key="start_date_custom"
+            )
+            start_time = st.time_input(
+                "Start Time",
+                value=default_start_time,
+                key="start_time_custom",
+                step=300  # 5 minute intervals
             )
         
         with col2:
             end_date = st.date_input(
                 "End Date",
-                value=datetime.now().date(),
+                value=default_end_date,
                 max_value=datetime.now().date(),
                 key="end_date_custom"
+            )
+            end_time = st.time_input(
+                "End Time",
+                value=default_end_time,
+                key="end_time_custom",
+                step=300  # 5 minute intervals
             )
     
     # Data source - default to libp2p
@@ -164,10 +228,8 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     
     st.session_state.previous_data_source = selected_source
     
-    # Client filtering
-    st.sidebar.subheader("🖥️ Client Selection")
-    
     # Custody count filter
+    st.sidebar.subheader("⚙️ Analysis Settings")
     config = get_analysis_config()
     custody_filter = st.sidebar.slider(
         "Maximum Custody Count",
@@ -217,12 +279,20 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         )
         
         if use_bucketing:
+            # Create temporary datetime objects for bucketing
+            if selected_period == "Custom":
+                temp_start_datetime = datetime.combine(start_date, start_time)
+                temp_end_datetime = datetime.combine(end_date, end_time)
+            else:
+                temp_start_datetime = datetime.combine(start_date, datetime.min.time())
+                temp_end_datetime = datetime.combine(end_date, datetime.max.time())
+            
             # Auto-detect max blob count from the dataset
             with st.spinner("Detecting max blob count..."):
                 max_blobs = get_max_blob_count(
                     network=network,
-                    start_date=datetime.combine(start_date, datetime.min.time()),
-                    end_date=datetime.combine(end_date, datetime.max.time()),
+                    start_date=temp_start_datetime,
+                    end_date=temp_end_datetime,
                     data_source=selected_source,
                     cluster_name=cluster
                 )
@@ -258,11 +328,38 @@ def render_sidebar_configuration() -> Dict[str, Any]:
             st.session_state.data_loaded = False
             st.sidebar.success("Cache cleared!")
     
+    # Convert dates to datetime objects with appropriate times
+    if selected_period == "Custom":
+        # Use the selected times for custom period
+        start_datetime = datetime.combine(start_date, start_time)
+        end_datetime = datetime.combine(end_date, end_time)
+    else:
+        # Use min/max times for predefined periods
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+    
+    # Update query parameters to persist time range
+    new_params = {
+        "period": selected_period,
+        "start": start_date.strftime("%Y-%m-%d"),
+        "end": end_date.strftime("%Y-%m-%d"),
+    }
+    
+    # Add time parameters if using custom period
+    if selected_period == "Custom":
+        new_params["start_time"] = start_time.strftime("%H:%M:%S")
+        new_params["end_time"] = end_time.strftime("%H:%M:%S")
+    
+    # Update query params
+    st.query_params.update(new_params)
+    
     return {
         'cluster': cluster,
         'network': network,
         'start_date': start_date,
         'end_date': end_date,
+        'start_datetime': start_datetime,
+        'end_datetime': end_datetime,
         'data_source': selected_source,
         'custody_filter': custody_filter,
         'x_axis_metric': x_axis_metric,
@@ -288,8 +385,8 @@ def load_and_process_data(config: Dict[str, Any], agg_function: str = "p90") -> 
             # First validate data availability
             validation = validate_data_availability(
                 network=config['network'],
-                start_date=datetime.combine(config['start_date'], datetime.min.time()),
-                end_date=datetime.combine(config['end_date'], datetime.max.time()),
+                start_date=config['start_datetime'],
+                end_date=config['end_datetime'],
                 data_source=config['data_source'],
                 cluster_name=config['cluster']
             )
@@ -307,13 +404,14 @@ def load_and_process_data(config: Dict[str, Any], agg_function: str = "p90") -> 
             # Load aggregated data directly from ClickHouse
             data = load_peerdas_aggregated_data(
                 network=config['network'],
-                start_date=datetime.combine(config['start_date'], datetime.min.time()),
-                end_date=datetime.combine(config['end_date'], datetime.max.time()),
+                start_date=config['start_datetime'],
+                end_date=config['end_datetime'],
                 data_source=config['data_source'],
                 aggregation=agg_function,
                 custody_filter=config['custody_filter'],
                 cluster_name=config['cluster'],
-                group_by=config['x_axis_metric']
+                group_by=config['x_axis_metric'],
+                client_filter=config.get('client_filter')
             )
             
             if data.empty:
@@ -352,21 +450,6 @@ def render_peerdas_dashboard():
         st.warning("Please select a cluster and network to begin analysis")
         return
     
-    # Check if network supports PeerDAS
-    if network and network.lower() == 'mainnet':
-        st.error("⚠️ PeerDAS is not yet available on mainnet")
-        st.info("""
-        PeerDAS (Peer Data Availability Sampling) is currently only available on testnets and devnets.
-        
-        **Available networks with PeerDAS:**
-        - fusaka-devnet-4
-        - pectra-devnet-5
-        - Other PeerDAS-enabled testnets
-        
-        Please select one of these networks from the header to analyze PeerDAS performance.
-        """)
-        return
-    
     # Get configuration from sidebar
     config = render_sidebar_configuration()
     
@@ -374,6 +457,101 @@ def render_peerdas_dashboard():
         return
     
     # Main content area
+    st.markdown("---")
+    
+    # Client filtering section on main page
+    with st.expander("🖥️ Client Selection", expanded=True):
+        # Create a cache key for the current configuration
+        cache_key = f"{config['network']}_{config['start_date']}_{config['end_date']}_{config['data_source']}_{config['cluster']}"
+        
+        # Check if configuration changed and clear client selection if needed
+        if 'last_client_cache_key' not in st.session_state:
+            st.session_state.last_client_cache_key = None
+        
+        if st.session_state.last_client_cache_key != cache_key:
+            # Configuration changed, reset client selection
+            if 'client_filter' in st.session_state:
+                del st.session_state.client_filter
+            st.session_state.last_client_cache_key = cache_key
+        
+        # Get unique clients for the selected time range
+        with st.spinner("Loading available clients..."):
+            available_clients = get_unique_clients(
+                network=config['network'],
+                start_date=config['start_datetime'],
+                end_date=config['end_datetime'],
+                data_source=config['data_source'],
+                cluster_name=config['cluster']
+            )
+        
+        # Client name filter - multiselect with all selected by default
+        if available_clients:
+            # Sort clients alphabetically for easier navigation
+            available_clients = sorted(available_clients)
+            
+            # Show count first
+            st.caption(f"Found {len(available_clients)} unique clients in the selected time range")
+            
+            # Initialize session state for client selection if needed
+            if 'client_selection_override' not in st.session_state:
+                st.session_state.client_selection_override = None
+            
+            # Create columns for better layout
+            col1, col2 = st.columns([4, 1])
+            
+            with col2:
+                st.write("")  # Add spacing
+                # Add select all/none buttons for convenience
+                if st.button("Select All", use_container_width=True, key="select_all_btn"):
+                    st.session_state.client_selection_override = 'all'
+                    st.rerun()
+                if st.button("Clear All", use_container_width=True, key="clear_all_btn"):
+                    st.session_state.client_selection_override = 'none'
+                    st.rerun()
+            
+            with col1:
+                # Determine default selection based on override
+                if st.session_state.client_selection_override == 'all':
+                    default_selection = available_clients
+                    st.session_state.client_selection_override = None  # Reset override
+                elif st.session_state.client_selection_override == 'none':
+                    default_selection = []
+                    st.session_state.client_selection_override = None  # Reset override
+                else:
+                    # Use previous selection if exists, otherwise all
+                    # But filter to only include clients that still exist
+                    previous_selection = st.session_state.get('client_filter', available_clients)
+                    if isinstance(previous_selection, list):
+                        # Keep only clients that are still available
+                        default_selection = [c for c in previous_selection if c in available_clients]
+                        # If nothing was kept, default to all
+                        if not default_selection:
+                            default_selection = available_clients
+                    else:
+                        default_selection = available_clients
+                
+                selected_clients = st.multiselect(
+                    "Filter by Client Name",
+                    options=available_clients,
+                    default=default_selection,
+                    help="Select which client names to include in the analysis. Deselect clients to exclude them.",
+                    key="client_filter"
+                )
+            
+            # Show count of selected clients
+            if len(selected_clients) == len(available_clients):
+                st.success(f"✅ All {len(available_clients)} clients selected")
+            elif len(selected_clients) == 0:
+                st.warning("⚠️ No clients selected - please select at least one client")
+            else:
+                st.info(f"📊 Selected {len(selected_clients)} of {len(available_clients)} clients")
+        else:
+            selected_clients = []
+            st.warning("No clients found for the selected time range")
+    
+    # Add client filter to config
+    config['client_filter'] = selected_clients if selected_clients else None
+    
     st.markdown("---")
     
     # Chart configuration checkboxes (matching multi-metric style)
@@ -393,13 +571,14 @@ def render_peerdas_dashboard():
             # Grouping dimension selector
             grouping_options = st.multiselect(
                 "Group By",
-                options=['node_class', 'consensus_client'],
+                options=['node_class', 'consensus_client', 'meta_client_name'],
                 default=['node_class'],
                 format_func=lambda x: {
                     'node_class': 'Node Class (Non-validating/Standard/Supernode)',
-                    'consensus_client': 'Consensus Client Implementation'
+                    'consensus_client': 'Consensus Client Implementation',
+                    'meta_client_name': 'Node Name (Client Name)'
                 }.get(x, x),
-                help="Select one or more dimensions to group data. Selecting both creates combined groups."
+                help="Select one or more dimensions to group data. Selecting multiple creates combined groups."
             )
             
             # Ensure at least one grouping is selected
@@ -478,8 +657,8 @@ def render_peerdas_dashboard():
                     # First validate data availability
                     validation = validate_data_availability(
                         network=config['network'],
-                        start_date=datetime.combine(config['start_date'], datetime.min.time()),
-                        end_date=datetime.combine(config['end_date'], datetime.max.time()),
+                        start_date=config['start_datetime'],
+                        end_date=config['end_datetime'],
                         data_source=config['data_source'],
                         cluster_name=config['cluster']
                     )
@@ -497,11 +676,12 @@ def render_peerdas_dashboard():
                     # Load raw data
                     data = load_node_classification_raw_data(
                         network=config['network'],
-                        start_date=datetime.combine(config['start_date'], datetime.min.time()),
-                        end_date=datetime.combine(config['end_date'], datetime.max.time()),
+                        start_date=config['start_datetime'],
+                        end_date=config['end_datetime'],
                         data_source=config['data_source'],
                         custody_filter=config['custody_filter'],
-                        cluster_name=config['cluster']
+                        cluster_name=config['cluster'],
+                        client_filter=config.get('client_filter')
                     )
                     
                     if data is not None and not data.empty:

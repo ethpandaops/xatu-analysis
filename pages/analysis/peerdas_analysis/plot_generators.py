@@ -383,7 +383,7 @@ def create_node_classification_boxplot(
         time_range: Time range string
         metadata: Additional metadata
         show_attestation_deadline: Show 4s attestation deadline
-        grouping_dimensions: List of dimensions to group by ['node_class', 'consensus_client']
+        grouping_dimensions: List of dimensions to group by ['node_class', 'consensus_client', 'meta_client_name']
         
     Returns:
         Plotly figure with box plots grouped by blob count and selected dimensions
@@ -410,12 +410,26 @@ def create_node_classification_boxplot(
         # Single dimension grouping
         if grouping_dimensions[0] == 'consensus_client':
             data['group'] = data['consensus_implementation']
+        elif grouping_dimensions[0] == 'meta_client_name':
+            data['group'] = data['meta_client_name']
         else:  # node_class
             data['group'] = data['node_class']
     else:
         # Multiple dimensions - combine them
-        if 'node_class' in grouping_dimensions and 'consensus_client' in grouping_dimensions:
-            data['group'] = data['node_class'] + ' / ' + data['consensus_implementation']
+        group_parts = []
+        for dim in grouping_dimensions:
+            if dim == 'node_class':
+                group_parts.append(data['node_class'])
+            elif dim == 'consensus_client':
+                group_parts.append(data['consensus_implementation'])
+            elif dim == 'meta_client_name':
+                group_parts.append(data['meta_client_name'])
+        
+        # Combine the parts with ' / ' separator
+        if group_parts:
+            data['group'] = group_parts[0]
+            for part in group_parts[1:]:
+                data['group'] = data['group'] + ' / ' + part
         else:
             data['group'] = data[grouping_dimensions[0]]  # Fallback
     
@@ -514,8 +528,19 @@ def create_node_classification_boxplot(
         main_title = 'Performance by Node Classification'
     elif grouping_dimensions == ['consensus_client']:
         main_title = 'Performance by Consensus Client'
+    elif grouping_dimensions == ['meta_client_name']:
+        main_title = 'Performance by Node Name'
     elif len(grouping_dimensions) == 2:
-        main_title = 'Performance by Node Class and Client'
+        if 'node_class' in grouping_dimensions and 'consensus_client' in grouping_dimensions:
+            main_title = 'Performance by Node Class and Client'
+        elif 'node_class' in grouping_dimensions and 'meta_client_name' in grouping_dimensions:
+            main_title = 'Performance by Node Class and Name'
+        elif 'consensus_client' in grouping_dimensions and 'meta_client_name' in grouping_dimensions:
+            main_title = 'Performance by Client and Node Name'
+        else:
+            main_title = 'Performance by Multiple Dimensions'
+    elif len(grouping_dimensions) == 3:
+        main_title = 'Performance by Node Class, Client, and Name'
     else:
         main_title = 'Performance Analysis'
     

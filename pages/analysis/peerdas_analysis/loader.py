@@ -12,7 +12,12 @@ from typing import Optional, Dict, Any
 import logging
 
 from shared.database import get_database_connection
-from queries import get_peerdas_query, get_node_classification_raw_query, get_max_blob_count_query
+from queries import (
+    get_peerdas_query, 
+    get_node_classification_raw_query, 
+    get_max_blob_count_query,
+    get_unique_clients_query
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +33,8 @@ def load_peerdas_aggregated_data(
     aggregation: str = "p90",
     custody_filter: int = 128,
     cluster_name: Optional[str] = None,
-    group_by: str = "blob_count"
+    group_by: str = "blob_count",
+    client_filter: Optional[list] = None
 ) -> pd.DataFrame:
     """
     Load pre-aggregated PeerDAS data with CORRECT per-client, per-slot calculation.
@@ -42,6 +48,7 @@ def load_peerdas_aggregated_data(
         custody_filter: Maximum custody count to include
         cluster_name: Optional cluster name
         group_by: Metric to group by ('blob_count' or 'custody_count')
+        client_filter: Optional list of client names to include
         
     Returns:
         DataFrame with columns: [metric], data_available_time, sample_count
@@ -57,7 +64,7 @@ def load_peerdas_aggregated_data(
         conn = get_database_connection(cluster_name)
         
         # Get THE query (there's only one correct way)
-        query = get_peerdas_query(data_source, aggregation, group_by)
+        query = get_peerdas_query(data_source, aggregation, group_by, client_filter)
         
         # Query parameters
         params = {
@@ -67,6 +74,10 @@ def load_peerdas_aggregated_data(
             'max_propagation': 12000,  # 12 seconds max propagation
             'custody_filter': custody_filter
         }
+        
+        # Add client filter to params if provided
+        if client_filter:
+            params['client_filter'] = tuple(client_filter)  # ClickHouse needs tuple for IN clause
         
         # Execute query
         logger.info("Executing PeerDAS query with per-client/per-slot aggregation...")
@@ -105,7 +116,8 @@ def load_node_classification_raw_data(
     end_date: datetime,
     data_source: str,
     custody_filter: int = 128,
-    cluster_name: Optional[str] = None
+    cluster_name: Optional[str] = None,
+    client_filter: Optional[list] = None
 ) -> pd.DataFrame:
     """
     Load raw PeerDAS data with node classification for box plots.
@@ -117,6 +129,7 @@ def load_node_classification_raw_data(
         data_source: 'libp2p' or 'beacon_api'
         custody_filter: Maximum custody count to include
         cluster_name: Optional cluster name
+        client_filter: Optional list of client names to include
         
     Returns:
         DataFrame with columns: blob_count, node_class, custody_count, data_available_time, meta_client_name
@@ -131,7 +144,7 @@ def load_node_classification_raw_data(
         conn = get_database_connection(cluster_name)
         
         # Get the raw query
-        query = get_node_classification_raw_query(data_source)
+        query = get_node_classification_raw_query(data_source, client_filter)
         
         # Query parameters
         params = {
@@ -141,6 +154,10 @@ def load_node_classification_raw_data(
             'max_propagation': 12000,  # 12 seconds max propagation
             'custody_filter': custody_filter
         }
+        
+        # Add client filter to params if provided
+        if client_filter:
+            params['client_filter'] = tuple(client_filter)  # ClickHouse needs tuple for IN clause
         
         # Execute query
         logger.info("Executing raw node classification query...")
@@ -221,6 +238,58 @@ def get_max_blob_count(
             return 6  # Default fallback
         logger.error(f"Error getting max blob count: {e}")
         return 6  # Default fallback
+
+
+@st.cache_data(ttl=300, persist=False, show_spinner=False)  # Cache for 5 minutes
+def get_unique_clients(
+    network: str,
+    start_date: datetime,
+    end_date: datetime,
+    data_source: str,
+    cluster_name: Optional[str] = None
+) -> list:
+    """
+    Get unique client names from the dataset.
+    
+    Args:
+        network: Network name
+        start_date: Start of analysis period
+        end_date: End of analysis period
+        data_source: 'libp2p' or 'beacon_api'
+        cluster_name: Optional cluster name
+        
+    Returns:
+        List of unique client names
+    """
+    
+    try:
+        # Get database connection
+        conn = get_database_connection(cluster_name)
+        
+        # Get the query
+        query = get_unique_clients_query(data_source)
+        
+        # Query parameters
+        params = {
+            'network': network,
+            'start_date': start_date,
+            'end_date': end_date
+        }
+        
+        # Execute query
+        result = pd.read_sql(query, conn, params=params)
+        
+        if result.empty:
+            logger.warning("No client names found")
+            return []
+        
+        client_names = result['meta_client_name'].tolist()
+        logger.info(f"Found {len(client_names)} unique clients")
+        return client_names
+        
+    except Exception as e:
+        logger.error(f"Error getting unique clients: {e}")
+        return []
 
 
 @st.cache_data(ttl=300, persist=False, show_spinner=False)
