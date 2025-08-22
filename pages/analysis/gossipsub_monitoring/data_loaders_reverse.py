@@ -14,8 +14,12 @@ from shared.database import get_database_connection
 from queries_reverse import (
     get_ihave_based_slots_query, 
     get_ihave_data_for_slot_time,
+    get_idontwant_data_for_slot_time,
     get_latest_ihave_slot,
-    get_all_ihave_data_in_range
+    get_all_ihave_data_in_range,
+    get_all_idontwant_data_in_range,
+    get_combined_ihave_idontwant_data,
+    get_latest_idontwant_slot
 )
 
 # Configure logging
@@ -30,10 +34,12 @@ def load_gossipsub_data_reverse(
     network: str = "mainnet",
     cluster: Optional[str] = None,
     target_slot: Optional[int] = None,
-    slot_limit: int = 50
+    slot_limit: int = 50,
+    message_type: str = "IHAVE",
+    subtract_latency: bool = True
 ) -> pd.DataFrame:
     """
-    Load gossipsub data using reverse lookup from IHAVE messages.
+    Load gossipsub data using reverse lookup from control messages.
     
     Args:
         start_time: Start time for data query
@@ -42,6 +48,8 @@ def load_gossipsub_data_reverse(
         cluster: ClickHouse cluster name
         target_slot: Specific slot to analyze (if provided)
         slot_limit: Maximum number of slots to analyze
+        message_type: Type of message to load ("IHAVE", "IDONTWANT", or "COMBINED")
+        subtract_latency: Whether to subtract network latency from propagation times
         
     Returns:
         DataFrame with gossipsub propagation data
@@ -56,9 +64,68 @@ def load_gossipsub_data_reverse(
             # For single slot, calculate its time and get data
             slot_time = datetime(2020, 12, 1, 12, 0, 23, tzinfo=timezone.utc) + timedelta(seconds=target_slot * 12)
             
-            st.info(f"📦 Loading IHAVE data for slot {target_slot}...")
+            message_label = message_type if message_type != "COMBINED" else "IHAVE+IDONTWANT"
+            st.info(f"📦 Loading {message_label} data for slot {target_slot}...")
             
-            query = get_ihave_data_for_slot_time()
+            if message_type == "IHAVE":
+                query = get_ihave_data_for_slot_time()
+            elif message_type == "IDONTWANT":
+                query = get_idontwant_data_for_slot_time()
+            else:  # COMBINED - need to handle specially
+                # For combined, we need to get both and merge
+                ihave_query = get_ihave_data_for_slot_time()
+                idontwant_query = get_idontwant_data_for_slot_time()
+                
+                params = {
+                    'network': network,
+                    'slot': target_slot,
+                    'slot_time': slot_time
+                }
+                
+                ihave_df = pd.read_sql(ihave_query, conn, params=params)
+                idontwant_df = pd.read_sql(idontwant_query, conn, params=params)
+                
+                # Merge taking the minimum time for each peer
+                if not ihave_df.empty and not idontwant_df.empty:
+                    ihave_df['message_type'] = 'IHAVE'
+                    idontwant_df['message_type'] = 'IDONTWANT'
+                    df = pd.concat([ihave_df, idontwant_df])
+                    # Group by peer and take the minimum propagation delay
+                    df = df.sort_values('propagation_delay_ms').groupby('peer_id').first().reset_index()
+                elif not ihave_df.empty:
+                    df = ihave_df
+                    df['message_type'] = 'IHAVE'
+                else:
+                    df = idontwant_df
+                    df['message_type'] = 'IDONTWANT'
+                
+                if df.empty:
+                    st.warning(f"No {message_label} data found for slot {target_slot}")
+                else:
+                    st.success(f"✅ Found {len(df)} {message_label} records for slot {target_slot}")
+                
+                # Handle latency adjustment for combined data
+                if not df.empty:
+                    if subtract_latency and 'adjusted_propagation_ms' in df.columns:
+                        # Use adjusted propagation times
+                        df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
+                        df['propagation_delay_ms'] = df['adjusted_propagation_ms']
+                        # Keep latency info columns for display
+                        if 'rtt_ms' not in df.columns:
+                            df['rtt_ms'] = None
+                        if 'one_way_latency_ms' not in df.columns:
+                            df['one_way_latency_ms'] = None
+                    else:
+                        # Keep raw propagation times
+                        if 'adjusted_propagation_ms' in df.columns:
+                            df.drop(columns=['adjusted_propagation_ms'], inplace=True)
+                        if 'rtt_ms' in df.columns:
+                            df.drop(columns=['rtt_ms'], inplace=True)
+                        if 'one_way_latency_ms' in df.columns:
+                            df.drop(columns=['one_way_latency_ms'], inplace=True)
+                
+                return df
+            
             params = {
                 'network': network,
                 'slot': target_slot,
@@ -68,15 +135,42 @@ def load_gossipsub_data_reverse(
             df = pd.read_sql(query, conn, params=params)
             
             if df.empty:
-                st.warning(f"No IHAVE data found for slot {target_slot}")
+                st.warning(f"No {message_label} data found for slot {target_slot}")
             else:
-                st.success(f"✅ Found {len(df)} IHAVE records for slot {target_slot}")
-                
+                st.success(f"✅ Found {len(df)} {message_label} records for slot {target_slot}")
+        
+        # Handle latency adjustment
+        if not df.empty:
+            if subtract_latency and 'adjusted_propagation_ms' in df.columns:
+                # Use adjusted propagation times
+                df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
+                df['propagation_delay_ms'] = df['adjusted_propagation_ms']
+                # Keep latency info columns for display
+                if 'rtt_ms' not in df.columns:
+                    df['rtt_ms'] = None
+                if 'one_way_latency_ms' not in df.columns:
+                    df['one_way_latency_ms'] = None
+            else:
+                # Keep raw propagation times
+                if 'adjusted_propagation_ms' in df.columns:
+                    df.drop(columns=['adjusted_propagation_ms'], inplace=True)
+                if 'rtt_ms' in df.columns:
+                    df.drop(columns=['rtt_ms'], inplace=True)
+                if 'one_way_latency_ms' in df.columns:
+                    df.drop(columns=['one_way_latency_ms'], inplace=True)
+                    
         else:
-            # For time range, get all IHAVE data efficiently
-            st.info(f"📦 Loading IHAVE data from {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}...")
+            # For time range, get data based on message type
+            message_label = message_type if message_type != "COMBINED" else "IHAVE+IDONTWANT"
+            st.info(f"📦 Loading {message_label} data from {start_time.strftime('%H:%M')} to {end_time.strftime('%H:%M')}...")
             
-            query = get_all_ihave_data_in_range()
+            if message_type == "IHAVE":
+                query = get_all_ihave_data_in_range()
+            elif message_type == "IDONTWANT":
+                query = get_all_idontwant_data_in_range()
+            else:  # COMBINED
+                query = get_combined_ihave_idontwant_data()
+            
             params = {
                 'network': network,
                 'start_time': start_time,
@@ -86,10 +180,30 @@ def load_gossipsub_data_reverse(
             df = pd.read_sql(query, conn, params=params)
             
             if df.empty:
-                st.warning("No IHAVE data found in time range")
+                st.warning(f"No {message_label} data found in time range")
             else:
                 unique_slots = df['slot'].nunique()
-                st.success(f"✅ Found {len(df)} IHAVE records across {unique_slots} slots")
+                st.success(f"✅ Found {len(df)} {message_label} records across {unique_slots} slots")
+        
+        # Handle latency adjustment for all data
+        if not df.empty:
+            if subtract_latency and 'adjusted_propagation_ms' in df.columns:
+                # Use adjusted propagation times
+                df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
+                df['propagation_delay_ms'] = df['adjusted_propagation_ms']
+                # Keep latency info columns for display
+                if 'rtt_ms' not in df.columns:
+                    df['rtt_ms'] = None
+                if 'one_way_latency_ms' not in df.columns:
+                    df['one_way_latency_ms'] = None
+            else:
+                # Keep raw propagation times
+                if 'adjusted_propagation_ms' in df.columns:
+                    df.drop(columns=['adjusted_propagation_ms'], inplace=True)
+                if 'rtt_ms' in df.columns:
+                    df.drop(columns=['rtt_ms'], inplace=True)
+                if 'one_way_latency_ms' in df.columns:
+                    df.drop(columns=['one_way_latency_ms'], inplace=True)
         
         return df
         
@@ -287,3 +401,75 @@ def calculate_percentiles_by_continent(
         results.append(row)
     
     return pd.DataFrame(results)
+
+
+@st.cache_data(ttl=300)
+def load_comparison_data(
+    start_time: datetime,
+    end_time: datetime,
+    network: str = "mainnet",
+    cluster: Optional[str] = None,
+    slot_limit: int = 50,
+    subtract_latency: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Load both IHAVE and IDONTWANT data for comparison.
+    
+    Returns:
+        Tuple of (ihave_df, idontwant_df)
+    """
+    conn = get_database_connection(cluster)
+    if conn is None:
+        st.error("Cannot connect to database")
+        return pd.DataFrame(), pd.DataFrame()
+    
+    try:
+        # Load IHAVE data
+        ihave_query = get_all_ihave_data_in_range()
+        ihave_params = {
+            'network': network,
+            'start_time': start_time,
+            'end_time': end_time
+        }
+        ihave_df = pd.read_sql(ihave_query, conn, params=ihave_params)
+        ihave_df['message_type'] = 'IHAVE'
+        
+        # Load IDONTWANT data
+        idontwant_query = get_all_idontwant_data_in_range()
+        idontwant_params = {
+            'network': network,
+            'start_time': start_time,
+            'end_time': end_time
+        }
+        idontwant_df = pd.read_sql(idontwant_query, conn, params=idontwant_params)
+        idontwant_df['message_type'] = 'IDONTWANT'
+        
+        # Handle latency adjustment for both dataframes
+        for df in [ihave_df, idontwant_df]:
+            if not df.empty:
+                if subtract_latency and 'adjusted_propagation_ms' in df.columns:
+                    # Use adjusted propagation times
+                    df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
+                    df['propagation_delay_ms'] = df['adjusted_propagation_ms']
+                    # Keep latency info columns for display
+                    if 'rtt_ms' not in df.columns:
+                        df['rtt_ms'] = None
+                    if 'one_way_latency_ms' not in df.columns:
+                        df['one_way_latency_ms'] = None
+                else:
+                    # Keep raw propagation times
+                    if 'adjusted_propagation_ms' in df.columns:
+                        df.drop(columns=['adjusted_propagation_ms'], inplace=True)
+                    if 'rtt_ms' in df.columns:
+                        df.drop(columns=['rtt_ms'], inplace=True)
+                    if 'one_way_latency_ms' in df.columns:
+                        df.drop(columns=['one_way_latency_ms'], inplace=True)
+        
+        return ihave_df, idontwant_df
+        
+    except Exception as e:
+        logger.error(f"Error loading comparison data: {e}")
+        st.error(f"Failed to load comparison data: {str(e)}")
+        return pd.DataFrame(), pd.DataFrame()
+    finally:
+        conn.close()

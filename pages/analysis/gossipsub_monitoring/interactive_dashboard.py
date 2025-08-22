@@ -31,7 +31,8 @@ from data_loaders_reverse import (
     calculate_cdf_by_continent,
     calculate_cdf_by_slot,
     calculate_percentiles_by_continent,
-    calculate_percentiles_by_slot
+    calculate_percentiles_by_slot,
+    load_comparison_data
 )
 from plot_generators import (
     create_continent_cdf_plot,
@@ -88,6 +89,15 @@ def main():
         help="Choose between analyzing a single slot or a time range"
     )
     
+    # Message type selection
+    st.sidebar.subheader("📬 Message Type")
+    message_type = st.sidebar.radio(
+        "Select Message Type",
+        ["IHAVE", "IDONTWANT", "COMBINED", "COMPARISON"],
+        index=0,
+        help="Choose which control messages to analyze"
+    )
+    
     # Visualization mode selection  
     st.sidebar.subheader("📊 Visualization Mode")
     viz_mode = st.sidebar.radio(
@@ -95,6 +105,14 @@ def main():
         ["By Continent", "By Slot"],
         index=0,
         help="Group CDF data by continent (all slots) or by individual slot"
+    )
+    
+    # Latency adjustment option
+    st.sidebar.subheader("🔧 Advanced Options")
+    subtract_latency = st.sidebar.checkbox(
+        "Subtract Network Latency",
+        value=True,
+        help="Adjust propagation times by subtracting one-way network latency (RTT/2) between the observer and peer. This provides a more accurate measure of actual propagation time."
     )
     
     if analysis_mode == "Single Slot":
@@ -281,67 +299,99 @@ def main():
     if load_button:
         with st.spinner("Loading gossipsub data..."):
             try:
-                # Load data based on mode
-                if analysis_mode == "Single Slot":
-                    if target_slot is None:
-                        st.error("Please specify a valid slot number")
-                        return
-                        
-                    data = load_gossipsub_data(
+                # Handle comparison mode separately
+                if message_type == "COMPARISON":
+                    # Load both IHAVE and IDONTWANT for comparison
+                    ihave_data, idontwant_data = load_comparison_data(
                         start_time=start_time,
                         end_time=end_time,
                         network=network,
                         cluster=cluster,
-                        target_slot=target_slot,
-                        slot_limit=slot_limit
+                        slot_limit=slot_limit,
+                        subtract_latency=subtract_latency
                     )
-                else:
-                    data = load_gossipsub_data(
-                        start_time=start_time,
-                        end_time=end_time,
-                        network=network,
-                        cluster=cluster,
-                        target_slot=None,
-                        slot_limit=slot_limit
-                    )
-                
-                if data.empty:
-                    if analysis_mode == "Single Slot":
-                        st.error(f"No gossipsub data found for slot {target_slot} in network {network}. This slot may not exist or have no peer propagation data.")
-                    else:
-                        st.error("No gossipsub data found for the selected time range and network.")
-                    return
-                
-                # Calculate metrics based on visualization mode
-                with st.spinner("Computing metrics..."):
-                    if viz_mode == "By Continent":
-                        cdf_data = calculate_cdf_by_continent(data)
-                        percentiles = calculate_percentiles_by_continent(data)
-                        grouping_count = len(cdf_data)
-                        grouping_type = "continents"
-                    else:  # By Slot
-                        cdf_data = calculate_cdf_by_slot(data)
-                        percentiles = calculate_percentiles_by_slot(data)
-                        grouping_count = len(cdf_data)
-                        grouping_type = "slots"
                     
-                    metrics = {
-                        'cdf_data': cdf_data,
-                        'percentiles': percentiles,
-                        'total_peers': data['peer_id'].nunique() if 'peer_id' in data.columns else 0,
-                        'total_slots': data['slot'].nunique() if 'slot' in data.columns else 0,
-                        'continents': data['continent'].nunique() if 'continent' in data.columns else 0,
-                        'grouping_count': grouping_count,
-                        'grouping_type': grouping_type
-                    }
-                
-                # Store in session state
-                st.session_state.gossipsub_data = data
-                st.session_state.gossipsub_metrics = metrics
-                st.session_state.gossipsub_data_loaded = True
-                st.session_state.viz_mode = viz_mode
-                
-                st.success(f"✅ Loaded {len(data)} records from {metrics['total_slots']} slots with {metrics['total_peers']} unique peers")
+                    if ihave_data.empty and idontwant_data.empty:
+                        st.error("No data found for comparison")
+                        return
+                    
+                    # Store comparison data separately
+                    st.session_state.comparison_mode = True
+                    st.session_state.ihave_data = ihave_data
+                    st.session_state.idontwant_data = idontwant_data
+                    st.session_state.gossipsub_data_loaded = True
+                    
+                    st.success(f"✅ Loaded {len(ihave_data)} IHAVE and {len(idontwant_data)} IDONTWANT records")
+                    
+                else:
+                    # Load single message type data
+                    st.session_state.comparison_mode = False
+                    
+                    if analysis_mode == "Single Slot":
+                        if target_slot is None:
+                            st.error("Please specify a valid slot number")
+                            return
+                            
+                        data = load_gossipsub_data(
+                            start_time=start_time,
+                            end_time=end_time,
+                            network=network,
+                            cluster=cluster,
+                            target_slot=target_slot,
+                            slot_limit=slot_limit,
+                            message_type=message_type,
+                            subtract_latency=subtract_latency
+                        )
+                    else:
+                        data = load_gossipsub_data(
+                            start_time=start_time,
+                            end_time=end_time,
+                            network=network,
+                            cluster=cluster,
+                            target_slot=None,
+                            slot_limit=slot_limit,
+                            message_type=message_type,
+                            subtract_latency=subtract_latency
+                        )
+                    
+                    if data.empty:
+                        if analysis_mode == "Single Slot":
+                            st.error(f"No {message_type} data found for slot {target_slot} in network {network}.")
+                        else:
+                            st.error(f"No {message_type} data found for the selected time range and network.")
+                        return
+                    
+                    # Calculate metrics based on visualization mode
+                    with st.spinner("Computing metrics..."):
+                        if viz_mode == "By Continent":
+                            cdf_data = calculate_cdf_by_continent(data)
+                            percentiles = calculate_percentiles_by_continent(data)
+                            grouping_count = len(cdf_data)
+                            grouping_type = "continents"
+                        else:  # By Slot
+                            cdf_data = calculate_cdf_by_slot(data)
+                            percentiles = calculate_percentiles_by_slot(data)
+                            grouping_count = len(cdf_data)
+                            grouping_type = "slots"
+                        
+                        metrics = {
+                            'cdf_data': cdf_data,
+                            'percentiles': percentiles,
+                            'total_peers': data['peer_id'].nunique() if 'peer_id' in data.columns else 0,
+                            'total_slots': data['slot'].nunique() if 'slot' in data.columns else 0,
+                            'continents': data['continent'].nunique() if 'continent' in data.columns else 0,
+                            'grouping_count': grouping_count,
+                            'grouping_type': grouping_type,
+                            'message_type': message_type
+                        }
+                    
+                    # Store in session state
+                    st.session_state.gossipsub_data = data
+                    st.session_state.gossipsub_metrics = metrics
+                    st.session_state.gossipsub_data_loaded = True
+                    st.session_state.viz_mode = viz_mode
+                    
+                    st.success(f"✅ Loaded {len(data)} {message_type} records from {metrics['total_slots']} slots with {metrics['total_peers']} unique peers")
                 
             except Exception as e:
                 st.error(f"Error loading data: {str(e)}")
@@ -368,14 +418,24 @@ def main():
             st.write(f"**Cluster**: {cluster}")
     
     # Main dashboard content
-    if st.session_state.gossipsub_data_loaded and st.session_state.gossipsub_metrics:
-        viz_mode = st.session_state.get('viz_mode', 'By Continent')
-        render_analysis_dashboard(
-            st.session_state.gossipsub_data,
-            st.session_state.gossipsub_metrics,
-            target_slot if analysis_mode == "Single Slot" else None,
-            viz_mode
-        )
+    if st.session_state.gossipsub_data_loaded:
+        if st.session_state.get('comparison_mode', False):
+            # Render comparison dashboard
+            render_comparison_dashboard(
+                st.session_state.ihave_data,
+                st.session_state.idontwant_data,
+                target_slot if analysis_mode == "Single Slot" else None,
+                viz_mode
+            )
+        elif st.session_state.gossipsub_metrics:
+            # Render regular dashboard
+            viz_mode = st.session_state.get('viz_mode', 'By Continent')
+            render_analysis_dashboard(
+                st.session_state.gossipsub_data,
+                st.session_state.gossipsub_metrics,
+                target_slot if analysis_mode == "Single Slot" else None,
+                viz_mode
+            )
     else:
         render_welcome_screen()
 
@@ -503,6 +563,208 @@ def render_analysis_dashboard(data: pd.DataFrame, metrics: Dict[str, Any], slot:
         st.warning("No data available for CDF analysis. Try adjusting your filters.")
 
 
+def render_comparison_dashboard(ihave_data: pd.DataFrame, idontwant_data: pd.DataFrame, slot: Optional[int] = None, viz_mode: str = "By Continent"):
+    """Render comparison dashboard for IHAVE vs IDONTWANT."""
+    
+    st.subheader("📊 IHAVE vs IDONTWANT Comparison")
+    
+    if slot:
+        st.info(f"Comparing slot {slot:,}")
+    
+    # Create tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Side-by-side CDFs", "📊 Metrics Comparison", "🔍 Per-Slot Analysis", "📉 Raw Data"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### IHAVE Messages")
+            if not ihave_data.empty:
+                # Calculate and show IHAVE CDF
+                if viz_mode == "By Continent":
+                    ihave_cdf = calculate_cdf_by_continent(ihave_data)
+                    if ihave_cdf:
+                        fig = create_continent_cdf_plot(ihave_cdf, slot)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    ihave_cdf = calculate_cdf_by_slot(ihave_data)
+                    if ihave_cdf:
+                        fig = create_slot_cdf_plot(ihave_cdf)
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                # Show metrics
+                st.metric("Total IHAVE", f"{len(ihave_data):,}")
+                st.metric("Unique Peers", f"{ihave_data['peer_id'].nunique():,}")
+                if 'propagation_delay_ms' in ihave_data.columns:
+                    st.metric("Median Delay", f"{ihave_data['propagation_delay_ms'].median()/1000:.2f}s")
+            else:
+                st.warning("No IHAVE data available")
+        
+        with col2:
+            st.markdown("### IDONTWANT Messages")
+            if not idontwant_data.empty:
+                # Calculate and show IDONTWANT CDF
+                if viz_mode == "By Continent":
+                    idontwant_cdf = calculate_cdf_by_continent(idontwant_data)
+                    if idontwant_cdf:
+                        fig = create_continent_cdf_plot(idontwant_cdf, slot)
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    idontwant_cdf = calculate_cdf_by_slot(idontwant_data)
+                    if idontwant_cdf:
+                        fig = create_slot_cdf_plot(idontwant_cdf)
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                # Show metrics
+                st.metric("Total IDONTWANT", f"{len(idontwant_data):,}")
+                st.metric("Unique Peers", f"{idontwant_data['peer_id'].nunique():,}")
+                if 'propagation_delay_ms' in idontwant_data.columns:
+                    st.metric("Median Delay", f"{idontwant_data['propagation_delay_ms'].median()/1000:.2f}s")
+            else:
+                st.warning("No IDONTWANT data available")
+    
+    with tab2:
+        st.markdown("### Performance Metrics Comparison")
+        
+        # Calculate percentiles for both
+        if not ihave_data.empty and not idontwant_data.empty:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### IHAVE Percentiles")
+                if viz_mode == "By Continent":
+                    ihave_percentiles = calculate_percentiles_by_continent(ihave_data)
+                else:
+                    ihave_percentiles = calculate_percentiles_by_slot(ihave_data)
+                
+                if not ihave_percentiles.empty:
+                    st.dataframe(ihave_percentiles, use_container_width=True)
+            
+            with col2:
+                st.markdown("#### IDONTWANT Percentiles")
+                if viz_mode == "By Continent":
+                    idontwant_percentiles = calculate_percentiles_by_continent(idontwant_data)
+                else:
+                    idontwant_percentiles = calculate_percentiles_by_slot(idontwant_data)
+                
+                if not idontwant_percentiles.empty:
+                    st.dataframe(idontwant_percentiles, use_container_width=True)
+            
+            # Create comparison chart
+            st.markdown("### Median Propagation Delay Comparison")
+            if 'propagation_delay_ms' in ihave_data.columns and 'propagation_delay_ms' in idontwant_data.columns:
+                import plotly.graph_objects as go
+                
+                fig = go.Figure()
+                
+                # Add IHAVE line
+                ihave_median = ihave_data['propagation_delay_ms'].median() / 1000
+                idontwant_median = idontwant_data['propagation_delay_ms'].median() / 1000
+                
+                fig.add_trace(go.Bar(
+                    x=['IHAVE', 'IDONTWANT'],
+                    y=[ihave_median, idontwant_median],
+                    text=[f'{ihave_median:.2f}s', f'{idontwant_median:.2f}s'],
+                    textposition='auto',
+                    marker_color=['blue', 'orange']
+                ))
+                
+                fig.update_layout(
+                    title="Median Propagation Delay Comparison",
+                    yaxis_title="Delay (seconds)",
+                    showlegend=False
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+    
+    with tab3:
+        st.markdown("### Per-Slot Analysis")
+        
+        # Get common slots
+        if not ihave_data.empty and not idontwant_data.empty and 'slot' in ihave_data.columns and 'slot' in idontwant_data.columns:
+            common_slots = set(ihave_data['slot'].unique()) & set(idontwant_data['slot'].unique())
+            
+            if common_slots:
+                st.info(f"Found {len(common_slots)} slots with both IHAVE and IDONTWANT data")
+                
+                # Create comparison plot
+                import plotly.graph_objects as go
+                from plotly.subplots import make_subplots
+                
+                comparison_data = []
+                for slot in sorted(list(common_slots))[:20]:  # Limit to 20 slots for readability
+                    ihave_slot_data = ihave_data[ihave_data['slot'] == slot]['propagation_delay_ms']
+                    idontwant_slot_data = idontwant_data[idontwant_data['slot'] == slot]['propagation_delay_ms']
+                    
+                    comparison_data.append({
+                        'slot': slot,
+                        'ihave_median': ihave_slot_data.median() / 1000,
+                        'idontwant_median': idontwant_slot_data.median() / 1000,
+                        'ihave_count': len(ihave_slot_data),
+                        'idontwant_count': len(idontwant_slot_data)
+                    })
+                
+                comp_df = pd.DataFrame(comparison_data)
+                
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=comp_df['slot'],
+                    y=comp_df['ihave_median'],
+                    mode='lines+markers',
+                    name='IHAVE',
+                    line=dict(color='blue')
+                ))
+                fig.add_trace(go.Scatter(
+                    x=comp_df['slot'],
+                    y=comp_df['idontwant_median'],
+                    mode='lines+markers',
+                    name='IDONTWANT',
+                    line=dict(color='orange')
+                ))
+                
+                fig.update_layout(
+                    title="Median Propagation Delay by Slot",
+                    xaxis_title="Slot",
+                    yaxis_title="Median Delay (seconds)",
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Show difference table
+                st.markdown("### Difference Analysis")
+                comp_df['difference'] = comp_df['idontwant_median'] - comp_df['ihave_median']
+                comp_df['difference_pct'] = (comp_df['difference'] / comp_df['ihave_median'] * 100).round(1)
+                
+                st.dataframe(
+                    comp_df[['slot', 'ihave_median', 'idontwant_median', 'difference', 'difference_pct']].round(3),
+                    use_container_width=True
+                )
+            else:
+                st.warning("No common slots found between IHAVE and IDONTWANT data")
+        else:
+            st.warning("Slot data not available for comparison")
+    
+    with tab4:
+        st.markdown("### Raw Data Preview")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### IHAVE Data (first 100 rows)")
+            if not ihave_data.empty:
+                display_cols = ['slot', 'peer_id', 'propagation_delay_ms', 'continent', 'country']
+                available_cols = [col for col in display_cols if col in ihave_data.columns]
+                st.dataframe(ihave_data[available_cols].head(100), use_container_width=True)
+        
+        with col2:
+            st.markdown("#### IDONTWANT Data (first 100 rows)")
+            if not idontwant_data.empty:
+                display_cols = ['slot', 'peer_id', 'propagation_delay_ms', 'continent', 'country']
+                available_cols = [col for col in display_cols if col in idontwant_data.columns]
+                st.dataframe(idontwant_data[available_cols].head(100), use_container_width=True)
+
+
 def render_welcome_screen():
     """Render welcome screen when no data is loaded."""
     
@@ -528,7 +790,14 @@ def render_welcome_screen():
     **📡 Data Sources:**
     - **libp2p_gossipsub_beacon_block**: Block propagation messages
     - **libp2p_rpc_meta_control_ihave**: IHAVE control messages from peers
+    - **libp2p_rpc_meta_control_idontwant**: IDONTWANT control messages from peers
     - **libp2p_connected**: Peer connection metadata with geographic info
+    
+    **🆕 Message Types:**
+    - **IHAVE**: Traditional gossipsub control messages indicating block availability
+    - **IDONTWANT**: New optimization messages to prevent redundant transmissions
+    - **COMBINED**: Merged view taking the earliest signal from either message type
+    - **COMPARISON**: Side-by-side analysis of IHAVE vs IDONTWANT performance
     
     **💡 Use Cases:**
     - Monitor global network health
