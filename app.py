@@ -68,10 +68,17 @@ gossipsub_monitoring_page = st.Page(
     url_path="gossipsub-monitoring"
 )
 
+reorgs_page = st.Page(
+    "pages/analysis/reorgs/page.py",
+    title="Chain Reorgs",
+    icon="🔄",
+    url_path="reorgs"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, gossipsub_monitoring_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, gossipsub_monitoring_page, reorgs_page]
 })
 
 # Run the selected page
