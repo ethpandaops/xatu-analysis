@@ -7,7 +7,7 @@ Since message_ids don't match between tables, we use time correlation instead.
 def get_time_based_gossipsub_query() -> str:
     """
     Get gossipsub data using time-based correlation instead of message_id join.
-    Ultra-simplified to avoid all distributed join issues.
+    Uses scalar subqueries for geo lookups to work with distributed tables.
     """
     return """
     SELECT 
@@ -18,8 +18,28 @@ def get_time_based_gossipsub_query() -> str:
         peer_id_unique_key as peer_id,
         MIN(event_date_time) as ihave_time,
         toInt64(MIN(event_date_time - toDateTime(%(slot_time)s)) * 1000) as propagation_delay_ms,
-        'Unknown' as continent,
-        'Unknown' as country
+        COALESCE(
+            (SELECT remote_geo_continent_code 
+             FROM libp2p_synthetic_heartbeat 
+             WHERE remote_peer_id_unique_key = peer_id_unique_key 
+                AND meta_network_name = %(network)s
+                AND event_date_time BETWEEN toDateTime(%(slot_time)s) - INTERVAL 1 HOUR 
+                    AND toDateTime(%(slot_time)s) + INTERVAL 1 HOUR
+             ORDER BY event_date_time DESC
+             LIMIT 1),
+            'Unknown'
+        ) as continent,
+        COALESCE(
+            (SELECT remote_geo_country 
+             FROM libp2p_synthetic_heartbeat 
+             WHERE remote_peer_id_unique_key = peer_id_unique_key 
+                AND meta_network_name = %(network)s
+                AND event_date_time BETWEEN toDateTime(%(slot_time)s) - INTERVAL 1 HOUR 
+                    AND toDateTime(%(slot_time)s) + INTERVAL 1 HOUR
+             ORDER BY event_date_time DESC
+             LIMIT 1),
+            'Unknown'
+        ) as country
     FROM libp2p_rpc_meta_control_ihave
     WHERE 
         meta_network_name = %(network)s
