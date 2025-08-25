@@ -30,6 +30,7 @@ from plot_generators import (
     create_client_comparison, create_epoch_boundary_heatmap,
     create_scatter_matrix, create_geographic_distribution
 )
+from shared.ui_components import add_ethPandaOps_logo, get_ethPandaOps_chart_config
 from reorg_normalizer import (
     normalize_reorg_events, get_reorg_consensus_over_time,
     identify_significant_reorgs
@@ -145,22 +146,9 @@ def main():
         help="Include ethpandaops nodes in the analysis (default: excluded)"
     )
     
-    # Advanced options
-    with st.sidebar.expander("Advanced Options"):
-        time_bucket = st.selectbox(
-            "Time Aggregation",
-            ["1 min", "5 min", "10 min", "30 min", "1 hour", "6 hours", "1 day"],
-            index=4,  # Default to 1 hour
-            help="Time bucket for aggregation"
-        )
-        
-        episode_window = st.slider(
-            "Episode Window (seconds)",
-            min_value=1,
-            max_value=60,
-            value=4,
-            help="Time window for grouping reorgs into episodes"
-        )
+    # Set default values for previously advanced options
+    time_bucket = "1 hour"  # Default value
+    episode_window = 4  # Default value in seconds
     
     # Load Data button
     if st.sidebar.button("🔄 Load Data", type="primary", use_container_width=True):
@@ -233,36 +221,15 @@ def main():
     data = st.session_state.reorg_data
     metrics = st.session_state.reorg_metrics
     
-    # Key Metrics Display
-    st.subheader("📈 Key Metrics")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
-        st.metric("Total Reorgs", f"{metrics['basic']['total_reorgs']:,}")
-    with col2:
-        st.metric("Avg Depth", f"{metrics['basic']['avg_depth']:.2f}")
-    with col3:
-        st.metric("Max Depth", metrics['basic']['max_depth'])
-    with col4:
-        st.metric("Deep Reorgs (>2)", metrics['basic']['deep_reorgs'])
-    with col5:
-        if metrics['correlation']:
-            st.metric("After Missed Slot", f"{metrics['correlation']['correlation_rate']:.1f}%")
-    
-    st.divider()
-    
-    # Common Reorgs Analysis (main content)
-    st.header("👥 Common Reorgs Analysis")
-    st.markdown("**Analyze reorgs by how many nodes observed them**")
+    # Reorg Analysis
+    st.header("🔄 Reorg Analysis")
     
     if 'normalized' in data and not data['normalized'].is_empty():
         # Ensure active_node_count exists in normalized data
         if "active_node_count" not in data['normalized'].columns:
-            # Fallback: use unique nodes from raw data
-            data['normalized'] = data['normalized'].with_columns([
-                pl.lit(len(data['raw']['meta_client_name'].unique())).alias("active_node_count")
-            ])
+            st.error("Active node count data is missing. Cannot proceed with analysis.")
+            return
         
         # Calculate observer percentage using active node counts
         normalized_df = data['normalized'].with_columns([
@@ -311,16 +278,123 @@ def main():
             # Create the new heatmap visualizations
             render_reorg_heatmaps(filtered_normalized, total_nodes)
             
+            # Add data download section
             st.divider()
+            st.subheader("📥 Download Detailed Data")
             
-            # Original analysis sections
-            render_common_reorgs_analysis(
-                filtered_normalized, 
-                data,
-                time_bucket,
-                total_nodes,
-                show_percentage
-            )
+            # Define all known implementations
+            known_implementations = [
+                "lighthouse", "prysm", "teku", "nimbus", 
+                "lodestar", "grandine", "caplin"
+            ]
+            
+            # Check if we have event clusters for implementation details
+            has_event_clusters = "event_clusters" in data and not data["event_clusters"].is_empty()
+            
+            # If we have event clusters, calculate implementation counts
+            if has_event_clusters:
+                # Join event clusters to get implementation counts per cluster
+                impl_data = data["event_clusters"].join(
+                    data["raw"].select(["meta_client_name", "meta_consensus_implementation"]).unique(),
+                    left_on="meta_client_name",
+                    right_on="meta_client_name",
+                    how="left"
+                ).group_by(["cluster_id", "meta_consensus_implementation"]).agg(
+                    pl.count().alias("count")
+                ).pivot(
+                    values="count",
+                    index="cluster_id",
+                    columns="meta_consensus_implementation",
+                    aggregate_function="first"
+                ).fill_null(0)
+                
+                # Ensure all implementation columns exist
+                for impl in known_implementations:
+                    col_name = f"{impl}_observers"
+                    if impl not in impl_data.columns:
+                        impl_data = impl_data.with_columns(
+                            pl.lit(0).cast(pl.Int32).alias(impl)
+                        )
+                    if impl in impl_data.columns:
+                        impl_data = impl_data.rename({impl: col_name})
+                
+                # Join implementation counts with normalized df
+                normalized_with_impl = filtered_normalized.join(
+                    impl_data,
+                    on="cluster_id",
+                    how="left"
+                )
+                
+                # Fill nulls for any missing implementation columns
+                for impl in known_implementations:
+                    col_name = f"{impl}_observers"
+                    if col_name in normalized_with_impl.columns:
+                        normalized_with_impl = normalized_with_impl.with_columns(
+                            pl.col(col_name).fill_null(0)
+                        )
+            else:
+                normalized_with_impl = filtered_normalized
+                # Add empty implementation columns if no event clusters
+                for impl in known_implementations:
+                    col_name = f"{impl}_observers"
+                    normalized_with_impl = normalized_with_impl.with_columns(
+                        pl.lit(0).cast(pl.Int32).alias(col_name)
+                    )
+            
+            # Create columns for the CSV export
+            csv_columns = [
+                pl.col("first_detection").dt.strftime("%Y-%m-%d %H:%M:%S").alias("detection_time"),
+                pl.col("slot").alias("slot"),
+                pl.col("consensus_depth").alias("depth"),
+                pl.col("observer_count").alias("total_observers"),
+                pl.col("active_node_count").alias("active_nodes"),
+                pl.col("observer_percentage").round(1).alias("observer_percentage"),
+                pl.col("unique_implementations").alias("unique_implementations"),
+                pl.col("confidence_score").round(3).alias("confidence_score"),
+                pl.col("detection_span_seconds").round(1).alias("detection_span_seconds"),
+                pl.col("avg_propagation_delay").round(0).alias("avg_propagation_delay_ms"),
+                pl.col("new_head_block").alias("new_head_block"),
+                pl.col("old_head_block").alias("old_head_block"),
+                pl.col("cluster_id").alias("event_id")
+            ]
+            
+            # Add implementation observer counts
+            for impl in known_implementations:
+                col_name = f"{impl}_observers"
+                if col_name in normalized_with_impl.columns:
+                    csv_columns.append(pl.col(col_name).alias(col_name))
+            
+            # Add observer list if available
+            if "observer_list" in normalized_with_impl.columns:
+                csv_columns.append(
+                    pl.col("observer_list").list.join(", ").alias("observer_nodes")
+                )
+            
+            # Prepare the full export dataframe
+            export_df = normalized_with_impl.select(csv_columns).sort("detection_time", descending=True)
+            
+            # Convert to pandas for CSV export
+            export_pandas = export_df.to_pandas()
+            
+            # Create CSV download button
+            csv_data = export_pandas.to_csv(index=False)
+            
+            col1, col2, col3 = st.columns([2, 2, 1])
+            with col1:
+                st.download_button(
+                    label="📥 Download Full Reorg Data (CSV)",
+                    data=csv_data,
+                    file_name=f"reorg_analysis_{filtered_normalized['first_detection'].min().strftime('%Y%m%d')}_{filtered_normalized['first_detection'].max().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    help="Download complete reorg analysis data with all columns including per-client observations"
+                )
+            
+            with col2:
+                st.info(f"**{len(export_df):,} total reorg events** with {len(csv_columns)} data columns")
+            
+            # Show preview of the data
+            with st.expander("📋 Preview Data (First 100 rows)"):
+                st.dataframe(export_pandas.head(100), use_container_width=True)
         else:
             st.info("No reorgs found matching the filter criteria")
     else:
@@ -419,7 +493,11 @@ def render_reorg_heatmaps(normalized_df: pl.DataFrame, total_nodes: int):
             )
         )
         
-        st.plotly_chart(fig1, use_container_width=True)
+        # Add ethPandaOps branding
+        fig1 = add_ethPandaOps_logo(fig1)
+        
+        # Display with ethPandaOps branding config
+        st.plotly_chart(fig1, use_container_width=True, config=get_ethPandaOps_chart_config())
     
     with col2:
         # Depth vs Observer Count Heatmap
@@ -487,264 +565,13 @@ def render_reorg_heatmaps(normalized_df: pl.DataFrame, total_nodes: int):
             )
         )
         
-        st.plotly_chart(fig2, use_container_width=True)
+        # Add ethPandaOps branding
+        fig2 = add_ethPandaOps_logo(fig2)
+        
+        # Display with ethPandaOps branding config
+        st.plotly_chart(fig2, use_container_width=True, config=get_ethPandaOps_chart_config())
     
-    # Add insights below the heatmaps
-    st.markdown("### 📊 Heatmap Insights")
-    
-    # Calculate some statistics
-    high_consensus_reorgs = normalized_df.filter(pl.col("observer_percentage") > 50)
-    deep_consensus_reorgs = normalized_df.filter(
-        (pl.col("observer_percentage") > 30) & 
-        (pl.col("consensus_depth") > 2)
-    )
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric(
-            "High Consensus Reorgs",
-            len(high_consensus_reorgs),
-            help="Reorgs seen by >50% of nodes"
-        )
-    with col2:
-        st.metric(
-            "Deep Consensus Reorgs",
-            len(deep_consensus_reorgs),
-            help="Deep reorgs (>2) seen by >30% of nodes"
-        )
-    with col3:
-        max_consensus = normalized_df["observer_percentage"].max()
-        st.metric(
-            "Max Consensus",
-            f"{max_consensus:.1f}%",
-            help="Highest percentage of nodes observing a single reorg"
-        )
 
-def render_common_reorgs_analysis(
-    normalized_df: pl.DataFrame,
-    data: dict,
-    time_bucket: str,
-    total_nodes: int,
-    show_percentage: bool
-):
-    """
-    Render the common reorgs analysis visualization.
-    
-    Args:
-        normalized_df: Normalized reorg events
-        data: Full data dictionary containing raw data and event clusters
-        time_bucket: Time aggregation bucket
-        total_nodes: Total number of nodes
-        show_percentage: Whether to show as percentage
-    """
-    # Show significant reorgs table
-    st.subheader("🚨 Significant Reorgs")
-    st.markdown("Reorgs observed by multiple nodes, indicating network-wide events")
-    
-    # Calculate significance threshold based on actual active nodes
-    min_active_nodes = normalized_df['active_node_count'].min() if 'active_node_count' in normalized_df.columns else total_nodes
-    significance_threshold = max(2, int(min_active_nodes * 0.1))  # At least 10% of active nodes
-    
-    significant_reorgs = normalized_df.filter(
-        pl.col("observer_count") >= significance_threshold
-    ).sort("first_detection", descending=True)
-    
-    if not significant_reorgs.is_empty():
-        # Prepare display table
-        display_df = significant_reorgs.select([
-            pl.col("first_detection").dt.strftime("%Y-%m-%d %H:%M:%S").alias("Time"),
-            pl.col("slot").alias("Slot"),
-            pl.col("consensus_depth").alias("Depth"),
-            pl.col("observer_count").alias("Observers"),
-            pl.col("observer_percentage").alias("Observer %"),
-            pl.col("confidence_score").alias("Confidence"),
-            pl.col("new_head_block").str.slice(0, 10).alias("New Head"),
-            pl.col("old_head_block").str.slice(0, 10).alias("Old Head")
-        ]).head(50)
-        
-        st.dataframe(display_df.to_pandas(), use_container_width=True)
-        
-        # Summary statistics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(
-                "Network-Wide Reorgs",
-                f"{len(significant_reorgs)}",
-                help=f"Reorgs seen by ≥{significance_threshold} nodes"
-            )
-        with col2:
-            avg_depth = significant_reorgs['consensus_depth'].mean() if not significant_reorgs.is_empty() else 0
-            st.metric(
-                "Avg Depth (Significant)",
-                f"{avg_depth:.1f}",
-                help="Average depth of significant reorgs"
-            )
-        with col3:
-            max_observers = significant_reorgs['observer_count'].max() if not significant_reorgs.is_empty() else 0
-            st.metric(
-                "Max Observer Count",
-                f"{max_observers} ({max_observers/total_nodes*100:.0f}%)" if max_observers > 0 else "0",
-                help="Maximum nodes observing a single reorg"
-            )
-    else:
-        st.info(f"No reorgs were observed by {significance_threshold} or more nodes")
-    
-    # Distribution chart
-    st.subheader("📊 Observer Distribution")
-    
-    # Create histogram of observer counts
-    hist_data = normalized_df.group_by("observer_count").agg(
-        pl.col("cluster_id").count().alias("frequency")
-    ).sort("observer_count")
-    
-    if not hist_data.is_empty():
-        fig = px.bar(
-            hist_data.to_pandas(),
-            x="observer_count",
-            y="frequency",
-            labels={
-                "observer_count": "Number of Observers",
-                "frequency": "Number of Reorgs"
-            },
-            title="Distribution of Reorgs by Observer Count"
-        )
-        
-        fig.update_layout(
-            xaxis_title="Number of Nodes Observing Reorg",
-            yaxis_title="Number of Such Reorgs",
-            showlegend=False,
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Add insight
-        single_node_df = hist_data.filter(pl.col("observer_count") == 1)
-        single_node_reorgs = single_node_df['frequency'].sum() if not single_node_df.is_empty() else 0
-        multi_node_df = hist_data.filter(pl.col("observer_count") > 1)
-        multi_node_reorgs = multi_node_df['frequency'].sum() if not multi_node_df.is_empty() else 0
-        
-        if single_node_reorgs > 0 and multi_node_reorgs > 0:
-            ratio = single_node_reorgs / (single_node_reorgs + multi_node_reorgs) * 100
-            st.info(f"💡 {ratio:.1f}% of reorgs were only seen by a single node, suggesting local/client-specific issues rather than network-wide reorganizations.")
-    
-    # Add detailed data download section
-    st.divider()
-    st.subheader("📥 Download Detailed Data")
-    
-    # Define all known implementations
-    known_implementations = [
-        "lighthouse", "prysm", "teku", "nimbus", 
-        "lodestar", "grandine", "caplin"
-    ]
-    
-    # Check if we have event clusters for implementation details
-    has_event_clusters = "event_clusters" in data and not data["event_clusters"].is_empty()
-    
-    # If we have event clusters, calculate implementation counts
-    if has_event_clusters:
-        # Join event clusters to get implementation counts per cluster
-        impl_data = data["event_clusters"].join(
-            data["raw"].select(["meta_client_name", "meta_consensus_implementation"]).unique(),
-            left_on="meta_client_name",
-            right_on="meta_client_name",
-            how="left"
-        ).group_by(["cluster_id", "meta_consensus_implementation"]).agg(
-            pl.count().alias("count")
-        ).pivot(
-            values="count",
-            index="cluster_id",
-            columns="meta_consensus_implementation",
-            aggregate_function="first"
-        ).fill_null(0)
-        
-        # Ensure all implementation columns exist
-        for impl in known_implementations:
-            col_name = f"{impl}_observers"
-            if impl not in impl_data.columns:
-                impl_data = impl_data.with_columns(
-                    pl.lit(0).cast(pl.Int32).alias(impl)
-                )
-            if impl in impl_data.columns:
-                impl_data = impl_data.rename({impl: col_name})
-        
-        # Join implementation counts with normalized df
-        normalized_with_impl = normalized_df.join(
-            impl_data,
-            on="cluster_id",
-            how="left"
-        )
-        
-        # Fill nulls for any missing implementation columns
-        for impl in known_implementations:
-            col_name = f"{impl}_observers"
-            if col_name in normalized_with_impl.columns:
-                normalized_with_impl = normalized_with_impl.with_columns(
-                    pl.col(col_name).fill_null(0)
-                )
-    else:
-        normalized_with_impl = normalized_df
-        # Add empty implementation columns if no event clusters
-        for impl in known_implementations:
-            col_name = f"{impl}_observers"
-            normalized_with_impl = normalized_with_impl.with_columns(
-                pl.lit(0).cast(pl.Int32).alias(col_name)
-            )
-    
-    # Create columns for the CSV export
-    csv_columns = [
-        pl.col("first_detection").dt.strftime("%Y-%m-%d %H:%M:%S").alias("detection_time"),
-        pl.col("slot").alias("slot"),
-        pl.col("consensus_depth").alias("depth"),
-        pl.col("observer_count").alias("total_observers"),
-        pl.col("active_node_count").alias("active_nodes"),
-        pl.col("observer_percentage").round(1).alias("observer_percentage"),
-        pl.col("unique_implementations").alias("unique_implementations"),
-        pl.col("confidence_score").round(3).alias("confidence_score"),
-        pl.col("detection_span_seconds").round(1).alias("detection_span_seconds"),
-        pl.col("avg_propagation_delay").round(0).alias("avg_propagation_delay_ms"),
-        pl.col("new_head_block").alias("new_head_block"),
-        pl.col("old_head_block").alias("old_head_block"),
-        pl.col("cluster_id").alias("event_id")
-    ]
-    
-    # Add implementation observer counts
-    for impl in known_implementations:
-        col_name = f"{impl}_observers"
-        if col_name in normalized_with_impl.columns:
-            csv_columns.append(pl.col(col_name).alias(col_name))
-    
-    # Add observer list if available
-    if "observer_list" in normalized_with_impl.columns:
-        csv_columns.append(
-            pl.col("observer_list").list.join(", ").alias("observer_nodes")
-        )
-    
-    # Prepare the full export dataframe
-    export_df = normalized_with_impl.select(csv_columns).sort("detection_time", descending=True)
-    
-    # Convert to pandas for CSV export
-    export_pandas = export_df.to_pandas()
-    
-    # Create CSV download button
-    csv_data = export_pandas.to_csv(index=False)
-    
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        st.download_button(
-            label="📥 Download Full Reorg Data (CSV)",
-            data=csv_data,
-            file_name=f"reorg_analysis_{normalized_df['first_detection'].min().strftime('%Y%m%d')}_{normalized_df['first_detection'].max().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            help="Download complete reorg analysis data with all columns including per-client observations"
-        )
-    
-    with col2:
-        st.info(f"**{len(export_df):,} total reorg events** with {len(csv_columns)} data columns")
-    
-    # Show preview of the data
-    with st.expander("📋 Preview Data (First 100 rows)"):
-        st.dataframe(export_pandas.head(100), use_container_width=True)
 
 def apply_client_filters(data, selected_clients, excluded_clients, 
                          selected_implementations, excluded_implementations):

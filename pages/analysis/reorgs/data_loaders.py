@@ -66,7 +66,7 @@ def get_active_nodes_per_slot(
     )
     SELECT
         r.slot,
-        CAST(COALESCE(n.node_count, 100) AS Int64) as active_node_count
+        CAST(n.node_count AS Int64) as active_node_count
     FROM reorg_slots r
     LEFT JOIN node_counts n ON r.time_bucket = n.time_bucket
     ORDER BY slot DESC
@@ -77,9 +77,7 @@ def get_active_nodes_per_slot(
         pandas_df = pd.read_sql(query, conn)
         return pl.from_pandas(pandas_df)
     except Exception as e:
-        st.warning(f"Could not load active node counts: {e}")
-        # Return empty dataframe with expected schema
-        return pl.DataFrame({"slot": [], "active_node_count": []})
+        raise ValueError(f"Failed to load active node counts: {e}. Cannot proceed without this critical data.")
 
 def load_reorg_data(
     start_time: datetime, 
@@ -159,7 +157,7 @@ def load_reorg_data(
         pl.col("slot").cast(pl.Int64),
         pl.col("epoch").cast(pl.Int64),
         pl.col("depth").cast(pl.Int64),
-        pl.col("propagation_slot_start_diff").cast(pl.Float64).fill_null(0),
+        pl.col("propagation_slot_start_diff").cast(pl.Float64),  # Keep nulls to preserve data integrity
         pl.col("meta_client_geo_latitude").cast(pl.Float64, strict=False),
         pl.col("meta_client_geo_longitude").cast(pl.Float64, strict=False)
     ])
@@ -198,15 +196,21 @@ def load_reorg_data(
             active_nodes_df,
             on="slot",
             how="left"
-        ).with_columns([
-            # Fill any missing active node counts with a reasonable default
-            pl.col("active_node_count").fill_null(100)  # Default to 100 if we can't determine
-        ])
+        )
+        
+        # Check if we have any null active node counts
+        null_count = df.filter(pl.col("active_node_count").is_null()).height
+        if null_count > 0:
+            raise ValueError(
+                f"Failed to determine active node count for {null_count} slots. "
+                "Cannot proceed without accurate node count data."
+            )
     else:
-        # If we couldn't get active node counts, add a default column
-        df = df.with_columns([
-            pl.lit(100).alias("active_node_count")
-        ])
+        # If we couldn't get active node counts at all, raise an error
+        raise ValueError(
+            "Failed to load active node counts. Cannot proceed without this data. "
+            "Please check database connectivity and data availability."
+        )
     
     return df
 

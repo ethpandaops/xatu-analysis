@@ -19,6 +19,22 @@ def add_ethPandaOps_logo(fig):
     return fig
 
 
+def get_ethPandaOps_chart_config():
+    """Get standard plotly chart configuration for ethPandaOps branding."""
+    return {
+        'displaylogo': False,  # Hide Plotly logo
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],  # Remove unnecessary tools
+        'displayModeBar': True,  # Keep the toolbar visible
+        'toImageButtonOptions': {
+            'format': 'png',
+            'filename': 'ethpandaops_chart',
+            'height': None,
+            'width': None,
+            'scale': 2  # Higher quality image export
+        }
+    }
+
+
 def apply_ethPandaOps_styling():
     """Deprecated: Styling now handled at app level through Streamlit theming."""
     pass
