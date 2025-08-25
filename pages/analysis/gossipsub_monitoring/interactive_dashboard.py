@@ -272,18 +272,19 @@ def main():
         data = st.session_state.gossipsub_data
         with st.spinner("Recalculating metrics for new visualization mode..."):
             if viz_mode == "By Continent":
-                cdf_data = calculate_cdf_by_continent(data)
+                cdf_data, peer_counts = calculate_cdf_by_continent(data, return_peer_counts=True)
                 percentiles = calculate_percentiles_by_continent(data)
                 grouping_count = len(cdf_data)
                 grouping_type = "continents"
             else:  # By Slot
-                cdf_data = calculate_cdf_by_slot(data)
+                cdf_data, peer_counts = calculate_cdf_by_slot(data, return_peer_counts=True)
                 percentiles = calculate_percentiles_by_slot(data)
                 grouping_count = len(cdf_data)
                 grouping_type = "slots"
             
             metrics = {
                 'cdf_data': cdf_data,
+                'peer_counts': peer_counts,
                 'percentiles': percentiles,
                 'total_peers': data['peer_id'].nunique() if 'peer_id' in data.columns else 0,
                 'total_slots': data['slot'].nunique() if 'slot' in data.columns else 0,
@@ -364,18 +365,19 @@ def main():
                     # Calculate metrics based on visualization mode
                     with st.spinner("Computing metrics..."):
                         if viz_mode == "By Continent":
-                            cdf_data = calculate_cdf_by_continent(data)
+                            cdf_data, peer_counts = calculate_cdf_by_continent(data, return_peer_counts=True)
                             percentiles = calculate_percentiles_by_continent(data)
                             grouping_count = len(cdf_data)
                             grouping_type = "continents"
                         else:  # By Slot
-                            cdf_data = calculate_cdf_by_slot(data)
+                            cdf_data, peer_counts = calculate_cdf_by_slot(data, return_peer_counts=True)
                             percentiles = calculate_percentiles_by_slot(data)
                             grouping_count = len(cdf_data)
                             grouping_type = "slots"
                         
                         metrics = {
                             'cdf_data': cdf_data,
+                            'peer_counts': peer_counts,
                             'percentiles': percentiles,
                             'total_peers': data['peer_id'].nunique() if 'peer_id' in data.columns else 0,
                             'total_slots': data['slot'].nunique() if 'slot' in data.columns else 0,
@@ -454,10 +456,11 @@ def render_analysis_dashboard(data: pd.DataFrame, metrics: Dict[str, Any], slot:
     
     if metrics['cdf_data']:
         # Create and display CDF plot based on viz_mode
+        peer_counts = metrics.get('peer_counts', {})
         if viz_mode == "By Continent":
-            cdf_fig = create_continent_cdf_plot(metrics['cdf_data'], slot)
+            cdf_fig = create_continent_cdf_plot(metrics['cdf_data'], slot, peer_counts=peer_counts)
         else:  # By Slot
-            cdf_fig = create_slot_cdf_plot(metrics['cdf_data'])
+            cdf_fig = create_slot_cdf_plot(metrics['cdf_data'], peer_counts=peer_counts)
         
         st.plotly_chart(cdf_fig, use_container_width=True)
         
@@ -582,14 +585,14 @@ def render_comparison_dashboard(ihave_data: pd.DataFrame, idontwant_data: pd.Dat
             if not ihave_data.empty:
                 # Calculate and show IHAVE CDF
                 if viz_mode == "By Continent":
-                    ihave_cdf = calculate_cdf_by_continent(ihave_data)
+                    ihave_cdf, ihave_peer_counts = calculate_cdf_by_continent(ihave_data, return_peer_counts=True)
                     if ihave_cdf:
-                        fig = create_continent_cdf_plot(ihave_cdf, slot)
+                        fig = create_continent_cdf_plot(ihave_cdf, slot, peer_counts=ihave_peer_counts)
                         st.plotly_chart(fig, use_container_width=True)
                 else:
-                    ihave_cdf = calculate_cdf_by_slot(ihave_data)
+                    ihave_cdf, ihave_peer_counts = calculate_cdf_by_slot(ihave_data, return_peer_counts=True)
                     if ihave_cdf:
-                        fig = create_slot_cdf_plot(ihave_cdf)
+                        fig = create_slot_cdf_plot(ihave_cdf, peer_counts=ihave_peer_counts)
                         st.plotly_chart(fig, use_container_width=True)
                 
                 # Show metrics
@@ -605,14 +608,14 @@ def render_comparison_dashboard(ihave_data: pd.DataFrame, idontwant_data: pd.Dat
             if not idontwant_data.empty:
                 # Calculate and show IDONTWANT CDF
                 if viz_mode == "By Continent":
-                    idontwant_cdf = calculate_cdf_by_continent(idontwant_data)
+                    idontwant_cdf, idontwant_peer_counts = calculate_cdf_by_continent(idontwant_data, return_peer_counts=True)
                     if idontwant_cdf:
-                        fig = create_continent_cdf_plot(idontwant_cdf, slot)
+                        fig = create_continent_cdf_plot(idontwant_cdf, slot, peer_counts=idontwant_peer_counts)
                         st.plotly_chart(fig, use_container_width=True)
                 else:
-                    idontwant_cdf = calculate_cdf_by_slot(idontwant_data)
+                    idontwant_cdf, idontwant_peer_counts = calculate_cdf_by_slot(idontwant_data, return_peer_counts=True)
                     if idontwant_cdf:
-                        fig = create_slot_cdf_plot(idontwant_cdf)
+                        fig = create_slot_cdf_plot(idontwant_cdf, peer_counts=idontwant_peer_counts)
                         st.plotly_chart(fig, use_container_width=True)
                 
                 # Show metrics

@@ -146,6 +146,23 @@ def main():
         help="Include ethpandaops nodes in the analysis (default: excluded)"
     )
     
+    # Slot Position Filter
+    st.sidebar.subheader("Slot Position Filtering")
+    filter_by_slot_position = st.sidebar.checkbox(
+        "Filter by Slot Position",
+        value=False,
+        help="Show only reorgs where blocks at specific positions within an epoch (0-31) were reorged out"
+    )
+    
+    slot_position_filter = None
+    if filter_by_slot_position:
+        slot_position_filter = st.sidebar.selectbox(
+            "Slot Position in Epoch",
+            options=list(range(32)),
+            format_func=lambda x: f"Position {x}" + (" (epoch start)" if x == 0 else " (epoch end)" if x == 31 else ""),
+            help="Select the slot position within the epoch (0-31). This filters reorgs based on the position of the block that was reorged out."
+        )
+    
     # Set default values for previously advanced options
     time_bucket = "1 hour"  # Default value
     episode_window = 4  # Default value in seconds
@@ -167,6 +184,18 @@ def main():
                 if raw_df.is_empty():
                     st.error("No reorg data found for the selected time range")
                     return
+                
+                # Apply slot position filter if enabled
+                if slot_position_filter is not None:
+                    original_count = len(raw_df)
+                    raw_df = raw_df.filter(pl.col("slot_in_epoch") == slot_position_filter)
+                    filtered_count = original_count - len(raw_df)
+                    
+                    if raw_df.is_empty():
+                        st.error(f"No reorgs found at slot position {slot_position_filter}")
+                        return
+                    
+                    st.info(f"🎯 Filtered to slot position {slot_position_filter}: {len(raw_df)} reorgs found (filtered out {filtered_count} reorgs at other positions)")
                 
                 # Normalize reorg events to identify common events
                 normalized_df, event_clusters = normalize_reorg_events(
@@ -207,7 +236,11 @@ def main():
                 }
                 st.session_state.reorg_metrics = metrics
                 
-                st.success(f"✅ Loaded {len(raw_df)} reorg events")
+                # Create success message with optional slot position info
+                success_msg = f"✅ Loaded {len(raw_df)} reorg events"
+                if slot_position_filter is not None:
+                    success_msg += f" at slot position {slot_position_filter}"
+                st.success(success_msg)
                 
             except Exception as e:
                 st.error(f"Error loading data: {str(e)}")

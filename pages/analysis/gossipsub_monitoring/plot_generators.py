@@ -14,7 +14,8 @@ from shared.ui_components import add_ethPandaOps_logo
 def create_continent_cdf_plot(
     cdf_data: Dict[str, Tuple[np.ndarray, np.ndarray]],
     slot: Optional[int] = None,
-    title: Optional[str] = None
+    title: Optional[str] = None,
+    peer_counts: Optional[Dict[str, int]] = None
 ) -> go.Figure:
     """
     Create CDF plot comparing different continents with attestation CDF styling.
@@ -23,6 +24,7 @@ def create_continent_cdf_plot(
         cdf_data: Dictionary mapping continent to (x_values, y_values)
         slot: Slot number being analyzed
         title: Custom title for the plot
+        peer_counts: Optional dictionary mapping continent to unique peer count
         
     Returns:
         Plotly figure
@@ -42,17 +44,27 @@ def create_continent_cdf_plot(
         x_seconds = x_values / 1000.0
         all_times_seconds.extend(x_seconds)
         
-        # Count peers for this continent
-        peer_count = len(x_values)
+        # Count datapoints and get unique peers
+        datapoint_count = len(x_values)
+        unique_peers = peer_counts.get(continent, 0) if peer_counts else 0
+        
+        # Create legend label with both datapoints and peers
+        if peer_counts and unique_peers > 0:
+            legend_label = f"{continent} ({datapoint_count:,} datapoints, {unique_peers:,} peers)"
+            hover_peer_info = f'Unique Peers: {unique_peers:,}<br>'
+        else:
+            legend_label = f"{continent} ({datapoint_count:,} datapoints)"
+            hover_peer_info = ''
         
         fig.add_trace(go.Scatter(
             x=x_seconds,
             y=y_values,
             mode='lines',
-            name=f"{continent} ({peer_count:,} peers)",
+            name=legend_label,
             line=dict(color=colors[color_idx % len(colors)], width=2),
             hovertemplate=f'<b>{continent}</b><br>' +
-                        f'Total Peers: {peer_count:,}<br>' +
+                        f'Total Datapoints: {datapoint_count:,}<br>' +
+                        hover_peer_info +
                         'Time: %{x:.2f}s<br>' +
                         'Cumulative Probability: %{y:.2%}<br>' +
                         '<extra></extra>'
@@ -108,7 +120,8 @@ def create_continent_cdf_plot(
 
 def create_slot_cdf_plot(
     cdf_data: Dict[int, Tuple[np.ndarray, np.ndarray]],
-    title: Optional[str] = None
+    title: Optional[str] = None,
+    peer_counts: Optional[Dict[int, int]] = None
 ) -> go.Figure:
     """
     Create CDF plot comparing different slots with attestation CDF styling.
@@ -116,6 +129,7 @@ def create_slot_cdf_plot(
     Args:
         cdf_data: Dictionary mapping slot to (x_values, y_values)
         title: Custom title for the plot
+        peer_counts: Optional dictionary mapping slot to unique peer count
         
     Returns:
         Plotly figure
@@ -138,17 +152,27 @@ def create_slot_cdf_plot(
         x_seconds = x_values / 1000.0
         all_times_seconds.extend(x_seconds)
         
-        # Count peers for this slot
-        peer_count = len(x_values)
+        # Count datapoints and get unique peers
+        datapoint_count = len(x_values)
+        unique_peers = peer_counts.get(slot, 0) if peer_counts else 0
+        
+        # Create legend label with both datapoints and peers
+        if peer_counts and unique_peers > 0:
+            legend_label = f"Slot {slot:,} ({datapoint_count:,} datapoints, {unique_peers:,} peers)"
+            hover_peer_info = f'Unique Peers: {unique_peers:,}<br>'
+        else:
+            legend_label = f"Slot {slot:,} ({datapoint_count:,} datapoints)"
+            hover_peer_info = ''
         
         fig.add_trace(go.Scatter(
             x=x_seconds,
             y=y_values,
             mode='lines',
-            name=f"Slot {slot:,} ({peer_count:,} peers)",
+            name=legend_label,
             line=dict(color=colors[idx % len(colors)], width=2),
             hovertemplate=f'<b>Slot {slot:,}</b><br>' +
-                        f'Total Peers: {peer_count:,}<br>' +
+                        f'Total Datapoints: {datapoint_count:,}<br>' +
+                        hover_peer_info +
                         'Time: %{x:.2f}s<br>' +
                         'Cumulative Probability: %{y:.2%}<br>' +
                         '<extra></extra>'

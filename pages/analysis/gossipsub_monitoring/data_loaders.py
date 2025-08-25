@@ -6,7 +6,7 @@ import pandas as pd
 import polars as pl
 import numpy as np
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Union
 import logging
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -253,29 +253,38 @@ def get_latest_slot(
 
 def calculate_cdf_by_continent(
     df: pd.DataFrame,
-    value_column: str = 'propagation_delay_ms'
-) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    value_column: str = 'propagation_delay_ms',
+    return_peer_counts: bool = False
+) -> Union[Dict[str, Tuple[np.ndarray, np.ndarray]], Tuple[Dict[str, Tuple[np.ndarray, np.ndarray]], Dict[str, int]]]:
     """
     Calculate CDF curves for each continent.
     
     Args:
         df: DataFrame with propagation data
         value_column: Column to calculate CDF for
+        return_peer_counts: If True, also return unique peer counts per continent
         
     Returns:
-        Dictionary mapping continent to (x_values, y_values) for CDF
+        If return_peer_counts is False:
+            Dictionary mapping continent to (x_values, y_values) for CDF
+        If return_peer_counts is True:
+            Tuple of (cdf_data, peer_counts) where peer_counts maps continent to unique peer count
     """
     cdf_data = {}
+    peer_counts = {}
     
     if df.empty or 'continent' not in df.columns:
-        return cdf_data
+        return (cdf_data, peer_counts) if return_peer_counts else cdf_data
     
     # Group by continent
     for continent in df['continent'].unique():
         if pd.isna(continent):
             continue
             
-        continent_data = df[df['continent'] == continent][value_column].dropna()
+        continent_df = df[df['continent'] == continent]
+        # Only consider rows with valid propagation delays
+        valid_continent_df = continent_df[continent_df[value_column].notna()]
+        continent_data = valid_continent_df[value_column]
         
         if len(continent_data) < 5:  # Need minimum data points
             logger.warning(f"Skipping continent {continent} - only {len(continent_data)} data points (minimum 5 required)")
@@ -288,35 +297,48 @@ def calculate_cdf_by_continent(
         y_values = np.arange(1, len(sorted_values) + 1) / len(sorted_values)
         
         cdf_data[continent] = (sorted_values, y_values)
+        
+        # Calculate unique peer count from rows with valid data only
+        if return_peer_counts and 'peer_id' in df.columns:
+            peer_counts[continent] = valid_continent_df['peer_id'].nunique()
     
-    return cdf_data
+    return (cdf_data, peer_counts) if return_peer_counts else cdf_data
 
 
 def calculate_cdf_by_slot(
     df: pd.DataFrame,
-    value_column: str = 'propagation_delay_ms'
-) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+    value_column: str = 'propagation_delay_ms',
+    return_peer_counts: bool = False
+) -> Union[Dict[int, Tuple[np.ndarray, np.ndarray]], Tuple[Dict[int, Tuple[np.ndarray, np.ndarray]], Dict[int, int]]]:
     """
     Calculate CDF curves for each slot.
     
     Args:
         df: DataFrame with propagation data
         value_column: Column to calculate CDF for
+        return_peer_counts: If True, also return unique peer counts per slot
         
     Returns:
-        Dictionary mapping slot to (x_values, y_values) for CDF
+        If return_peer_counts is False:
+            Dictionary mapping slot to (x_values, y_values) for CDF
+        If return_peer_counts is True:
+            Tuple of (cdf_data, peer_counts) where peer_counts maps slot to unique peer count
     """
     cdf_data = {}
+    peer_counts = {}
     
     if df.empty or 'slot' not in df.columns:
-        return cdf_data
+        return (cdf_data, peer_counts) if return_peer_counts else cdf_data
     
     # Group by slot
     for slot in df['slot'].unique():
         if pd.isna(slot):
             continue
             
-        slot_data = df[df['slot'] == slot][value_column].dropna()
+        slot_df = df[df['slot'] == slot]
+        # Only consider rows with valid propagation delays
+        valid_slot_df = slot_df[slot_df[value_column].notna()]
+        slot_data = valid_slot_df[value_column]
         
         if len(slot_data) < 5:  # Need minimum data points
             logger.warning(f"Skipping slot {slot} - only {len(slot_data)} data points (minimum 5 required)")
@@ -329,8 +351,12 @@ def calculate_cdf_by_slot(
         y_values = np.arange(1, len(sorted_values) + 1) / len(sorted_values)
         
         cdf_data[int(slot)] = (sorted_values, y_values)
+        
+        # Calculate unique peer count from rows with valid data only
+        if return_peer_counts and 'peer_id' in df.columns:
+            peer_counts[int(slot)] = valid_slot_df['peer_id'].nunique()
     
-    return cdf_data
+    return (cdf_data, peer_counts) if return_peer_counts else cdf_data
 
 
 def calculate_percentiles_by_slot(
