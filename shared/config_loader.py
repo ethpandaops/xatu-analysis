@@ -9,6 +9,7 @@ from pathlib import Path
 import streamlit as st
 from datetime import datetime, timedelta
 import logging
+from .network_spec import get_network_spec, has_network_spec, list_network_specs
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +241,39 @@ class ConfigLoader:
             }
         return networks[network_name]
     
+    def get_network_spec(self, network_name: str):
+        """
+        Get network specification for a network if available.
+        
+        Args:
+            network_name: Name of the network
+            
+        Returns:
+            NetworkSpec instance or None if not available
+        """
+        return get_network_spec(network_name)
+    
+    def has_network_spec(self, network_name: str) -> bool:
+        """
+        Check if a network has a detailed specification available.
+        
+        Args:
+            network_name: Name of the network
+            
+        Returns:
+            True if network spec is available
+        """
+        return has_network_spec(network_name)
+    
+    def list_network_specs(self) -> List[str]:
+        """
+        List all available network specifications.
+        
+        Returns:
+            List of network names with specs available
+        """
+        return list_network_specs()
+    
     def get_network_genesis_timestamp(self, network: str) -> int:
         """Get the genesis timestamp for a specific network."""
         config = self.get_network_config(network)
@@ -288,3 +322,15 @@ def get_network_config() -> Dict[str, Dict[str, Any]]:
 def get_network_genesis_timestamp(network: str) -> int:
     """Get genesis timestamp for a network."""
     return config_loader.get_network_genesis_timestamp(network)
+
+def get_network_spec(network_name: str):
+    """Get network specification for a network."""
+    return config_loader.get_network_spec(network_name)
+
+def has_network_spec(network_name: str) -> bool:
+    """Check if a network has a specification available."""
+    return config_loader.has_network_spec(network_name)
+
+def list_network_specs() -> List[str]:
+    """List all available network specifications."""
+    return config_loader.list_network_specs()
