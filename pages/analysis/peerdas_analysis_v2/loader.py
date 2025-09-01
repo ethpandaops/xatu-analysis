@@ -2,8 +2,8 @@
 Data loader for PeerDAS Analysis V2 - Head correctness analysis.
 
 This module loads head correctness data by analyzing whether attestations
-voted for the correct block_root, with support for filtering by proposer
-and attester characteristics.
+voted for the proposed block_root (including blocks that may have been reorged),
+with support for filtering by proposer and attester characteristics.
 """
 
 import pandas as pd
@@ -28,7 +28,9 @@ from queries import (
     build_proposer_filter,
     build_validator_filter,
     get_head_correctness_per_slot_query,
+    get_head_correctness_per_slot_stake_weighted_query,
     get_head_correctness_per_slot_grouped_query,
+    get_head_correctness_per_slot_grouped_stake_weighted_query,
     get_committee_distinct_validators_query
 )
 
@@ -160,7 +162,9 @@ def load_eligible_slots(
     if not network_spec and has_filters:
         logger.warning(f"Network spec not found for {network} but filters requested - ignoring filters")
     
-    if network_spec and has_filters:
+    # If we have a network spec, ALWAYS filter to only validators in the spec
+    # This prevents "unknown" entries from validators not in our config
+    if network_spec:
         # Filter by validator indices based on node characteristics
         nodes_processed = 0
         nodes_matched = 0
@@ -168,6 +172,13 @@ def load_eligible_slots(
             nodes_processed += 1
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
+                continue
+            
+            # If no filters, include all nodes from the spec
+            if not has_filters:
+                validators = network_spec.get_validators(node_name)
+                proposer_indices.extend(validators)
+                nodes_matched += 1
                 continue
                 
             # Check if node matches filters
@@ -206,6 +217,7 @@ def load_eligible_slots(
             proposer_indices.extend(validators)
             nodes_matched += 1
         
+        logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {len(proposer_indices)}")
     
     # Build proposer filter
     proposer_filter = build_proposer_filter(proposer_indices)
@@ -326,8 +338,13 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
     """Build UNION ALL SELECT mapping for slot->proposer characteristics using network_spec."""
     logger.info(f"Building proposer map for {len(eligible_slots)} eligible slots")
     
-    if not network_spec or not eligible_slots:
-        logger.error("No network_spec or eligible_slots provided")
+    if not eligible_slots:
+        logger.error("No eligible_slots provided")
+        return ""
+    
+    # If no network spec, return empty - NO FALLBACKS
+    if not network_spec:
+        logger.error("No network spec available - cannot build proposer map")
         return ""
     
     # Build validator_index -> node mapping from network spec (cached)
@@ -346,18 +363,24 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
     selects = []
     validator_indices = list(validator_to_node.keys())
     if not validator_indices:
+        logger.error("No validator indices found in network spec")
         return ""
     
     for slot in eligible_slots:
         # Get actual proposer index from database - NEVER use approximations
         if not slot_to_proposer or slot not in slot_to_proposer:
-            logger.error(f"Missing proposer index for slot {slot} - skipping")
+            logger.warning(f"Missing proposer index for slot {slot} - marking as unknown")
+            select_sql = f"SELECT {slot} AS slot, 'unknown' AS node_type, 'unknown' AS cl_client, 'unknown' AS el_client"
+            selects.append(select_sql)
             continue
             
         proposer_index = slot_to_proposer[slot]
         
-        # Skip if proposer not in our validator mapping
+        # If proposer not in our validator mapping, mark as unknown
         if proposer_index not in validator_to_node:
+            logger.debug(f"Proposer {proposer_index} for slot {slot} not in network spec - marking as unknown")
+            select_sql = f"SELECT {slot} AS slot, 'unknown' AS node_type, 'unknown' AS cl_client, 'unknown' AS el_client"
+            selects.append(select_sql)
             continue
             
         node_name = validator_to_node[proposer_index]
@@ -464,14 +487,15 @@ def load_head_correctness_data(
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
+    use_stake_weighting: bool = False,
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
-    Load head correctness data by analyzing attestations against canonical blocks.
+    Load head correctness data by analyzing attestations against proposed blocks.
     
     For each slot:
     1. Get total validators scheduled to attest (from committee assignments)
-    2. Get attestations that voted for correct block_root
+    2. Get attestations that voted for the proposed block_root (including reorged blocks)
     3. Calculate head correctness percentage
     
     Args:
@@ -479,18 +503,19 @@ def load_head_correctness_data(
         start_date: Start of analysis period
         end_date: End of analysis period
         eligible_slots: List of slots to analyze
-        slot_to_block: Mapping of slot to canonical block_root
+        slot_to_block: Mapping of slot to proposed block_root
         slot_to_proposer: Mapping of slot to proposer_index
         attester_type: Filter by attester node type
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
         grouping_dimension: Optional grouping dimension
+        use_stake_weighting: If True, weight by effective balance (for MaxEB validators)
         cluster_name: Optional cluster name
         
     Returns:
         DataFrame with head correctness data by slot
     """
-    logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots")
+    logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots, stake_weighting={use_stake_weighting}")
     
     
     if not eligible_slots:
@@ -511,11 +536,20 @@ def load_head_correctness_data(
     slots_str = '(' + ','.join(str(s) for s in eligible_slots) + ')'
     
     # Filter validators if network spec is available
+    # If we have a network spec, ALWAYS filter to only validators in the spec
     validator_indices = []
-    if network_spec and (attester_type or cl_filter or el_filter):
+    has_attester_filters = attester_type or cl_filter or el_filter
+    
+    if network_spec:
         for node_name in network_spec.get_all_nodes():
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
+                continue
+            
+            # If no filters, include all nodes from the spec
+            if not has_attester_filters:
+                validators = network_spec.get_validators(node_name)
+                validator_indices.extend(validators)
                 continue
                 
             # Check if node matches filters
@@ -552,9 +586,48 @@ def load_head_correctness_data(
             # Add validator indices for this node
             validators = network_spec.get_validators(node_name)
             validator_indices.extend(validators)
+        
+        logger.info(f"Attester filter: total validators: {len(validator_indices)}")
     
-    try:
+    # Check if committee data exists FIRST - REQUIRED for accurate head correctness
+    committee_check_sql = """
+    SELECT 
+        (SELECT COUNT(*) FROM canonical_beacon_committee 
+         WHERE meta_network_name = %(network)s 
+           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+         LIMIT 1) as canonical_count,
+        (SELECT COUNT(*) FROM beacon_api_eth_v1_beacon_committee
+         WHERE meta_network_name = %(network)s 
+           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+         LIMIT 1) as beacon_api_count
+    """
+    committee_params = {
+        'network': network,
+        'start_date': start_date,
+        'end_date': end_date,
+    }
+    committee_check = pd.read_sql(committee_check_sql, conn, params=committee_params)
+    if committee_check.iloc[0]['canonical_count'] == 0 and committee_check.iloc[0]['beacon_api_count'] == 0:
+        st.error(f"""
+        ❌ **No committee data available for {network} in the selected time range**
+        
+        Head correctness calculation requires committee data to identify which validators 
+        were scheduled to attest in each slot. Without this data, we cannot distinguish 
+        between:
+        - Validators attesting in their assigned slot (correct)
+        - Validators from slot N+1 voting for slot N's block (incorrect, inflates metrics)
+        
+        Committee data is missing from both:
+        - `canonical_beacon_committee` 
+        - `beacon_api_eth_v1_beacon_committee`
+        
+        For the time range: {start_date} to {end_date}
+        
+        **Try selecting a different time range or check data collection for {network}.**
+        """)
+        return pd.DataFrame()
 
+    try:
         params = {
             'network': network,
             'start_date': start_date,
@@ -562,6 +635,20 @@ def load_head_correctness_data(
         }
 
         if grouping_dimension:
+            # Grouping REQUIRES a network spec to work
+            if not network_spec:
+                st.error(f"""
+                ❌ **Cannot use grouping for {network} - no network specification available**
+                
+                Grouping analysis requires a network specification file that maps validator indices
+                to node names and client types. This file is missing for {network}.
+                
+                **Options:**
+                1. Disable grouping to view overall head correctness
+                2. Select a different network that has a network spec (e.g., holesky, sepolia)
+                3. Add a network spec YAML file for {network}
+                """)
+                return pd.DataFrame()
             
             # Process slots in chunks to avoid query size limits with parallelization
             chunk_size = 500  # Process 500 slots at a time
@@ -574,10 +661,14 @@ def load_head_correctness_data(
                     proposer_map_sql = _build_proposer_map_union_selects(network_spec, slot_chunk, slot_to_proposer)
                     
                     if not proposer_map_sql:
-                        logger.warning(f"No proposer mapping for chunk {chunk_idx + 1}")
+                        logger.warning(f"No proposer mapping for chunk {chunk_idx + 1} - network spec missing or invalid")
                         return None
 
-                    sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
+                    # Choose query based on stake weighting preference
+                    if use_stake_weighting:
+                        sql = get_head_correctness_per_slot_grouped_stake_weighted_query(group_by=grouping_dimension)
+                    else:
+                        sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
                     
                     # Create slot string for this chunk
                     chunk_slots_str = '(' + ','.join(str(s) for s in slot_chunk) + ')'
@@ -592,11 +683,47 @@ def load_head_correctness_data(
                     
                     chunk_df = pd.read_sql(sql, chunk_conn, params=params)
                     logger.info(f"Chunk {chunk_idx + 1} returned {len(chunk_df)} rows")
+                    
+                    if chunk_df.empty:
+                        # Debug why no data
+                        logger.warning(f"Chunk {chunk_idx + 1} returned empty - checking component tables")
+                        
+                        # Check if there's committee data for these slots
+                        committee_test = f"""
+                        SELECT COUNT(*) as count
+                        FROM canonical_beacon_committee
+                        WHERE meta_network_name = %(network)s
+                          AND slot IN {chunk_slots_str}
+                        """
+                        try:
+                            committee_count = pd.read_sql(committee_test, chunk_conn, params=params).iloc[0]['count']
+                            logger.info(f"Chunk {chunk_idx + 1}: Committee rows found: {committee_count}")
+                        except Exception as e:
+                            logger.error(f"Chunk {chunk_idx + 1}: Committee check failed: {e}")
+                        
+                        # Check if there are blocks for these slots  
+                        blocks_test = f"""
+                        SELECT COUNT(*) as count
+                        FROM beacon_api_eth_v2_beacon_block
+                        WHERE meta_network_name = %(network)s
+                          AND slot IN {chunk_slots_str}
+                        """
+                        try:
+                            blocks_count = pd.read_sql(blocks_test, chunk_conn, params=params).iloc[0]['count']
+                            logger.info(f"Chunk {chunk_idx + 1}: Blocks found: {blocks_count}")
+                        except Exception as e:
+                            logger.error(f"Chunk {chunk_idx + 1}: Blocks check failed: {e}")
+                    
                     return chunk_df if not chunk_df.empty else None
                     
                 except Exception as e:
-                    logger.error(f"Chunk {chunk_idx + 1} failed: {e}")
-                    return None
+                    error_msg = str(e)
+                    logger.error(f"Chunk {chunk_idx + 1} failed with error: {error_msg}")
+                    import traceback
+                    logger.error(f"Chunk {chunk_idx + 1} traceback: {traceback.format_exc()}")
+                    
+                    # Return error info to be handled in main thread
+                    return {'error': error_msg, 'chunk': chunk_idx + 1}
             
             # Process chunks in parallel (5 at a time)
             all_dfs = []
@@ -608,17 +735,43 @@ def load_head_correctness_data(
                 }
                 
                 # Collect results as they complete
+                sql_errors = []
                 for future in as_completed(future_to_chunk):
                     chunk_idx = future_to_chunk[future]
                     try:
                         result = future.result()
                         if result is not None:
-                            all_dfs.append(result)
+                            # Check if it's an error dict
+                            if isinstance(result, dict) and 'error' in result:
+                                sql_errors.append(result)
+                            else:
+                                all_dfs.append(result)
                     except Exception as e:
                         logger.error(f"Chunk {chunk_idx + 1} future failed: {e}")
+                
+                # Show SQL errors if any
+                if sql_errors:
+                    for err in sql_errors[:1]:  # Show first error only to avoid spam
+                        if "UNKNOWN_IDENTIFIER" in err['error'] or "DB::Exception" in err['error']:
+                            st.error(f"""
+                            ❌ **SQL Query Error in chunk {err['chunk']}**
+                            
+                            {err['error']}
+                            
+                            This is likely due to missing data or a query issue.
+                            """)
             
             if not all_dfs:
-                st.error("❌ **No data returned from any chunks**")
+                st.error("""
+                ❌ **No data returned from query**
+                
+                Possible causes:
+                - No blocks proposed in the selected time range
+                - No attestation data available for the selected slots
+                - No data_column_sidecar data for blob count determination
+                
+                Try selecting a different time range or network.
+                """)
                 return pd.DataFrame()
             
             # Combine all chunks
@@ -652,53 +805,23 @@ def load_head_correctness_data(
         else:
             # Non-grouped per-slot computation
             validator_filter = build_validator_filter(validator_indices)
-            sql = get_head_correctness_per_slot_query().format(
-                validator_filter=f"\n      {validator_filter}" if validator_filter else ""
-            )
+            
+            # Choose query based on stake weighting preference
+            if use_stake_weighting:
+                sql = get_head_correctness_per_slot_stake_weighted_query().format(
+                    validator_filter=f"\n      {validator_filter}" if validator_filter else ""
+                )
+            else:
+                sql = get_head_correctness_per_slot_query().format(
+                    validator_filter=f"\n      {validator_filter}" if validator_filter else ""
+                )
             sql = sql.replace('%(eligible_slots)s', slots_str)
             
 
             df = pd.read_sql(sql, conn, params=params)
 
             if df.empty:
-                # Let's check individual table availability for this slot range
-                
-                # Check committee data
-                committee_test_sql = f"""
-                SELECT COUNT(*) as count FROM canonical_beacon_committee 
-                WHERE meta_network_name = %(network)s 
-                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
-                """
-                try:
-                    committee_count = pd.read_sql(committee_test_sql, conn, params=params).iloc[0]['count']
-                except Exception as e:
-                    pass
-                
-                # Check attestation data  
-                attestation_test_sql = f"""
-                SELECT COUNT(*) as count FROM beacon_api_eth_v1_events_attestation 
-                WHERE meta_network_name = %(network)s 
-                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
-                """
-                try:
-                    attestation_count = pd.read_sql(attestation_test_sql, conn, params=params).iloc[0]['count']
-                except Exception as e:
-                    pass
-                
-                # Check sidecar data
-                sidecar_test_sql = f"""
-                SELECT COUNT(*) as count FROM beacon_api_eth_v1_events_data_column_sidecar 
-                WHERE meta_network_name = %(network)s 
-                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
-                """
-                try:
-                    sidecar_count = pd.read_sql(sidecar_test_sql, conn, params=params).iloc[0]['count']
-                except Exception as e:
-                    pass
-                
+                st.warning("No head correctness data found for the selected time range and filters.")
                 return pd.DataFrame()
 
             df = df.rename(columns={

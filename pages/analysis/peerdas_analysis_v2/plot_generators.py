@@ -2,9 +2,9 @@
 Plot generation for PeerDAS Analysis V2 with ethPandaOps branding.
 
 This module creates visualizations for head correctness analysis,
-showing attestation accuracy percentages bucketed by blob count.
-All synthetic/simulated expansions have been removed. Charts render
-only from real grouped data computed by ClickHouse.
+showing attestation accuracy percentages (for proposed blocks, including
+reorged ones) bucketed by blob count. Charts render only from real 
+grouped data computed by ClickHouse.
 """
 
 import pandas as pd

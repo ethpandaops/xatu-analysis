@@ -1,8 +1,9 @@
 """
 Interactive dashboard for PeerDAS Analysis V2 - Head correctness analysis.
 
-Analyzes head correctness (voting for the correct block_root) with bucketing 
-by blob count and filtering by proposer and attester characteristics.
+Analyzes head correctness (voting for proposed block_roots, including those
+that may have been reorged) with bucketing by blob count and filtering by 
+proposer and attester characteristics.
 """
 
 import streamlit as st
@@ -224,6 +225,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             help="Display trend line on scatter plot"
         )
     
+    # Stake weighting option (important for MaxEB networks)
+    use_stake_weighting = st.sidebar.checkbox(
+        "Use Stake Weighting",
+        value=False,
+        help="Weight validators by their effective balance (important for MaxEB validators with >32 ETH). When disabled, each validator counts equally."
+    )
+    
     st.sidebar.markdown("---")
     
     col1, col2 = st.sidebar.columns([2, 1])
@@ -257,6 +265,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'attester_el': attester_el if attester_el and set(attester_el) != set(all_el_clients) else None,
         'chart_type': chart_type,
         'show_trend_line': show_trend_line,
+        'use_stake_weighting': use_stake_weighting,
         'load_data': load_data
     }
 
@@ -289,7 +298,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 st.cache_data.clear()
                 return None
             
-            # Load head correctness data
+            # Load head correctness data (against proposed blocks, including reorged)
             data = load_head_correctness_data(
                 network=config['network'],
                 start_date=config['start_datetime'],
@@ -301,6 +310,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 cl_filter=config.get('attester_cl'),
                 el_filter=config.get('attester_el'),
                 grouping_dimension=config.get('grouping_dimension'),
+                use_stake_weighting=config.get('use_stake_weighting', False),
                 cluster_name=config['cluster']
             )
             
