@@ -185,9 +185,12 @@ def parse_inventory(inventory_content: str) -> Dict[str, Any]:
     for section in network_spec['groups']:
         section_lower = section.lower()
         
-        # Check for client patterns
+        # Check for client patterns in underscore-separated group names
         for pattern, tag_prefix in client_patterns.items():
-            if pattern in section_lower:
+            # Match pattern either at start, after underscore, or as complete string
+            # This avoids substring issues like "nimbus" matching "nimbusel"
+            pattern_regex = rf'(^|_){re.escape(pattern)}(_|$)'
+            if re.search(pattern_regex, section_lower):
                 # Add tag to all nodes in this group
                 for host_name in network_spec['groups'][section]:
                     tag = tag_prefix

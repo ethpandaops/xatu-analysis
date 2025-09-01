@@ -5,3 +5,4 @@ A Streamlit-based data analysis dashboard for Ethereum data using Xatu. This pro
 ## Rules
 - Use Polars for all data processing.
 - Use Streamlit for all UI. Convert to Pandas at the edge where required to work with Streamlit.
+- NEVER run streamlit yourself. I'll do it.

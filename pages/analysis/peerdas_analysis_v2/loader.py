@@ -14,6 +14,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import logging
 import yaml
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from shared.database import get_database_connection
 from shared.network_spec import get_network_spec
@@ -25,7 +26,10 @@ from queries import (
     get_node_classification_query,
     get_proposer_blocks_query,
     build_proposer_filter,
-    build_validator_filter
+    build_validator_filter,
+    get_head_correctness_per_slot_query,
+    get_head_correctness_per_slot_grouped_query,
+    get_committee_distinct_validators_query
 )
 
 # Configure logging
@@ -131,13 +135,15 @@ def load_eligible_slots(
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
     cluster_name: Optional[str] = None
-) -> Tuple[List[int], Dict[int, str]]:
+) -> Tuple[List[int], Dict[int, str], Dict[int, int]]:
     """
     Load eligible slots based on proposer filtering.
     
     Returns:
-        Tuple of (slot_list, slot_to_block_root_mapping)
+        Tuple of (slot_list, slot_to_block_root_mapping, slot_to_proposer_index_mapping)
     """
+    logger.info(f"Loading eligible slots for network={network}")
+    
     conn = get_database_connection(cluster_name)
     if not conn:
         logger.error(f"Failed to get database connection for cluster: {cluster_name}")
@@ -145,11 +151,21 @@ def load_eligible_slots(
     
     # Get network spec for filtering
     network_spec = get_network_spec(network)
+    
     proposer_indices = []
     
-    if network_spec and (proposer_type or cl_filter or el_filter):
+    # Check for filters that require network spec
+    has_filters = proposer_type or cl_filter or el_filter
+    
+    if not network_spec and has_filters:
+        logger.warning(f"Network spec not found for {network} but filters requested - ignoring filters")
+    
+    if network_spec and has_filters:
         # Filter by validator indices based on node characteristics
+        nodes_processed = 0
+        nodes_matched = 0
         for node_name in network_spec.get_all_nodes():
+            nodes_processed += 1
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
                 continue
@@ -188,13 +204,13 @@ def load_eligible_slots(
             # Add validator indices for this node
             validators = network_spec.get_validators(node_name)
             proposer_indices.extend(validators)
+            nodes_matched += 1
         
-        logger.info(f"Found {len(proposer_indices)} validator indices matching proposer filters")
     
     # Build proposer filter
     proposer_filter = build_proposer_filter(proposer_indices)
     
-    # Get query with filter
+    # Get query with filter (do NOT restrict to sidecars; 0-blob slots are valid)
     query = get_eligible_slots_query().format(proposer_filter=proposer_filter)
     
     params = {
@@ -205,30 +221,249 @@ def load_eligible_slots(
     
     try:
         df = pd.read_sql(query, conn, params=params)
-        logger.info(f"Eligible slots query returned {len(df)} rows")
         if df.empty:
-            return [], {}
+            logger.warning(f"No slots found in database for network {network}")
+            return [], {}, {}
         
         slots = df['slot'].tolist()
         slot_to_block = dict(zip(df['slot'], df['block_root']))
+        slot_to_proposer = dict(zip(df['slot'], df['proposer_index']))
         
-        logger.info(f"Found {len(slots)} eligible slots with proposer filters")
-        return slots, slot_to_block
+        logger.info(f"Found {len(slots)} eligible slots")
+        return slots, slot_to_block, slot_to_proposer
     except Exception as e:
         logger.error(f"Error loading eligible slots: {e}")
-        return [], {}
+        return [], {}, {}
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
+def _build_attester_map_union_selects(network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]]) -> str:
+    """Build UNION ALL SELECT mapping for validator->group using network_spec ranges."""
+    logger.info(f"Building attester map: attester_type={attester_type}, cl_filter={cl_filter}, el_filter={el_filter}")
+    
+    selects = []
+    if not network_spec:
+        logger.error("No network_spec provided to _build_attester_map_union_selects")
+        return ""
+
+    nodes_processed = 0
+    nodes_included = 0
+    
+    for node_name in network_spec.get_all_nodes():
+        nodes_processed += 1
+        node_info = network_spec.get_node_info(node_name) or {}
+        v_range = network_spec.get_validator_range(node_name)
+        
+        if not v_range:
+            logger.debug(f"Node {node_name} has no validator range, skipping")
+            continue
+        start, end = v_range
+
+        tags = network_spec.get_node_tags(node_name) or []
+        node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
+
+        # Apply attester-type filter
+        if attester_type == 'supernode' and not node_is_supernode:
+            continue
+        if attester_type == 'regular' and node_is_supernode:
+            continue
+
+        # Extract clients from tags
+        cl = ''
+        el = ''
+        cl_tags = []
+        el_tags = []
+        
+        for tag in tags:
+            if tag.startswith('cl:'):
+                parts = tag.split(':')
+                if len(parts) == 2 and parts[1]:
+                    cl_tags.append(parts[1])
+                else:
+                    logger.error(f"Node {node_name} has malformed CL tag: '{tag}'")
+            elif tag.startswith('el:'):
+                parts = tag.split(':')
+                if len(parts) == 2 and parts[1]:
+                    el_tags.append(parts[1])
+                else:
+                    logger.error(f"Node {node_name} has malformed EL tag: '{tag}'")
+        
+        cl = cl_tags[0] if cl_tags else ''
+        el = el_tags[0] if el_tags else ''
+
+        # Validate client info when filtering is required
+        if cl_filter or el_filter:
+            if cl_filter and not cl:
+                logger.error(f"Node {node_name} has no CL client information but CL filter is applied! Available tags: {tags}")
+                raise ValueError(f"Missing CL client info for node {node_name} when CL filtering is required")
+            
+            if el_filter and not el:
+                logger.error(f"Node {node_name} has no EL client information but EL filter is applied! Available tags: {tags}")
+                raise ValueError(f"Missing EL client info for node {node_name} when EL filtering is required")
+
+        # Apply client filters if provided
+        if cl_filter and cl not in cl_filter:
+            continue
+        if el_filter and el not in el_filter:
+            continue
+
+        node_type = 'supernode' if node_is_supernode else 'regular'
+        select_sql = f"SELECT arrayJoin(range({int(start)},{int(end)})) AS validator_index, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client"
+        selects.append(select_sql)
+        nodes_included += 1
+        
+        # Debug: Log nodes that don't have clear supernode determination
+        if not node_is_supernode and 'supernode' not in tags and not node_info.get('attributes', {}).get('supernode', False):
+            logger.debug(f"DEBUG: Node {node_name} classified as 'regular' - tags: {tags}, supernode attr: {node_info.get('attributes', {}).get('supernode')}")
+
+    logger.info(f"Processed {nodes_processed} nodes, included {nodes_included} in attester map")
+    
+    result = "\nUNION ALL\n".join(selects)
+    return result
+
+
+def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], slot_to_proposer: Dict[int, int] = None) -> str:
+    """Build UNION ALL SELECT mapping for slot->proposer characteristics using network_spec."""
+    logger.info(f"Building proposer map for {len(eligible_slots)} eligible slots")
+    
+    if not network_spec or not eligible_slots:
+        logger.error("No network_spec or eligible_slots provided")
+        return ""
+    
+    # Build validator_index -> node mapping from network spec (cached)
+    if not hasattr(_build_proposer_map_union_selects, '_validator_to_node_cache'):
+        validator_to_node = {}
+        for node_name in network_spec.get_all_nodes():
+            v_range = network_spec.get_validator_range(node_name)
+            if v_range:
+                start, end = v_range
+                for validator_index in range(int(start), int(end)):
+                    validator_to_node[validator_index] = node_name
+        _build_proposer_map_union_selects._validator_to_node_cache = validator_to_node
+    
+    validator_to_node = _build_proposer_map_union_selects._validator_to_node_cache
+    
+    selects = []
+    validator_indices = list(validator_to_node.keys())
+    if not validator_indices:
+        return ""
+    
+    for slot in eligible_slots:
+        # Get actual proposer index from database - NEVER use approximations
+        if not slot_to_proposer or slot not in slot_to_proposer:
+            logger.error(f"Missing proposer index for slot {slot} - skipping")
+            continue
+            
+        proposer_index = slot_to_proposer[slot]
+        
+        # Skip if proposer not in our validator mapping
+        if proposer_index not in validator_to_node:
+            continue
+            
+        node_name = validator_to_node[proposer_index]
+        
+        # Get node characteristics (cached per node)
+        cache_key = f"node_chars_{node_name}"
+        if not hasattr(_build_proposer_map_union_selects, cache_key):
+            node_info = network_spec.get_node_info(node_name) or {}
+            tags = network_spec.get_node_tags(node_name) or []
+            node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
+            
+            # Extract clients from tags
+            cl = ''
+            el = ''
+            for tag in tags:
+                if tag.startswith('cl:') and len(tag.split(':')) == 2:
+                    cl = tag.split(':')[1]
+                elif tag.startswith('el:') and len(tag.split(':')) == 2:
+                    el = tag.split(':')[1]
+            
+            node_type = 'supernode' if node_is_supernode else 'regular'
+            setattr(_build_proposer_map_union_selects, cache_key, (node_type, cl, el))
+        
+        node_type, cl, el = getattr(_build_proposer_map_union_selects, cache_key)
+        
+        # Build SELECT for this slot
+        select_sql = f"SELECT {slot} AS slot, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client"
+        selects.append(select_sql)
+    
+    logger.info(f"Built proposer map for {len(selects)} slots")
+    result = "\nUNION ALL\n".join(selects)
+    return result
+
+
+def _build_group_index_map(
+    network_spec,
+    grouping_dimension: str,
+    attester_type: Optional[str],
+    cl_filter: Optional[List[str]],
+    el_filter: Optional[List[str]]
+) -> Dict[str, List[int]]:
+    """Build a mapping of group_key -> validator indices using network_spec."""
+    groups: Dict[str, List[int]] = {}
+    if not network_spec:
+        return groups
+
+    for node_name in network_spec.get_all_nodes():
+        node_info = network_spec.get_node_info(node_name) or {}
+        v_range = network_spec.get_validator_range(node_name)
+        if not v_range:
+            continue
+        start, end = v_range
+        tags = network_spec.get_node_tags(node_name) or []
+        node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
+        clients = network_spec.get_node_clients(node_name)
+        cl = clients.get('cl') or ''
+        el = clients.get('el') or ''
+
+        # Apply filters
+        if attester_type == 'supernode' and not node_is_supernode:
+            continue
+        if attester_type == 'regular' and node_is_supernode:
+            continue
+        if cl_filter and cl not in cl_filter:
+            continue
+        if el_filter and el not in el_filter:
+            continue
+
+        if grouping_dimension == 'node_type':
+            key = 'supernode' if node_is_supernode else 'regular'
+        elif grouping_dimension == 'cl_client':
+            if not cl:
+                continue
+            key = cl
+        elif grouping_dimension == 'el_client':
+            if not el:
+                continue
+            key = el
+        elif grouping_dimension == 'cl_el_combined':
+            if not cl or not el:
+                continue
+            key = f"{cl}-{el}"
+        elif grouping_dimension == 'cl_node_type':
+            if not cl:
+                continue
+            node_type = 'supernode' if node_is_supernode else 'regular'
+            key = f"{cl}-{node_type}"
+        else:
+            key = 'all'
+
+        groups.setdefault(key, []).extend(range(int(start), int(end)))
+
+    return groups
+
+
 def load_head_correctness_data(
     network: str,
     start_date: datetime,
     end_date: datetime,
     eligible_slots: List[int],
     slot_to_block: Dict[int, str],
+    slot_to_proposer: Dict[int, int] = None,
     attester_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
+    grouping_dimension: Optional[str] = None,
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
@@ -245,15 +480,21 @@ def load_head_correctness_data(
         end_date: End of analysis period
         eligible_slots: List of slots to analyze
         slot_to_block: Mapping of slot to canonical block_root
+        slot_to_proposer: Mapping of slot to proposer_index
         attester_type: Filter by attester node type
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
+        grouping_dimension: Optional grouping dimension
         cluster_name: Optional cluster name
         
     Returns:
         DataFrame with head correctness data by slot
     """
+    logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots")
+    
+    
     if not eligible_slots:
+        logger.warning("No eligible slots provided")
         return pd.DataFrame()
     
     conn = get_database_connection(cluster_name)
@@ -263,6 +504,8 @@ def load_head_correctness_data(
     
     # Get network spec for validator mapping
     network_spec = get_network_spec(network)
+    logger.info(f"Network spec loaded: {network_spec is not None}, nodes: {len(network_spec.get_all_nodes()) if network_spec else 0}")
+    
     
     # Format the slots list directly into the query for ClickHouse IN clause
     slots_str = '(' + ','.join(str(s) for s in eligible_slots) + ')'
@@ -311,143 +554,165 @@ def load_head_correctness_data(
             validator_indices.extend(validators)
     
     try:
-        logger.info(f"Loading head correctness data for {len(eligible_slots)} slots")
-        
-        # Step 1: Get committee assignments (total validators scheduled to attest)
-        committee_query = get_committee_assignments_query().replace('%(eligible_slots)s', slots_str)
-        committee_params = {
+
+        params = {
             'network': network,
             'start_date': start_date,
-            'end_date': end_date
+            'end_date': end_date,
         }
-        
-        committee_df = pd.read_sql(committee_query, conn, params=committee_params)
-        logger.info(f"Committee assignments query returned {len(committee_df)} validator assignments")
-        
-        # Check if committee data exists
-        if committee_df.empty:
-            error_msg = (f"No committee data found for network '{network}' in time range "
-                        f"{start_date} to {end_date}. Committee data is required to calculate "
-                        f"head correctness percentages. Check both canonical_beacon_committee and "
-                        f"beacon_api_eth_v1_beacon_committee tables.")
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        # Step 2: Get attestations with head vote information
-        validator_filter = build_validator_filter(validator_indices)
-        attestations_query = get_head_correctness_attestations_query().format(validator_filter=validator_filter)
-        attestations_query = attestations_query.replace('%(eligible_slots)s', slots_str)
-        
-        attestations_df = pd.read_sql(attestations_query, conn, params=committee_params)
-        logger.info(f"Head correctness attestations query returned {len(attestations_df)} attestations")
-        
-        # Step 3: Get blob counts for slots
-        blob_query = get_blob_counts_query().replace('%(eligible_slots)s', slots_str)
-        blob_df = pd.read_sql(blob_query, conn, params=committee_params)
-        logger.info(f"Blob counts query returned {len(blob_df)} slot blob counts")
-        
-        # Step 4: Calculate head correctness for each slot
-        results = []
-        
-        for slot in eligible_slots:
-            canonical_block_root = slot_to_block.get(slot)
-            if not canonical_block_root:
-                continue
+
+        if grouping_dimension:
             
-            # Get total validators for this slot
-            slot_committee = committee_df[committee_df['slot'] == slot]
-            if slot_committee.empty:
-                logger.warning(f"No committee data for slot {slot}, skipping")
-                continue
+            # Process slots in chunks to avoid query size limits with parallelization
+            chunk_size = 500  # Process 500 slots at a time
+            chunks = [eligible_slots[i:i + chunk_size] for i in range(0, len(eligible_slots), chunk_size)]
             
-            total_validators = len(slot_committee)
+            def process_chunk(chunk_data):
+                chunk_idx, slot_chunk = chunk_data
+                try:
+                    # Build proposer map for this chunk
+                    proposer_map_sql = _build_proposer_map_union_selects(network_spec, slot_chunk, slot_to_proposer)
+                    
+                    if not proposer_map_sql:
+                        logger.warning(f"No proposer mapping for chunk {chunk_idx + 1}")
+                        return None
+
+                    sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
+                    
+                    # Create slot string for this chunk
+                    chunk_slots_str = '(' + ','.join(str(s) for s in slot_chunk) + ')'
+                    sql = sql.replace('%(eligible_slots)s', chunk_slots_str)
+                    sql = sql.replace('{proposer_map_union_selects}', proposer_map_sql)
+                    
+                    # Create new connection for this thread
+                    chunk_conn = get_database_connection(cluster_name)
+                    if not chunk_conn:
+                        logger.error(f"Failed to get database connection for chunk {chunk_idx + 1}")
+                        return None
+                    
+                    chunk_df = pd.read_sql(sql, chunk_conn, params=params)
+                    logger.info(f"Chunk {chunk_idx + 1} returned {len(chunk_df)} rows")
+                    return chunk_df if not chunk_df.empty else None
+                    
+                except Exception as e:
+                    logger.error(f"Chunk {chunk_idx + 1} failed: {e}")
+                    return None
             
-            # Get attestations for this slot
-            slot_attestations = attestations_df[attestations_df['slot'] == slot]
+            # Process chunks in parallel (5 at a time)
+            all_dfs = []
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                # Submit all chunks
+                future_to_chunk = {
+                    executor.submit(process_chunk, (i, chunk)): i 
+                    for i, chunk in enumerate(chunks)
+                }
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_chunk):
+                    chunk_idx = future_to_chunk[future]
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            all_dfs.append(result)
+                    except Exception as e:
+                        logger.error(f"Chunk {chunk_idx + 1} future failed: {e}")
             
-            # Count correct head votes (attestations that match canonical block_root)
-            correct_votes = len(slot_attestations[slot_attestations['beacon_block_root'] == canonical_block_root])
+            if not all_dfs:
+                st.error("❌ **No data returned from any chunks**")
+                return pd.DataFrame()
             
-            # Count total attestations for this slot
-            total_attestations = len(slot_attestations)
+            # Combine all chunks
+            df = pd.concat(all_dfs, ignore_index=True)
+            logger.info(f"Combined {len(chunks)} chunks: {len(df)} total rows")
+
+            # Add labels
+            df['group_key'] = df['group_key'].astype(str)
+            if grouping_dimension == 'node_type':
+                df['group_label'] = df['group_key'].map({'supernode': 'Supernode', 'regular': 'Regular Node'}).fillna(df['group_key'])
+            elif grouping_dimension == 'cl_client':
+                df['group_label'] = df['group_key'].str.title()
+            elif grouping_dimension == 'el_client':
+                df['group_label'] = df['group_key'].str.title()
+            elif grouping_dimension == 'cl_el_combined':
+                df['group_label'] = df['group_key'].apply(lambda s: ' + '.join([p.title() for p in s.split('-')]) if isinstance(s, str) else s)
+            elif grouping_dimension == 'cl_node_type':
+                def format_cl_node_type(s):
+                    if isinstance(s, str) and '-' in s:
+                        parts = s.split('-')
+                        if len(parts) == 2:
+                            cl, node_type = parts
+                            node_type_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                            return f"{cl.title()} + {node_type_label}"
+                    return s
+                df['group_label'] = df['group_key'].apply(format_cl_node_type)
+            else:
+                df['group_label'] = df['group_key']
+
+            return df
+        else:
+            # Non-grouped per-slot computation
+            validator_filter = build_validator_filter(validator_indices)
+            sql = get_head_correctness_per_slot_query().format(
+                validator_filter=f"\n      {validator_filter}" if validator_filter else ""
+            )
+            sql = sql.replace('%(eligible_slots)s', slots_str)
             
-            # Calculate head correctness percentage
-            head_correctness_pct = (correct_votes / total_validators * 100) if total_validators > 0 else 0
-            
-            # Get blob count for this slot
-            slot_blob = blob_df[blob_df['slot'] == slot]
-            
-            # Only include slots with blob data for PeerDAS analysis
-            # If there's no data_column_sidecar data, skip this slot
-            if slot_blob.empty:
-                logger.debug(f"No blob data for slot {slot}, skipping")
-                continue
-            
-            blob_count = slot_blob['blob_count'].iloc[0]
-            
-            results.append({
-                'slot': slot,
-                'total_validators_assigned': total_validators,
-                'total_attestations': total_attestations,
-                'correct_head_votes': correct_votes,
-                'head_correctness_pct': head_correctness_pct,
-                'blob_count': blob_count,
-                'canonical_block_root': canonical_block_root
+
+            df = pd.read_sql(sql, conn, params=params)
+
+            if df.empty:
+                # Let's check individual table availability for this slot range
+                
+                # Check committee data
+                committee_test_sql = f"""
+                SELECT COUNT(*) as count FROM canonical_beacon_committee 
+                WHERE meta_network_name = %(network)s 
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
+                """
+                try:
+                    committee_count = pd.read_sql(committee_test_sql, conn, params=params).iloc[0]['count']
+                except Exception as e:
+                    pass
+                
+                # Check attestation data  
+                attestation_test_sql = f"""
+                SELECT COUNT(*) as count FROM beacon_api_eth_v1_events_attestation 
+                WHERE meta_network_name = %(network)s 
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
+                """
+                try:
+                    attestation_count = pd.read_sql(attestation_test_sql, conn, params=params).iloc[0]['count']
+                except Exception as e:
+                    pass
+                
+                # Check sidecar data
+                sidecar_test_sql = f"""
+                SELECT COUNT(*) as count FROM beacon_api_eth_v1_events_data_column_sidecar 
+                WHERE meta_network_name = %(network)s 
+                AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                AND slot IN {slots_str[:50]}  -- limit to first few slots for test
+                """
+                try:
+                    sidecar_count = pd.read_sql(sidecar_test_sql, conn, params=params).iloc[0]['count']
+                except Exception as e:
+                    pass
+                
+                return pd.DataFrame()
+
+            df = df.rename(columns={
+                'slot': 'slot',
+                'blob_count': 'blob_count',
+                'head_correctness_pct': 'head_correctness_pct',
+                'total_scheduled': 'total_validators_assigned',
+                'correct_votes': 'correct_head_votes'
             })
-        
-        if not results:
-            logger.warning("No head correctness data calculated - possible causes:")
-            logger.warning("1. No data_column_sidecar data available for selected slots")
-            logger.warning("2. No committee data available for selected slots")
-            logger.warning("3. No matching attestation data found")
-            return pd.DataFrame()
-        
-        result_df = pd.DataFrame(results)
-        
-        # Add validator node information if network spec is available
-        if network_spec:
-            # For head correctness analysis, we aggregate by slot rather than individual validators
-            # But we can add metadata about which node types were involved
-            def get_slot_validator_distribution(slot_val):
-                """Get distribution of validator node types for a slot."""
-                slot_committee = committee_df[committee_df['slot'] == slot_val]
-                if slot_committee.empty:
-                    return pd.Series({
-                        'supernode_validators': 0,
-                        'regular_validators': 0,
-                        'unknown_validators': 0
-                    })
-                
-                supernode_count = 0
-                regular_count = 0
-                unknown_count = 0
-                
-                for validator_idx in slot_committee['validator_index']:
-                    node_name = network_spec.get_validator_node(int(validator_idx))
-                    if node_name:
-                        node_info = network_spec.get_node_info(node_name)
-                        if node_info and 'supernode' in node_info.get('tags', []):
-                            supernode_count += 1
-                        else:
-                            regular_count += 1
-                    else:
-                        unknown_count += 1
-                
-                return pd.Series({
-                    'supernode_validators': supernode_count,
-                    'regular_validators': regular_count,
-                    'unknown_validators': unknown_count
-                })
-            
-            # Apply validator distribution to dataframe
-            validator_dist = result_df['slot'].apply(get_slot_validator_distribution)
-            result_df = pd.concat([result_df, validator_dist], axis=1)
-        
-        logger.info(f"Calculated head correctness for {len(result_df)} slots")
-        return result_df
-        
+            return df
+
     except Exception as e:
         logger.error(f"Error loading head correctness data: {e}")
+        import traceback
         return pd.DataFrame()
 
 

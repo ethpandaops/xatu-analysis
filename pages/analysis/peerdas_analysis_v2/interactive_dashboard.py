@@ -31,6 +31,7 @@ from loader import (
 from plot_generators import (
     create_head_correctness_boxplot,
     create_head_correctness_chart,
+    create_head_correctness_violin,
     create_advanced_grouped_boxplot
 )
 
@@ -81,10 +82,10 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Time range selection
     st.sidebar.subheader("📅 Time Range")
     
-    # Set default time range for fusaka-devnet-4
+    # Set default time range for fusaka-devnet-4 (window with rich sidecar data)
     if network == 'fusaka-devnet-4':
-        default_start = datetime(2025, 8, 14, 0, 0, 0)
-        default_end = datetime(2025, 8, 14, 2, 0, 0)
+        default_start = datetime(2025, 8, 12, 0, 0, 0)
+        default_end = datetime(2025, 8, 12, 2, 0, 0)
     else:
         # Default to last 24 hours for other networks
         default_end = datetime.now()
@@ -120,18 +121,27 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Bucketing options for blob count
     st.sidebar.subheader("🗂️ Blob Count Bucketing")
     
-    bucket_size = st.sidebar.slider(
-        "Bucket Size",
+    num_buckets = st.sidebar.slider(
+        "Number of Buckets",
         min_value=1,
         max_value=12,
         value=6,
-        help="Group blob counts into buckets (e.g., 0-5, 6-11, 12-17)"
+        help="Number of buckets to divide blob counts into (automatically calculates bucket size based on data range)"
     )
-    
-    auto_scale_buckets = st.sidebar.checkbox(
-        "Auto-scale buckets",
-        value=True,
-        help="Automatically adjust bucket size based on maximum blob count in data"
+
+    # Grouping selection (used server-side)
+    st.sidebar.subheader("🧩 Grouping")
+    grouping_dimension = st.sidebar.selectbox(
+        "Grouping Dimension",
+        options=['node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type'],
+        format_func=lambda x: {
+            'node_type': 'Node Type',
+            'cl_client': 'CL Client',
+            'el_client': 'EL Client',
+            'cl_el_combined': 'CL+EL Combination',
+            'cl_node_type': 'CL+Node Type'
+        }[x],
+        help="Compute head-correctness per slot per group directly in ClickHouse"
     )
     
     # Proposer filtering
@@ -150,14 +160,14 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     proposer_cl = st.sidebar.multiselect(
         "Proposer CL Clients",
-        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar"],
-        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar"],
+        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
+        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
         help="Filter by proposer consensus layer client"
     )
     
     proposer_el = st.sidebar.multiselect(
         "Proposer EL Clients",
-        options=["geth", "nethermind", "besu", "erigon", "reth"],
+        options=["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"],
         default=["geth", "nethermind", "besu", "erigon", "reth"],
         help="Filter by proposer execution layer client"
     )
@@ -178,19 +188,42 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     attester_cl = st.sidebar.multiselect(
         "Attester CL Clients",
-        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar"],
-        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar"],
+        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
+        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
         help="Filter by attester consensus layer client"
     )
     
     attester_el = st.sidebar.multiselect(
         "Attester EL Clients",
-        options=["geth", "nethermind", "besu", "erigon", "reth"],
+        options=["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"],
         default=["geth", "nethermind", "besu", "erigon", "reth"],
         help="Filter by attester execution layer client"
     )
     
     # Load data button
+    st.sidebar.markdown("---")
+    
+    # Chart Options
+    st.sidebar.subheader("📊 Chart Options")
+    
+    chart_type = st.sidebar.selectbox(
+        "Chart Type",
+        options=['boxplot', 'violin', 'scatter'],
+        format_func=lambda x: {
+            'boxplot': 'Box Plot Distribution',
+            'violin': 'Violin Plot Distribution',
+            'scatter': 'Scatter Plot with Trend'
+        }[x]
+    )
+    
+    show_trend_line = False
+    if chart_type == 'scatter':
+        show_trend_line = st.sidebar.checkbox(
+            "Show trend line",
+            value=True,
+            help="Display trend line on scatter plot"
+        )
+    
     st.sidebar.markdown("---")
     
     col1, col2 = st.sidebar.columns([2, 1])
@@ -201,25 +234,29 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             st.cache_data.clear()
             st.session_state.analysis_data = {}
             st.session_state.data_loaded = False
-            st.sidebar.success("Cache cleared!")
+            # Force clear all caches
+            st.rerun()
+            st.sidebar.success("Cache cleared and page refreshed!")
     
     # If all clients are selected, treat as no filter (None)
-    all_cl_clients = ["lighthouse", "prysm", "teku", "nimbus", "lodestar"]
-    all_el_clients = ["geth", "nethermind", "besu", "erigon", "reth"]
+    all_cl_clients = ["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"]
+    all_el_clients = ["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"]
     
     return {
         'cluster': cluster,
         'network': network,
         'start_datetime': start_datetime,
         'end_datetime': end_datetime,
-        'bucket_size': bucket_size,
-        'auto_scale_buckets': auto_scale_buckets,
+        'num_buckets': num_buckets,
+        'grouping_dimension': grouping_dimension,
         'proposer_type': proposer_type if proposer_type != "all" else None,
         'proposer_cl': proposer_cl if proposer_cl and set(proposer_cl) != set(all_cl_clients) else None,
         'proposer_el': proposer_el if proposer_el and set(proposer_el) != set(all_el_clients) else None,
         'attester_type': attester_type if attester_type != "all" else None,
         'attester_cl': attester_cl if attester_cl and set(attester_cl) != set(all_cl_clients) else None,
         'attester_el': attester_el if attester_el and set(attester_el) != set(all_el_clients) else None,
+        'chart_type': chart_type,
+        'show_trend_line': show_trend_line,
         'load_data': load_data
     }
 
@@ -237,7 +274,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
     with st.spinner("🔄 Loading head correctness data..."):
         try:
             # Load eligible slots (filtered by proposer)
-            eligible_slots, slot_to_block = load_eligible_slots(
+            eligible_slots, slot_to_block, slot_to_proposer = load_eligible_slots(
                 network=config['network'],
                 start_date=config['start_datetime'],
                 end_date=config['end_datetime'],
@@ -248,10 +285,9 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
             )
             
             if not eligible_slots:
-                st.warning("No eligible slots found for the selected proposer filters")
+                st.error("No eligible slots found for the selected proposer filters and time range")
+                st.cache_data.clear()
                 return None
-            
-            st.info(f"Found {len(eligible_slots)} eligible slots")
             
             # Load head correctness data
             data = load_head_correctness_data(
@@ -260,31 +296,32 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 end_date=config['end_datetime'],
                 eligible_slots=eligible_slots,
                 slot_to_block=slot_to_block,
+                slot_to_proposer=slot_to_proposer,
                 attester_type=config.get('attester_type'),
                 cl_filter=config.get('attester_cl'),
                 el_filter=config.get('attester_el'),
+                grouping_dimension=config.get('grouping_dimension'),
                 cluster_name=config['cluster']
             )
             
             if data.empty:
+                st.error("No head correctness data returned!")
                 st.warning("""
                 No head correctness data found for the selected filters.
                 
                 **Possible causes:**
                 - No data_column_sidecar data available for the selected time range
-                - No committee data available (check beacon_api_eth_v1_beacon_committee)
+                - No committee data available
                 - No attestation data found for the eligible slots
                 
                 **Note:** PeerDAS analysis requires data_column_sidecar data to determine blob counts.
                 Try selecting a different time range where data_column_sidecar data is available.
                 """)
+                # Clear cache to avoid bad data persistence
+                st.cache_data.clear()
+                st.session_state.analysis_data = {}
+                st.session_state.data_loaded = False
                 return None
-            
-            st.success(f"Loaded head correctness data for {len(data):,} slots")
-            
-            # Display blob count distribution
-            if 'blob_count' in data.columns:
-                st.info(f"Blob count distribution: {data['blob_count'].value_counts().sort_index().to_dict()}")
             
             # Store in session state
             st.session_state.analysis_data = {
@@ -311,11 +348,6 @@ def main():
     render_global_header()
     cluster = get_global_cluster()
     network = get_global_network()
-    
-    # Page title
-    st.title("🎯 PeerDAS Analysis V2: Head Correctness Analysis")
-    st.markdown("Analyze attestation head correctness (voting for correct block_root) with advanced grouping by blob count, node type, and client implementations")
-    
     # Render sidebar configuration
     config = render_sidebar_config(cluster, network)
     
@@ -324,44 +356,6 @@ def main():
         data = load_and_process_head_correctness_data(config)
         
         if data is not None and not data.empty:
-            # Chart configuration options
-            st.markdown("---")
-            with st.expander("📊 Chart Options", expanded=True):
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    chart_type = st.selectbox(
-                        "Chart Type",
-                        options=['boxplot', 'scatter'],
-                        format_func=lambda x: {
-                            'boxplot': 'Box Plot Distribution',
-                            'scatter': 'Scatter Plot with Trend'
-                        }[x]
-                    )
-                
-                with col2:
-                    if chart_type == 'boxplot':
-                        grouping_dimension = st.selectbox(
-                            "Group by",
-                            options=['node_type', 'cl_client', 'el_client', 'cl_el_combined', 'region'],
-                            index=0,
-                            format_func=lambda x: {
-                                'node_type': 'Node Type (Supernode/Regular)',
-                                'cl_client': 'CL Client Type',
-                                'el_client': 'EL Client Type',
-                                'cl_el_combined': 'CL+EL Client Combination',
-                                'region': 'Network Region'
-                            }[x],
-                            help="Dimension to group box plots by"
-                        )
-                    else:
-                        show_trend_line = st.checkbox(
-                            "Show trend line",
-                            value=True,
-                            help="Display trend line on scatter plot"
-                        )
-                        grouping_dimension = None
-            
             # Create the visualization
             st.markdown("---")
             
@@ -373,52 +367,53 @@ def main():
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
             
+            # Prepare filter information for chart annotations
+            proposer_filters = {
+                'node_type': config.get('proposer_type'),
+                'cl_filter': config.get('proposer_cl'),
+                'el_filter': config.get('proposer_el')
+            }
+            
+            attester_filters = {
+                'node_type': config.get('attester_type'),
+                'cl_filter': config.get('attester_cl'),
+                'el_filter': config.get('attester_el')
+            }
+            
             # Create chart based on selected type
-            if chart_type == 'boxplot':
-                # Use advanced grouped boxplot for client-based grouping
-                if grouping_dimension in ['cl_client', 'el_client', 'cl_el_combined']:
-                    try:
-                        network_mapping = load_network_mapping(config['network'])
-                        fig = create_advanced_grouped_boxplot(
-                            data=data,
-                            network_spec_data=network_mapping,
-                            bucket_size=config.get('bucket_size'),
-                            network=config['network'],
-                            time_range=time_range,
-                            metadata=metadata,
-                            grouping_dimension=grouping_dimension or 'node_type',
-                            auto_scale_buckets=config.get('auto_scale_buckets', True)
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to create advanced grouped boxplot: {e}")
-                        # Fallback to standard boxplot
-                        fig = create_head_correctness_boxplot(
-                            data=data,
-                            bucket_size=config.get('bucket_size'),
-                            network=config['network'],
-                            time_range=time_range,
-                            metadata=metadata,
-                            grouping_dimension=grouping_dimension or 'node_type',
-                            auto_scale_buckets=config.get('auto_scale_buckets', True)
-                        )
-                else:
-                    fig = create_head_correctness_boxplot(
-                        data=data,
-                        bucket_size=config.get('bucket_size'),
-                        network=config['network'],
-                        time_range=time_range,
-                        metadata=metadata,
-                        grouping_dimension=grouping_dimension or 'node_type',
-                        auto_scale_buckets=config.get('auto_scale_buckets', True)
-                    )
-            else:
-                fig = create_head_correctness_chart(
+            if config['chart_type'] == 'boxplot':
+                fig = create_head_correctness_boxplot(
                     data=data,
-                    bucket_size=config.get('bucket_size') or 6,
+                    num_buckets=config.get('num_buckets'),
                     network=config['network'],
                     time_range=time_range,
                     metadata=metadata,
-                    show_trend_line=show_trend_line if 'show_trend_line' in locals() else True
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters
+                )
+            elif config['chart_type'] == 'violin':
+                fig = create_head_correctness_violin(
+                    data=data,
+                    num_buckets=config.get('num_buckets'),
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters
+                )
+            else:
+                fig = create_head_correctness_chart(
+                    data=data,
+                    num_buckets=config.get('num_buckets') or 6,
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    show_trend_line=config.get('show_trend_line', True),
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters
                 )
             
             # Display the chart
@@ -461,20 +456,11 @@ def main():
                         )
                 
                 # Show grouping information if applicable
-                if chart_type == 'boxplot' and 'grouping_dimension' in locals() and grouping_dimension != 'node_type':
-                    st.info(f"""
-                    **Grouping by {grouping_dimension.replace('_', ' ').title()}**: 
-                    Data is grouped for comparative analysis. Note that for client-based grouping, 
-                    performance variations are simulated based on typical client characteristics.
-                    """)
-                
-                # Show auto-scaling information
-                if config.get('auto_scale_buckets') and config.get('bucket_size'):
-                    max_blobs = data['blob_count'].max() if 'blob_count' in data.columns else 0
-                    st.info(f"""
-                    **Auto-scaling enabled**: Bucket size may be automatically adjusted based on the maximum blob count 
-                    ({max_blobs}) to create approximately 8 buckets for optimal visualization.
-                    """)
+                if config.get('grouping_dimension'):
+                    grouping_info = f"Grouping by: {config['grouping_dimension'].replace('_', ' ').title()}"
+                    if config['chart_type'] == 'scatter':
+                        grouping_info += " (showing p95 percentile)"
+                    st.info(grouping_info)
                 
                 # Show raw data preview
                 if st.checkbox("Show raw data preview"):
@@ -483,28 +469,6 @@ def main():
                         use_container_width=True
                     )
     
-    # Show instructions if no data loaded
-    if not st.session_state.data_loaded:
-        st.info("""
-        👈 **Configure the head correctness analysis parameters in the sidebar:**
-        1. **Time Range**: Select the analysis period
-        2. **Blob Count Bucketing**: Configure bucket sizes for grouping blob counts
-           - Use auto-scaling to automatically adjust bucket sizes based on data
-           - Default bucket size is 6 (creates groups like 0-5, 6-11, 12-17)
-        3. **Proposer/Attester Filters**: Focus on specific node types or clients
-        4. Click "**Load Data**" to begin analysis
-        
-        **After loading data**, choose your visualization:
-        - **Box Plot Distribution**: Shows head correctness distribution with advanced grouping options:
-          - Group by **Node Type** (supernode vs regular nodes)
-          - Group by **CL Client** (lighthouse, prysm, teku, nimbus, lodestar)
-          - Group by **EL Client** (geth, nethermind, besu, erigon, reth)
-          - Group by **CL+EL combinations** for detailed client pair analysis
-        - **Scatter Plot**: Shows trends with optional trend lines
-        
-        **Head correctness** measures the percentage of attestations that voted for the canonical block_root in each slot.
-        Higher blob counts may impact head correctness due to increased network and processing load.
-        """)
 
 
 if __name__ == "__main__":
