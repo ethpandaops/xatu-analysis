@@ -224,14 +224,6 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             value=True,
             help="Display trend line on scatter plot"
         )
-    
-    # Stake weighting option (important for MaxEB networks)
-    use_stake_weighting = st.sidebar.checkbox(
-        "Use Stake Weighting",
-        value=False,
-        help="Weight validators by their effective balance (important for MaxEB validators with >32 ETH). When disabled, each validator counts equally."
-    )
-    
     st.sidebar.markdown("---")
     
     col1, col2 = st.sidebar.columns([2, 1])
@@ -265,7 +257,6 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'attester_el': attester_el if attester_el and set(attester_el) != set(all_el_clients) else None,
         'chart_type': chart_type,
         'show_trend_line': show_trend_line,
-        'use_stake_weighting': use_stake_weighting,
         'load_data': load_data
     }
 
@@ -310,7 +301,6 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 cl_filter=config.get('attester_cl'),
                 el_filter=config.get('attester_el'),
                 grouping_dimension=config.get('grouping_dimension'),
-                use_stake_weighting=config.get('use_stake_weighting', False),
                 cluster_name=config['cluster']
             )
             

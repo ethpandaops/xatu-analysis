@@ -28,9 +28,7 @@ from queries import (
     build_proposer_filter,
     build_validator_filter,
     get_head_correctness_per_slot_query,
-    get_head_correctness_per_slot_stake_weighted_query,
     get_head_correctness_per_slot_grouped_query,
-    get_head_correctness_per_slot_grouped_stake_weighted_query,
     get_committee_distinct_validators_query
 )
 
@@ -487,7 +485,6 @@ def load_head_correctness_data(
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
-    use_stake_weighting: bool = False,
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
@@ -509,13 +506,12 @@ def load_head_correctness_data(
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
         grouping_dimension: Optional grouping dimension
-        use_stake_weighting: If True, weight by effective balance (for MaxEB validators)
         cluster_name: Optional cluster name
         
     Returns:
         DataFrame with head correctness data by slot
     """
-    logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots, stake_weighting={use_stake_weighting}")
+    logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots")
     
     
     if not eligible_slots:
@@ -664,16 +660,14 @@ def load_head_correctness_data(
                         logger.warning(f"No proposer mapping for chunk {chunk_idx + 1} - network spec missing or invalid")
                         return None
 
-                    # Choose query based on stake weighting preference
-                    if use_stake_weighting:
-                        sql = get_head_correctness_per_slot_grouped_stake_weighted_query(group_by=grouping_dimension)
-                    else:
-                        sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
+                    # Use the grouped query
+                    sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
                     
                     # Create slot string for this chunk
                     chunk_slots_str = '(' + ','.join(str(s) for s in slot_chunk) + ')'
                     sql = sql.replace('%(eligible_slots)s', chunk_slots_str)
                     sql = sql.replace('{proposer_map_union_selects}', proposer_map_sql)
+                    sql = sql.replace('{validator_filter}', '')  # No validator filtering for grouped queries
                     
                     # Create new connection for this thread
                     chunk_conn = get_database_connection(cluster_name)
@@ -762,16 +756,7 @@ def load_head_correctness_data(
                             """)
             
             if not all_dfs:
-                st.error("""
-                ❌ **No data returned from query**
-                
-                Possible causes:
-                - No blocks proposed in the selected time range
-                - No attestation data available for the selected slots
-                - No data_column_sidecar data for blob count determination
-                
-                Try selecting a different time range or network.
-                """)
+                # Error already shown from SQL errors above if any
                 return pd.DataFrame()
             
             # Combine all chunks
@@ -806,15 +791,10 @@ def load_head_correctness_data(
             # Non-grouped per-slot computation
             validator_filter = build_validator_filter(validator_indices)
             
-            # Choose query based on stake weighting preference
-            if use_stake_weighting:
-                sql = get_head_correctness_per_slot_stake_weighted_query().format(
-                    validator_filter=f"\n      {validator_filter}" if validator_filter else ""
-                )
-            else:
-                sql = get_head_correctness_per_slot_query().format(
-                    validator_filter=f"\n      {validator_filter}" if validator_filter else ""
-                )
+            # Use the per-slot query
+            sql = get_head_correctness_per_slot_query().format(
+                validator_filter=f"\n      {validator_filter}" if validator_filter else ""
+            )
             sql = sql.replace('%(eligible_slots)s', slots_str)
             
 
