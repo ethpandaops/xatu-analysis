@@ -55,54 +55,39 @@ def get_head_correctness_per_slot_query() -> str:
         AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
       {validator_filter}
     ),
-    attested AS (
-      SELECT slot, arrayJoin(validators) AS validator_index, beacon_block_root
-      FROM canonical_beacon_elaborated_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      {validator_filter}
-      UNION ALL
-      SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-      FROM libp2p_gossipsub_beacon_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-        AND attesting_validator_index IS NOT NULL
-      {validator_filter}
-      UNION ALL
-      SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-      FROM beacon_api_eth_v1_events_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-        AND attesting_validator_index IS NOT NULL
-      {validator_filter}
-    ),
     attested_unique AS (
+      -- Get attestations and check correctness in one step
       -- Only count attestations from validators who were assigned to attest in this slot
-      -- This filters out attestations from slot N+1 validators voting for slot N's block
       SELECT 
         a.slot AS slot, 
         a.validator_index AS validator_index,
         maxIf(1, a.beacon_block_root = e.block_root) AS correct_vote
-      FROM attested a
+      FROM (
+        SELECT slot, arrayJoin(validators) AS validator_index, beacon_block_root
+        FROM canonical_beacon_elaborated_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+        {validator_filter}
+        UNION ALL
+        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
+        FROM libp2p_gossipsub_beacon_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+          AND attesting_validator_index IS NOT NULL
+        {validator_filter}
+        UNION ALL
+        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
+        FROM beacon_api_eth_v1_events_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+          AND attesting_validator_index IS NOT NULL
+        {validator_filter}
+      ) a
       LEFT JOIN eligible_slots e ON a.slot = e.slot
-      WHERE (a.slot, a.validator_index) GLOBAL IN (
-        SELECT slot, arrayJoin(validators) AS validator_index
-        FROM canonical_beacon_committee
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-        {validator_filter}
-        UNION DISTINCT
-        SELECT slot, arrayJoin(validators) AS validator_index
-        FROM beacon_api_eth_v1_beacon_committee
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-        {validator_filter}
-      )
+      INNER JOIN committee_members cm ON a.slot = cm.slot AND a.validator_index = cm.validator_index
       GROUP BY a.slot, a.validator_index
     ),
     blob_counts AS (
@@ -149,33 +134,6 @@ def get_head_correctness_per_slot_query() -> str:
     GROUP BY e.slot, sb.blob_count
     ORDER BY e.slot
     """
-
-
-
-def get_committee_distinct_validators_query() -> str:
-    """
-    Get distinct validator indices scheduled in the eligible slots.
-
-    Uses both canonical_beacon_committee and beacon_api_eth_v1_beacon_committee.
-    """
-    return """
-    SELECT DISTINCT validator_index
-    FROM (
-      SELECT arrayJoin(validators) AS validator_index
-      FROM canonical_beacon_committee
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-      UNION DISTINCT
-      SELECT arrayJoin(validators) AS validator_index
-      FROM beacon_api_eth_v1_beacon_committee
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-    )
-    ORDER BY validator_index
-    """
-
 
 
 def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
@@ -234,52 +192,39 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
     ),
-    attested AS (
-      -- Get all attestations
-      SELECT slot, arrayJoin(validators) AS validator_index, beacon_block_root
-      FROM canonical_beacon_elaborated_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-      UNION ALL
-      SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-      FROM libp2p_gossipsub_beacon_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-        AND attesting_validator_index IS NOT NULL
-      UNION ALL
-      SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-      FROM beacon_api_eth_v1_events_attestation
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-        AND attesting_validator_index IS NOT NULL
-    ),
     attested_unique AS (
+      -- Get attestations and check correctness in one step
       -- Only count attestations from validators who were assigned to attest in this slot
-      -- This filters out attestations from slot N+1 validators voting for slot N's block
       SELECT 
         a.slot AS slot, 
         a.validator_index AS validator_index,
         maxIf(1, a.beacon_block_root = e.block_root) AS correct_vote
-      FROM attested a
+      FROM (
+        SELECT slot, arrayJoin(validators) AS validator_index, beacon_block_root
+        FROM canonical_beacon_elaborated_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+        {{validator_filter}}
+        UNION ALL
+        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
+        FROM libp2p_gossipsub_beacon_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+          AND attesting_validator_index IS NOT NULL
+        {{validator_filter}}
+        UNION ALL
+        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
+        FROM beacon_api_eth_v1_events_attestation
+        WHERE meta_network_name = %(network)s
+          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+          AND slot GLOBAL IN %(eligible_slots)s
+          AND attesting_validator_index IS NOT NULL
+        {{validator_filter}}
+      ) a
       LEFT JOIN eligible_slots e ON a.slot = e.slot
-      WHERE (a.slot, a.validator_index) GLOBAL IN (
-        SELECT slot, arrayJoin(validators) AS validator_index
-        FROM canonical_beacon_committee
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-        {{validator_filter}}
-        UNION DISTINCT
-        SELECT slot, arrayJoin(validators) AS validator_index
-        FROM beacon_api_eth_v1_beacon_committee
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-        {{validator_filter}}
-      )
+      INNER JOIN committee_members cm ON a.slot = cm.slot AND a.validator_index = cm.validator_index
       GROUP BY a.slot, a.validator_index
     ),
     blob_counts AS (
@@ -335,6 +280,7 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     ORDER BY e.slot, spi.group_key
     """
 
+
 def get_eligible_slots_query() -> str:
     """
     Get slots where blocks were proposed, filtered by proposer characteristics.
@@ -357,222 +303,6 @@ def get_eligible_slots_query() -> str:
     ORDER BY slot
     """
 
-def get_eligible_slots_with_blob_query() -> str:
-    """
-    Get eligible slots limited to those with blob sidecar data present.
-
-    This prevents confusing states where proposer-eligible slots exist but no
-    sidecar data is available to bucket by blob_count.
-    """
-    return """
-    WITH sidecar_slots AS (
-      SELECT DISTINCT slot
-      FROM (
-        SELECT slot
-        FROM libp2p_gossipsub_data_column_sidecar
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        UNION ALL
-        SELECT slot
-        FROM beacon_api_eth_v1_events_data_column_sidecar
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-      )
-    ),
-    blocks AS (
-      SELECT slot, block_root, proposer_index, slot_start_date_time, epoch
-      FROM beacon_api_eth_v2_beacon_block
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        {proposer_filter}
-        AND slot GLOBAL IN (SELECT slot FROM sidecar_slots)
-      GROUP BY slot, block_root, proposer_index, slot_start_date_time, epoch
-      -- In rare cases of multiple blocks per slot, just take any one
-      LIMIT 1 BY slot
-    )
-    SELECT DISTINCT
-        slot,
-        slot_start_date_time,
-        epoch,
-        block_root,
-        proposer_index
-    FROM blocks
-    ORDER BY slot
-    """
-
-def get_committee_assignments_query() -> str:
-    """
-    Get committee assignments for eligible slots.
-    
-    Returns all validators that were scheduled to attest in the given slots.
-    This is needed to calculate head correctness percentages.
-    
-    Uses both canonical_beacon_committee and beacon_api_eth_v1_beacon_committee tables,
-    combining their data with deduplication.
-    """
-    return """
-    SELECT DISTINCT
-        slot,
-        committee_index,
-        validator_index
-    FROM (
-        SELECT 
-            slot,
-            committee_index,
-            arrayJoin(validators) as validator_index
-        FROM canonical_beacon_committee
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-        
-        UNION DISTINCT
-        
-        SELECT 
-            slot,
-            committee_index,
-            arrayJoin(validators) as validator_index
-        FROM beacon_api_eth_v1_beacon_committee
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-    )
-    ORDER BY slot, validator_index
-    """
-
-def get_head_correctness_attestations_query() -> str:
-    """
-    Get attestations for head correctness analysis from multiple sources.
-    
-    Gets attestations with their beacon_block_root to determine if they voted
-    for the correct head. Combines both libp2p gossipsub and canonical elaborated
-    attestations, limiting to 1 attestation per epoch per validator.
-    """
-    return """
-    WITH 
-    -- Source 1: Canonical elaborated attestations
-    canonical_attestations AS (
-        SELECT 
-            slot,
-            arrayJoin(validators) as validator_index,
-            committee_index,
-            beacon_block_root,
-            'canonical_elaborated' as source
-        FROM canonical_beacon_elaborated_attestation
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-            AND validators IS NOT NULL AND length(validators) > 0
-    ),
-    
-    -- Source 2: Libp2p gossipsub attestations
-    libp2p_attestations AS (
-        SELECT 
-            slot,
-            attesting_validator_index as validator_index,
-            committee_index,
-            beacon_block_root,
-            'libp2p_gossipsub' as source
-        FROM libp2p_gossipsub_beacon_attestation FINAL
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-            AND attesting_validator_index IS NOT NULL
-    ),
-    
-    -- Source 3: Beacon API events attestations
-    beacon_api_attestations AS (
-        SELECT 
-            slot,
-            attesting_validator_index as validator_index,
-            committee_index,
-            beacon_block_root,
-            'beacon_api_events' as source
-        FROM beacon_api_eth_v1_events_attestation
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-            AND attesting_validator_index IS NOT NULL
-    ),
-    
-    -- Combine all sources
-    all_attestations AS (
-        SELECT * FROM canonical_attestations
-        UNION ALL
-        SELECT * FROM libp2p_attestations
-        UNION ALL
-        SELECT * FROM beacon_api_attestations
-    ),
-    
-    -- Deduplicate to 1 attestation per epoch per validator
-    -- Use row_number to select first occurrence
-    deduplicated_attestations AS (
-        SELECT 
-            slot,
-            validator_index,
-            committee_index,
-            beacon_block_root,
-            source,
-            ROW_NUMBER() OVER (
-                PARTITION BY intDiv(slot, 32), validator_index 
-                ORDER BY slot, source
-            ) as rn
-        FROM all_attestations
-        WHERE 1=1
-            {validator_filter}
-    )
-    
-    SELECT 
-        slot,
-        validator_index,
-        committee_index,
-        beacon_block_root,
-        source
-    FROM deduplicated_attestations
-    WHERE rn = 1
-    ORDER BY slot, validator_index
-    """
-
-def get_blob_counts_query() -> str:
-    """
-    Get blob counts from data_column_sidecar tables ONLY.
-    
-    Returns blob counts for slots to enable bucketing analysis.
-    Uses kzg_commitments_count (libp2p) or length(kzg_commitments) (beacon_api).
-    
-    NOTE: Only returns data where data_column_sidecar exists. 
-    No fallbacks - if there's no sidecar data, there's no blob data.
-    """
-    return """
-    SELECT DISTINCT
-        slot,
-        blob_count
-    FROM (
-        -- libp2p_gossipsub_data_column_sidecar 
-        SELECT 
-            slot,
-            kzg_commitments_count as blob_count
-        FROM libp2p_gossipsub_data_column_sidecar
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-            AND kzg_commitments_count IS NOT NULL
-        GROUP BY slot, kzg_commitments_count
-        
-        UNION DISTINCT
-        
-        -- beacon_api_eth_v1_events_data_column_sidecar
-        SELECT 
-            slot,
-            length(kzg_commitments) as blob_count
-        FROM beacon_api_eth_v1_events_data_column_sidecar
-        WHERE meta_network_name = %(network)s
-            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-            AND slot IN %(eligible_slots)s
-            AND kzg_commitments IS NOT NULL
-        GROUP BY slot, blob_count
-    )
-    ORDER BY slot
-    """
 
 def get_node_classification_query() -> str:
     """
@@ -599,30 +329,6 @@ def get_node_classification_query() -> str:
     GROUP BY meta_client_name
     """
 
-def get_proposer_blocks_query() -> str:
-    """
-    Get blocks proposed by specific node types/implementations.
-    
-    Used to filter eligible slots based on proposer characteristics.
-    """
-    return """
-    WITH blocks AS (
-      SELECT 
-          slot,
-          block_root,
-          proposer_index,
-          meta_client_name as proposer_client
-      FROM beacon_api_eth_v2_beacon_block
-      WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          {proposer_conditions}
-      GROUP BY slot, block_root, proposer_index, proposer_client
-      -- In rare cases of multiple blocks per slot, just take any one
-      LIMIT 1 BY slot
-    )
-    SELECT * FROM blocks
-    ORDER BY slot
-    """
 
 def build_proposer_filter(proposer_indices: list = None) -> str:
     """
@@ -640,6 +346,7 @@ def build_proposer_filter(proposer_indices: list = None) -> str:
         indices_str = ','.join(str(idx) for idx in proposer_indices)
         return f"AND proposer_index IN ({indices_str})"
     return ""
+
 
 def build_validator_filter(validator_indices: list = None) -> str:
     """

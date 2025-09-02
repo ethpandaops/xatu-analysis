@@ -20,16 +20,11 @@ from shared.database import get_database_connection
 from shared.network_spec import get_network_spec
 from queries import (
     get_eligible_slots_query,
-    get_committee_assignments_query,
-    get_head_correctness_attestations_query,
-    get_blob_counts_query,
     get_node_classification_query,
-    get_proposer_blocks_query,
     build_proposer_filter,
     build_validator_filter,
     get_head_correctness_per_slot_query,
-    get_head_correctness_per_slot_grouped_query,
-    get_committee_distinct_validators_query
+    get_head_correctness_per_slot_grouped_query
 )
 
 # Configure logging
