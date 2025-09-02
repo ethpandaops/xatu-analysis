@@ -33,7 +33,9 @@ from plot_generators import (
     create_head_correctness_boxplot,
     create_head_correctness_chart,
     create_head_correctness_violin,
-    create_advanced_grouped_boxplot
+    create_advanced_grouped_boxplot,
+    create_head_correctness_ecdf,
+    create_head_correctness_cdf
 )
 
 
@@ -209,11 +211,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     chart_type = st.sidebar.selectbox(
         "Chart Type",
-        options=['boxplot', 'violin', 'scatter'],
+        options=['boxplot', 'violin', 'scatter', 'ecdf_diff', 'cdf'],
         format_func=lambda x: {
             'boxplot': 'Box Plot Distribution',
             'violin': 'Violin Plot Distribution',
-            'scatter': 'Scatter Plot with Trend'
+            'scatter': 'Scatter Plot with Trend',
+            'ecdf_diff': 'Difference ECDF',
+            'cdf': 'Cumulative Distribution (CDF)'
         }[x]
     )
     
@@ -394,6 +398,29 @@ def main():
                 )
             elif config['chart_type'] == 'violin':
                 fig = create_head_correctness_violin(
+                    data=data,
+                    num_buckets=config.get('num_buckets'),
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters
+                )
+            elif config['chart_type'] == 'ecdf_diff':
+                fig = create_head_correctness_ecdf(
+                    data=data,
+                    num_buckets=config.get('num_buckets'),
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters,
+                    difference_mode=True
+                )
+            elif config['chart_type'] == 'cdf':
+                fig = create_head_correctness_cdf(
                     data=data,
                     num_buckets=config.get('num_buckets'),
                     network=config['network'],
