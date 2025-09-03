@@ -91,11 +91,12 @@ def create_head_correctness_chart(
     time_range: str = None,
     metadata: Dict[str, Any] = None,
     show_trend_line: bool = True,
+    aggregation_method: str = 'p95',
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None
 ) -> go.Figure:
-    """Create head correctness chart showing p95 accuracy percentage by blob count buckets with grouping."""
+    """Create head correctness chart showing aggregated accuracy percentage by blob count buckets with grouping."""
     if data.empty:
         return go.Figure()
 
@@ -142,9 +143,25 @@ def create_head_correctness_chart(
         gdf = df[df['group_key'] == g]
         glabel = gdf['group_label'].iloc[0] if not gdf.empty else str(g)
         
-        # Calculate p95 for each x value
+        # Calculate aggregation for each x value based on selected method
+        if aggregation_method == 'mean':
+            agg_func = 'mean'
+        elif aggregation_method == 'median':
+            agg_func = 'median'
+        elif aggregation_method == 'min':
+            agg_func = 'min'
+        elif aggregation_method == 'max':
+            agg_func = 'max'
+        elif aggregation_method.startswith('p'):
+            # Extract percentile value (p25, p50, p75, p90, p95, p99)
+            percentile = int(aggregation_method[1:]) / 100.0
+            agg_func = lambda x: x.quantile(percentile)
+        else:
+            # Default to p95
+            agg_func = lambda x: x.quantile(0.95)
+        
         agg = gdf.groupby(x_col).agg({
-            'head_correctness_pct': lambda x: x.quantile(0.95),
+            'head_correctness_pct': agg_func,
             'slot': 'count'
         }).reset_index()
         agg.rename(columns={'slot': 'sample_count'}, inplace=True)
@@ -155,16 +172,30 @@ def create_head_correctness_chart(
         )
         agg = agg[agg['sort_key'] >= 0].sort_values('sort_key')
         
+        # Format aggregation method for display
+        agg_display = {
+            'mean': 'Mean',
+            'median': 'Median',
+            'min': 'Min',
+            'max': 'Max',
+            'p25': '25th %ile',
+            'p50': '50th %ile',
+            'p75': '75th %ile',
+            'p90': '90th %ile',
+            'p95': '95th %ile',
+            'p99': '99th %ile'
+        }.get(aggregation_method, aggregation_method.upper())
+        
         if not agg.empty:
             fig.add_trace(
                 go.Scatter(
                     x=agg[x_col],
                     y=agg['head_correctness_pct'],
                     mode='lines+markers',
-                    name=f'{glabel} (p95)',
+                    name=f'{glabel} ({agg_display})',
                     line=dict(color=colors[idx % len(colors)], width=2),
                     marker=dict(size=6),
-                    hovertemplate=f'<b>{glabel}</b><br>Blob: %{{x}}<br>p95 Head Correctness: %{{y:.1f}}%<br>Samples: %{{customdata}}<extra></extra>',
+                    hovertemplate=f'<b>{glabel}</b><br>Blob: %{{x}}<br>{agg_display} Head Correctness: %{{y:.1f}}%<br>Samples: %{{customdata}}<extra></extra>',
                     customdata=agg['sample_count']
                 )
             )
@@ -196,7 +227,7 @@ def create_head_correctness_chart(
     
     subtitle_line2 = '  |  '.join(filter_parts) if filter_parts else None
     
-    # Set title based on grouping
+    # Set title based on grouping and aggregation method
     group_names = {
         'node_type': 'Node Type',
         'cl_client': 'CL Client', 
@@ -205,7 +236,22 @@ def create_head_correctness_chart(
         'cl_node_type': 'CL+Node Type'
     }
     gname = group_names.get(grouping_dimension, grouping_dimension)
-    main_title = f'Head Correctness (p95) vs. Blob Count by {gname}'
+    
+    # Get display name for aggregation method
+    agg_title = {
+        'mean': 'Mean',
+        'median': 'Median',
+        'min': 'Min',
+        'max': 'Max',
+        'p25': '25th Percentile',
+        'p50': '50th Percentile',
+        'p75': '75th Percentile',
+        'p90': '90th Percentile',
+        'p95': '95th Percentile',
+        'p99': '99th Percentile'
+    }.get(aggregation_method, aggregation_method.upper())
+    
+    main_title = f'Head Correctness ({agg_title}) vs. Blob Count by {gname}'
     if title_suffix:
         main_title += f' — {title_suffix}'
     
@@ -260,10 +306,21 @@ def create_head_correctness_boxplot(
         return go.Figure()
 
     df = data.copy()
+    
+    # Debug logging to see what columns we have
+    logger.info(f"Boxplot received columns: {df.columns.tolist()}")
+    if 'group_key' in df.columns and len(df) > 0:
+        sample_keys = df['group_key'].unique()[:3].tolist()
+        logger.info(f"Sample group_keys: {sample_keys}")
+    if 'group_label' in df.columns and len(df) > 0:
+        sample_labels = df['group_label'].unique()[:3].tolist()
+        logger.info(f"Sample group_labels: {sample_labels}")
+    
     if 'group_key' not in df.columns:
         df['group_key'] = 'all'
         df['group_label'] = 'All Nodes'
     if 'group_label' not in df.columns:
+        logger.warning("group_label column missing, using group_key as fallback")
         df['group_label'] = df['group_key']
 
     # Calculate bucket size from number of buckets
@@ -286,7 +343,51 @@ def create_head_correctness_boxplot(
     colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
     for idx, g in enumerate(sorted(df['group_key'].unique())):
         gdf = df[df['group_key'] == g]
-        glabel = gdf['group_label'].iloc[0] if not gdf.empty else str(g)
+        # Get the group label if it exists, otherwise format the key
+        if 'group_label' in gdf.columns and not gdf.empty:
+            glabel = gdf['group_label'].iloc[0]
+        else:
+            # Format the raw key if label is missing
+            if str(g) == 'mev':
+                glabel = 'Via MEV Relay'
+            elif str(g) == 'non-mev':
+                glabel = 'Locally Built'
+            elif '-mev' in str(g) or '-non-mev' in str(g):
+                if str(g).endswith('-non-mev'):
+                    base = str(g)[:-8]  # Remove '-non-mev'
+                    if base == 'supernode' or base == 'regular':
+                        node_label = 'Supernode' if base == 'supernode' else 'Regular'
+                        glabel = f"{node_label} (Locally built)"
+                    elif '-' in base:
+                        parts = base.split('-')
+                        if len(parts) == 2:
+                            cl, node_type = parts
+                            node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                            glabel = f"{cl.title()} {node_label} (Locally built)"
+                        else:
+                            glabel = str(g)
+                    else:
+                        glabel = str(g)
+                elif str(g).endswith('-mev'):
+                    base = str(g)[:-4]  # Remove '-mev'
+                    if base == 'supernode' or base == 'regular':
+                        node_label = 'Supernode' if base == 'supernode' else 'Regular'
+                        glabel = f"{node_label} (Via MEV)"
+                    elif '-' in base:
+                        parts = base.split('-')
+                        if len(parts) == 2:
+                            cl, node_type = parts
+                            node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                            glabel = f"{cl.title()} {node_label} (Via MEV)"
+                        else:
+                            glabel = str(g)
+                    else:
+                        glabel = str(g)
+                else:
+                    glabel = str(g)
+            else:
+                glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
+        
         fig.add_trace(
             go.Box(
                 x=gdf[x_col],
@@ -412,7 +513,27 @@ def create_head_correctness_violin(
     
     for idx, g in enumerate(sorted(df['group_key'].unique())):
         gdf = df[df['group_key'] == g]
-        glabel = gdf['group_label'].iloc[0] if not gdf.empty else str(g)
+        # Get the group label if it exists, otherwise format the key
+        if 'group_label' in gdf.columns and not gdf.empty:
+            glabel = gdf['group_label'].iloc[0]
+        else:
+            # Format the raw key if label is missing
+            if '-mev' in str(g) or '-non-mev' in str(g):
+                parts = str(g).split('-')
+                if len(parts) == 2:
+                    node_type, mev_status = parts
+                    node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                    mev_label = 'Via MEV' if mev_status == 'mev' else 'Locally built'
+                    glabel = f"{node_label} ({mev_label})"
+                elif len(parts) == 3:
+                    cl, node_type, mev_status = parts
+                    node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                    mev_label = 'Via MEV' if mev_status == 'mev' else 'Locally built'
+                    glabel = f"{cl.title()} {node_label} ({mev_label})"
+                else:
+                    glabel = str(g)
+            else:
+                glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
         
         # For each x value (blob count or bucket), create a violin
         for x_val in x_order:

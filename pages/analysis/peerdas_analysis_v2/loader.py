@@ -23,7 +23,8 @@ from queries import (
     build_proposer_filter,
     build_validator_filter,
     get_head_correctness_per_slot_query,
-    get_head_correctness_per_slot_grouped_query
+    get_head_correctness_per_slot_grouped_query,
+    get_mev_slots_query
 )
 
 # Configure logging
@@ -111,6 +112,51 @@ def get_node_classifications(network: str, cluster_name: Optional[str] = None) -
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
+def load_mev_slots(
+    network: str,
+    start_date: datetime,
+    end_date: datetime,
+    cluster_name: Optional[str] = None
+) -> List[int]:
+    """
+    Load slots that were delivered via MEV relay.
+    
+    Returns:
+        List of slot numbers that had MEV payloads
+    """
+    logger.info(f"Loading MEV slots for network={network}")
+    
+    conn = get_database_connection(cluster_name)
+    if not conn:
+        logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+        return []
+    
+    query = get_mev_slots_query()
+    params = {
+        'network': network,
+        'start_date': start_date,
+        'end_date': end_date
+    }
+    
+    try:
+        df = pd.read_sql(query, conn, params=params)
+        if df.empty:
+            logger.info(f"No MEV slots found for network {network}")
+            return []
+        
+        mev_slots = df['slot'].tolist()
+        logger.info(f"Found {len(mev_slots)} MEV slots for {network} between {start_date} and {end_date}")
+        logger.info(f"MEV slot range: {min(mev_slots)} to {max(mev_slots)}")
+        # Sample some slots for debugging
+        if len(mev_slots) > 10:
+            logger.info(f"Sample MEV slots: {mev_slots[:5]} ... {mev_slots[-5:]}")
+        return mev_slots
+    except Exception as e:
+        logger.warning(f"Error loading MEV slots (may not be available for this network): {e}")
+        return []
+
+
+@st.cache_data(ttl=300, show_spinner=False, persist=False)
 def load_eligible_slots(
     network: str,
     start_date: datetime,
@@ -118,13 +164,24 @@ def load_eligible_slots(
     proposer_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
+    mev_filter: Optional[str] = None,
     cluster_name: Optional[str] = None
-) -> Tuple[List[int], Dict[int, str], Dict[int, int]]:
+) -> Tuple[List[int], Dict[int, str], Dict[int, int], List[int]]:
     """
-    Load eligible slots based on proposer filtering.
+    Load eligible slots based on proposer filtering and MEV status.
+    
+    Args:
+        network: Network name
+        start_date: Start datetime
+        end_date: End datetime
+        proposer_type: Filter by proposer node type
+        cl_filter: Filter by CL implementations
+        el_filter: Filter by EL implementations
+        mev_filter: Filter by MEV status ('yes', 'no', 'both' or None)
+        cluster_name: Cluster name
     
     Returns:
-        Tuple of (slot_list, slot_to_block_root_mapping, slot_to_proposer_index_mapping)
+        Tuple of (slot_list, slot_to_block_root_mapping, slot_to_proposer_index_mapping, mev_slots_list)
     """
     logger.info(f"Loading eligible slots for network={network}")
     
@@ -217,17 +274,37 @@ def load_eligible_slots(
         df = pd.read_sql(query, conn, params=params)
         if df.empty:
             logger.warning(f"No slots found in database for network {network}")
-            return [], {}, {}
+            return [], {}, {}, []
+        
+        # Load MEV slots
+        mev_slots = load_mev_slots(network, start_date, end_date, cluster_name)
+        mev_slots_set = set(mev_slots)
+        
+        # Apply MEV filter if specified
+        if mev_filter and mev_filter != 'both':
+            if mev_filter == 'yes':
+                # Only keep MEV slots
+                df = df[df['slot'].isin(mev_slots_set)]
+                logger.info(f"Filtered to {len(df)} MEV slots")
+            elif mev_filter == 'no':
+                # Only keep non-MEV slots
+                df = df[~df['slot'].isin(mev_slots_set)]
+                logger.info(f"Filtered to {len(df)} non-MEV slots")
+        
+        if df.empty:
+            logger.warning(f"No slots remaining after MEV filter: {mev_filter}")
+            return [], {}, {}, []
         
         slots = df['slot'].tolist()
         slot_to_block = dict(zip(df['slot'], df['block_root']))
         slot_to_proposer = dict(zip(df['slot'], df['proposer_index']))
         
-        logger.info(f"Found {len(slots)} eligible slots")
-        return slots, slot_to_block, slot_to_proposer
+        logger.info(f"Found {len(slots)} eligible slots (MEV filter: {mev_filter})")
+        logger.info(f"Returning {len(mev_slots)} MEV slots along with eligible slots")
+        return slots, slot_to_block, slot_to_proposer, mev_slots
     except Exception as e:
         logger.error(f"Error loading eligible slots: {e}")
-        return [], {}, {}
+        return [], {}, {}, []
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
@@ -465,6 +542,7 @@ def load_head_correctness_data(
     eligible_slots: List[int],
     slot_to_block: Dict[int, str],
     slot_to_proposer: Dict[int, int] = None,
+    mev_slots: List[int] = None,
     attester_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
@@ -486,6 +564,7 @@ def load_head_correctness_data(
         eligible_slots: List of slots to analyze
         slot_to_block: Mapping of slot to proposed block_root
         slot_to_proposer: Mapping of slot to proposer_index
+        mev_slots: List of MEV slots for grouping
         attester_type: Filter by attester node type
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
@@ -496,7 +575,7 @@ def load_head_correctness_data(
         DataFrame with head correctness data by slot
     """
     logger.info(f"Loading head correctness data for {network}, {len(eligible_slots)} slots")
-    
+    logger.info(f"Received {len(mev_slots) if mev_slots else 0} MEV slots for analysis")
     
     if not eligible_slots:
         logger.warning("No eligible slots provided")
@@ -643,6 +722,11 @@ def load_head_correctness_data(
                     if not proposer_map_sql:
                         logger.warning(f"No proposer mapping for chunk {chunk_idx + 1} - network spec missing or invalid")
                         return None
+                    
+                    # Verify proposer_map_sql has SELECT statements
+                    if 'SELECT' not in proposer_map_sql:
+                        logger.error(f"Chunk {chunk_idx + 1}: Invalid proposer map SQL - no SELECT statements found")
+                        return None
 
                     # Use the grouped query
                     sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
@@ -651,7 +735,22 @@ def load_head_correctness_data(
                     chunk_slots_str = '(' + ','.join(str(s) for s in slot_chunk) + ')'
                     sql = sql.replace('%(eligible_slots)s', chunk_slots_str)
                     sql = sql.replace('{proposer_map_union_selects}', proposer_map_sql)
-                    sql = sql.replace('{validator_filter}', '')  # No validator filtering for grouped queries
+                    
+                    # Apply validator filter for attester filtering even in grouped queries
+                    # Build validator filter from the attester-filtered validator indices
+                    chunk_validator_filter = build_validator_filter(validator_indices)
+                    if chunk_validator_filter:
+                        logger.info(f"Chunk {chunk_idx + 1}: Applying attester filter to {len(validator_indices)} validators in grouped query")
+                    sql = sql.replace('{validator_filter}', f"\n      {chunk_validator_filter}" if chunk_validator_filter else '')
+                    
+                    # Debug: Check if query still has unreplaced placeholders
+                    if '{' in sql and '}' in sql:
+                        logger.warning(f"Chunk {chunk_idx + 1}: Query may have unreplaced placeholders")
+                        # Find and log any remaining placeholders
+                        import re
+                        placeholders = re.findall(r'\{[^}]+\}', sql)
+                        if placeholders:
+                            logger.error(f"Chunk {chunk_idx + 1}: Unreplaced placeholders found: {placeholders}")
                     
                     # Create new connection for this thread
                     chunk_conn = get_database_connection(cluster_name)
@@ -726,18 +825,20 @@ def load_head_correctness_data(
                                 all_dfs.append(result)
                     except Exception as e:
                         logger.error(f"Chunk {chunk_idx + 1} future failed: {e}")
+                        sql_errors.append({'error': str(e), 'chunk': chunk_idx + 1})
                 
                 # Show SQL errors if any
                 if sql_errors:
                     for err in sql_errors[:1]:  # Show first error only to avoid spam
-                        if "UNKNOWN_IDENTIFIER" in err['error'] or "DB::Exception" in err['error']:
-                            st.error(f"""
-                            ❌ **SQL Query Error in chunk {err['chunk']}**
-                            
-                            {err['error']}
-                            
-                            This is likely due to missing data or a query issue.
-                            """)
+                        # Store error for dashboard to display
+                        st._last_sql_error = err['error']
+                        st.error(f"""
+                        ❌ **SQL Query Error in chunk {err['chunk']}**
+                        
+                        {err['error']}
+                        
+                        This is likely due to missing data or a query issue.
+                        """)
             
             if not all_dfs:
                 # Error already shown from SQL errors above if any
@@ -749,7 +850,9 @@ def load_head_correctness_data(
 
             # Add labels
             df['group_key'] = df['group_key'].astype(str)
-            if grouping_dimension == 'node_type':
+            if grouping_dimension == 'block_building':
+                df['group_label'] = df['group_key'].map({'mev': 'Via MEV Relay', 'non-mev': 'Locally Built'}).fillna(df['group_key'])
+            elif grouping_dimension == 'node_type':
                 df['group_label'] = df['group_key'].map({'supernode': 'Supernode', 'regular': 'Regular Node'}).fillna(df['group_key'])
             elif grouping_dimension == 'cl_client':
                 df['group_label'] = df['group_key'].str.title()
@@ -767,6 +870,40 @@ def load_head_correctness_data(
                             return f"{cl.title()} + {node_type_label}"
                     return s
                 df['group_label'] = df['group_key'].apply(format_cl_node_type)
+            elif grouping_dimension == 'node_type_mev':
+                def format_node_type_mev(s):
+                    if isinstance(s, str):
+                        # Handle the format: "supernode-non-mev" or "regular-mev"
+                        if s.endswith('-non-mev'):
+                            node_type = s[:-8]  # Remove '-non-mev'
+                            node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                            return f"{node_label} (Locally built)"
+                        elif s.endswith('-mev'):
+                            node_type = s[:-4]  # Remove '-mev'
+                            node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                            return f"{node_label} (Via MEV)"
+                    return s
+                df['group_label'] = df['group_key'].apply(format_node_type_mev)
+            elif grouping_dimension == 'cl_node_type_mev':
+                def format_cl_node_type_mev(s):
+                    if isinstance(s, str):
+                        # Handle the format: "lighthouse-supernode-non-mev" or "prysm-regular-mev"
+                        if '-non-mev' in s:
+                            base = s.replace('-non-mev', '')
+                            parts = base.split('-')
+                            if len(parts) == 2:
+                                cl, node_type = parts
+                                node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                                return f"{cl.title()} {node_label} (Locally built)"
+                        elif '-mev' in s and '-non-mev' not in s:
+                            base = s.replace('-mev', '')
+                            parts = base.split('-')
+                            if len(parts) == 2:
+                                cl, node_type = parts
+                                node_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                                return f"{cl.title()} {node_label} (Via MEV)"
+                    return s
+                df['group_label'] = df['group_key'].apply(format_cl_node_type_mev)
             else:
                 df['group_label'] = df['group_key']
 
@@ -774,6 +911,8 @@ def load_head_correctness_data(
         else:
             # Non-grouped per-slot computation
             validator_filter = build_validator_filter(validator_indices)
+            if validator_filter:
+                logger.info(f"Applying attester filter to {len(validator_indices)} validators in non-grouped query")
             
             # Use the per-slot query
             sql = get_head_correctness_per_slot_query().format(
@@ -869,6 +1008,7 @@ def validate_data_availability(
         availability['message_delivery'] = False
     
     return availability
+
 
 
 def get_unique_clients(
