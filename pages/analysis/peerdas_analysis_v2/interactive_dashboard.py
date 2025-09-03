@@ -1,5 +1,5 @@
 """
-Interactive dashboard for PeerDAS Analysis V2 - Head correctness analysis.
+Interactive dashboard for Head Correctness analysis.
 
 Analyzes head correctness (voting for proposed block_roots, including those
 that may have been reorged) with bucketing by blob count and filtering by 

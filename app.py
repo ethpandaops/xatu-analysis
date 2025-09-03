@@ -63,9 +63,9 @@ peerdas_analysis_page = st.Page(
 
 peerdas_analysis_v2_page = st.Page(
     "pages/analysis/peerdas_analysis_v2/page.py",
-    title="PeerDAS Analysis V2",
+    title="Head Correctness",
     icon="🎯",
-    url_path="peerdas-analysis-v2"
+    url_path="head-correctness"
 )
 
 gossipsub_monitoring_page = st.Page(
