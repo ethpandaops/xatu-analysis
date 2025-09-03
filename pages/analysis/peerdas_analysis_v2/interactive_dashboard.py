@@ -128,7 +128,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         "Number of Buckets",
         min_value=1,
         max_value=12,
-        value=6,
+        value=10,
         help="Number of buckets to divide blob counts into (automatically calculates bucket size based on data range)"
     )
 
@@ -327,11 +327,17 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 st.session_state.data_loaded = False
                 return None
             
+            # Compute slot-level coverage after filtering to only slots with committee data
+            slots_in_result = data['slot'].nunique() if 'slot' in data.columns else 0
+            eligible_count = len(eligible_slots)
+            filtered_out = max(eligible_count - slots_in_result, 0)
+
             # Store in session state
             st.session_state.analysis_data = {
                 'raw_data': data,
-                'unique_slots': len(eligible_slots),
-                'total_slots_analyzed': len(data),
+                'unique_slots': eligible_count,
+                'total_slots_analyzed': slots_in_result,
+                'filtered_out_slots': filtered_out,
                 'avg_head_correctness': data['head_correctness_pct'].mean() if 'head_correctness_pct' in data.columns else 0
             }
             st.session_state.data_loaded = True
@@ -366,7 +372,8 @@ def main():
             # Prepare metadata
             metadata = {
                 'total_slots': st.session_state.analysis_data.get('unique_slots', 0),
-                'total_slots_analyzed': st.session_state.analysis_data.get('total_slots_analyzed', 0)
+                'total_slots_analyzed': st.session_state.analysis_data.get('total_slots_analyzed', 0),
+                'filtered_out_slots': st.session_state.analysis_data.get('filtered_out_slots', 0),
             }
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
@@ -482,6 +489,10 @@ def main():
                             help=f"Range of blob counts in the analyzed data"
                         )
                 
+                # If some slots were filtered out due to missing committee data, show a notice
+                if metadata.get('filtered_out_slots', 0) > 0:
+                    st.info(f"Filtered out {metadata['filtered_out_slots']:,} slot(s) with no committee data.")
+
                 # Show grouping information if applicable
                 if config.get('grouping_dimension'):
                     grouping_info = f"Grouping by: {config['grouping_dimension'].replace('_', ' ').title()}"
@@ -495,6 +506,93 @@ def main():
                         data.head(100),
                         use_container_width=True
                     )
+            
+            # Debug section for node visibility
+            with st.expander("🐛 Debug: Node Visibility", expanded=False):
+                # Get node classifications from network YAML
+                node_classifications = get_node_classifications(config['network'])
+                
+                if not node_classifications.empty:
+                    # Filter proposer nodes based on criteria
+                    proposer_nodes = node_classifications.copy()
+                    if config.get('proposer_type') and config.get('proposer_type') != 'all':
+                        proposer_nodes = proposer_nodes[proposer_nodes['node_type'] == config['proposer_type']]
+                    if config.get('proposer_cl'):
+                        proposer_nodes = proposer_nodes[proposer_nodes['cl_implementation'].isin(config['proposer_cl'])]
+                    if config.get('proposer_el'):
+                        proposer_nodes = proposer_nodes[proposer_nodes['el_implementation'].isin(config['proposer_el'])]
+                    
+                    # Filter attester nodes based on criteria
+                    attester_nodes = node_classifications.copy()
+                    if config.get('attester_type') and config.get('attester_type') != 'all':
+                        attester_nodes = attester_nodes[attester_nodes['node_type'] == config['attester_type']]
+                    if config.get('attester_cl'):
+                        attester_nodes = attester_nodes[attester_nodes['cl_implementation'].isin(config['attester_cl'])]
+                    if config.get('attester_el'):
+                        attester_nodes = attester_nodes[attester_nodes['el_implementation'].isin(config['attester_el'])]
+                    
+                    # Get group keys that actually appeared in the data
+                    actual_group_keys = set()
+                    if 'group_key' in data.columns:
+                        actual_group_keys = set(data['group_key'].dropna().unique())
+                    
+                    # Display debug information
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.write("**Proposer Nodes (from filters):**")
+                        st.write(f"Total: {len(proposer_nodes)} nodes")
+                        
+                        # Sort by node type and name for better readability
+                        proposer_sorted = proposer_nodes.sort_values(['node_type', 'client_name'])
+                        
+                        for _, node in proposer_sorted.iterrows():
+                            node_name = node['client_name']
+                            node_type = node['node_type']
+                            
+                            # Format node info
+                            node_info = f"{node_name} ({node_type})"
+                            
+                            st.text(node_info)
+                    
+                    with col2:
+                        st.write("**Attester Nodes (from filters):**")
+                        st.write(f"Total: {len(attester_nodes)} nodes")
+                        
+                        # Sort by node type and name for better readability
+                        attester_sorted = attester_nodes.sort_values(['node_type', 'client_name'])
+                        
+                        for _, node in attester_sorted.iterrows():
+                            node_name = node['client_name']
+                            node_type = node['node_type']
+                            
+                            # Format node info
+                            node_info = f"{node_name} ({node_type})"
+                            
+                            st.text(node_info)
+                    
+                    # Show actual group keys found in data
+                    st.write("---")
+                    st.write(f"**Group Keys in Data (grouping by: {config.get('grouping_dimension')})**")
+                    if actual_group_keys:
+                        st.write(f"Found {len(actual_group_keys)} unique group keys:")
+                        for key in sorted(actual_group_keys):
+                            st.text(f"  • {key}")
+                    else:
+                        st.warning("No group keys found in data")
+                    
+                    # Show slot coverage
+                    st.write("---")
+                    st.write("**Slot Coverage:**")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Eligible Slots", st.session_state.analysis_data.get('unique_slots', 0))
+                    with col2:
+                        st.metric("Analyzed Slots", st.session_state.analysis_data.get('total_slots_analyzed', 0))
+                    with col3:
+                        st.metric("Filtered Out", st.session_state.analysis_data.get('filtered_out_slots', 0))
+                else:
+                    st.warning("No node classifications found in network YAML file")
     
 
 

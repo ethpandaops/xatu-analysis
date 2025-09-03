@@ -50,7 +50,7 @@ def _format_filter_description(filter_type: str, filters: Dict[str, Any]) -> str
     else:
         parts.append("(All ELs)")
     
-    return f"{filter_type} by " + ' '.join(parts)
+    return f"{filter_type} " + ' '.join(parts)
 
 
 def calculate_correlation_analysis(data: pd.DataFrame, x_metric: str, y_metric: str) -> Optional[Dict[str, float]]:

@@ -20,7 +20,6 @@ from shared.database import get_database_connection
 from shared.network_spec import get_network_spec
 from queries import (
     get_eligible_slots_query,
-    get_node_classification_query,
     build_proposer_filter,
     build_validator_filter,
     get_head_correctness_per_slot_query,
@@ -60,64 +59,54 @@ def load_network_mapping(network: str) -> Dict[str, Any]:
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
 def get_node_classifications(network: str, cluster_name: Optional[str] = None) -> pd.DataFrame:
     """
-    Get node classifications from the network mapping.
+    Get node classifications from the network YAML file.
     
     Returns a DataFrame with node names and their classifications.
     """
-    conn = get_database_connection(cluster_name)
-    if not conn:
-        logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+    # Load network mapping from YAML
+    network_mapping = load_network_mapping(network)
+    if not network_mapping:
+        logger.error(f"No network mapping found for network: {network}")
         return pd.DataFrame()
     
-    # Get classifications from database
-    query = get_node_classification_query()
-    params = {
-        'network': network,
-        'start_date': datetime.now().replace(hour=0, minute=0, second=0),
-        'end_date': datetime.now()
-    }
-    
     try:
-        df = pd.read_sql(query, conn, params=params)
+        # Build classifications from YAML
+        classifications = []
         
-        # Enhance with network mapping if available
-        network_mapping = load_network_mapping(network)
-        if network_mapping:
-            # Map node configurations
-            node_types = {}
-            cl_implementations = {}
-            el_implementations = {}
+        for node_name, node_config in network_mapping.items():
+            tags = node_config.get('tags', [])
+            groups = node_config.get('groups', [])
+            attributes = node_config.get('attributes', {})
             
-            for node_name, node_config in network_mapping.items():
-                tags = node_config.get('tags', [])
-                
-                # Determine node type
-                if 'supernode' in tags:
-                    node_types[node_name] = 'supernode'
-                else:
-                    node_types[node_name] = 'regular'
-                
-                # Extract CL and EL from tags
-                for tag in tags:
-                    if tag.startswith('cl:'):
-                        cl_implementations[node_name] = tag.split(':')[1]
-                    elif tag.startswith('el:'):
-                        el_implementations[node_name] = tag.split(':')[1]
+            # Determine node type
+            node_type = 'regular'
+            if 'bootnode' in groups:
+                node_type = 'bootnode'
+            elif 'supernode' in tags or attributes.get('supernode', False):
+                node_type = 'supernode'
             
-            # Update DataFrame with mapping
-            df['node_type_mapped'] = df['client_name'].map(node_types).fillna(df['node_type'])
-            df['cl_mapped'] = df['client_name'].map(cl_implementations).fillna(df['cl_implementation'])
-            df['el_mapped'] = df['client_name'].map(el_implementations).fillna(df['el_implementation'])
+            # Extract CL and EL from tags
+            cl_implementation = None
+            el_implementation = None
             
-            # Use mapped values
-            df['node_type'] = df['node_type_mapped']
-            df['cl_implementation'] = df['cl_mapped']
-            df['el_implementation'] = df['el_mapped']
-            df = df.drop(columns=['node_type_mapped', 'cl_mapped', 'el_mapped'])
+            for tag in tags:
+                if tag.startswith('cl:'):
+                    cl_implementation = tag.split(':')[1]
+                elif tag.startswith('el:'):
+                    el_implementation = tag.split(':')[1]
+            
+            classifications.append({
+                'client_name': node_name,
+                'node_type': node_type,
+                'cl_implementation': cl_implementation,
+                'el_implementation': el_implementation
+            })
         
+        df = pd.DataFrame(classifications)
         return df
+        
     except Exception as e:
-        logger.error(f"Error getting node classifications: {e}")
+        logger.error(f"Error getting node classifications from YAML: {e}")
         return pd.DataFrame()
 
 

@@ -40,6 +40,7 @@ def get_head_correctness_per_slot_query() -> str:
       -- In rare cases of multiple blocks per slot, just take any one (they're all valid proposals)
       LIMIT 1 BY slot
     ),
+    -- Keep only slots that have committee data to avoid bogus counts from LEFT JOIN defaults
     committee_members AS (
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM canonical_beacon_committee
@@ -54,6 +55,15 @@ def get_head_correctness_per_slot_query() -> str:
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
       {validator_filter}
+    ),
+    committee_slots AS (
+      SELECT DISTINCT slot FROM committee_members
+    ),
+    eligible_slots_filtered AS (
+      -- Only include slots that have committee data
+      SELECT es.slot, es.block_root
+      FROM eligible_slots es
+      INNER JOIN committee_slots cs ON es.slot = cs.slot
     ),
     attested_unique AS (
       -- Get attestations and check correctness in one step
@@ -118,17 +128,17 @@ def get_head_correctness_per_slot_query() -> str:
       GROUP BY slot
     )
     SELECT e.slot,
-           coalesce(countDistinct(cm.validator_index), 0) AS total_scheduled,
-           coalesce(countDistinctIf(au.validator_index, au.correct_vote = 1), 0) AS correct_votes,
+           countDistinct(cm.validator_index) AS total_scheduled,
+           countDistinctIf(cm.validator_index, au.correct_vote = 1) AS correct_votes,
            if(countDistinct(cm.validator_index) > 0,
-              round(100.0 * countDistinctIf(au.validator_index, au.correct_vote = 1)
+              round(100.0 * countDistinctIf(cm.validator_index, au.correct_vote = 1)
                     / countDistinct(cm.validator_index), 2),
               NULL
            ) AS head_correctness_pct,
            coalesce(sb.blob_count, toUInt64(0)) AS blob_count
-    -- Start from eligible_slots to ensure we have results even without committee data
-    FROM eligible_slots e
-    LEFT JOIN committee_members cm ON e.slot = cm.slot
+    -- Start from slots that we KNOW have committee data
+    FROM eligible_slots_filtered e
+    INNER JOIN committee_members cm ON e.slot = cm.slot
     LEFT JOIN attested_unique au ON e.slot = au.slot AND cm.validator_index = au.validator_index
     LEFT JOIN slot_blob sb ON e.slot = sb.slot
     GROUP BY e.slot, sb.blob_count
@@ -174,23 +184,32 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     proposer_map AS (
       {{proposer_map_union_selects}}
     ),
-    slots_with_proposer_info AS (
-      SELECT es.slot, es.block_root, es.proposer_index, {group_expr} AS group_key
-      FROM eligible_slots es
-      LEFT JOIN proposer_map pm ON es.slot = pm.slot
-    ),
+    -- Committee members for filtering to valid slots only
     committee_members AS (
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM canonical_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
+        AND slot GLOBAL IN %(eligible_slots)s
       UNION DISTINCT
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM beacon_api_eth_v1_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
+        AND slot GLOBAL IN %(eligible_slots)s
+    ),
+    committee_slots AS (
+      SELECT DISTINCT slot FROM committee_members
+    ),
+    eligible_slots_filtered AS (
+      SELECT es.slot, es.block_root, es.proposer_index
+      FROM eligible_slots es
+      INNER JOIN committee_slots cs ON es.slot = cs.slot
+    ),
+    slots_with_proposer_info AS (
+      SELECT es.slot, es.block_root, es.proposer_index, {group_expr} AS group_key
+      FROM eligible_slots_filtered es
+      LEFT JOIN proposer_map pm ON es.slot = pm.slot
     ),
     attested_unique AS (
       -- Get attestations and check correctness in one step
@@ -254,15 +273,15 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       -- Start from eligible_slots to ensure we always have results
       SELECT 
         e.slot AS slot,
-        coalesce(countDistinct(cm.validator_index), 0) AS total_scheduled,
-        coalesce(countDistinctIf(au.validator_index, au.correct_vote = 1), 0) AS correct_votes,
+        countDistinct(cm.validator_index) AS total_scheduled,
+        countDistinctIf(cm.validator_index, au.correct_vote = 1) AS correct_votes,
         if(countDistinct(cm.validator_index) > 0,
-           round(100.0 * countDistinctIf(au.validator_index, au.correct_vote = 1) 
+           round(100.0 * countDistinctIf(cm.validator_index, au.correct_vote = 1) 
                  / countDistinct(cm.validator_index), 2),
            NULL
         ) AS head_correctness_pct
-      FROM eligible_slots e
-      LEFT JOIN committee_members cm ON e.slot = cm.slot
+      FROM eligible_slots_filtered e
+      INNER JOIN committee_members cm ON e.slot = cm.slot
       LEFT JOIN attested_unique au ON e.slot = au.slot AND cm.validator_index = au.validator_index
       GROUP BY e.slot
     )
@@ -273,7 +292,7 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       coalesce(shc.total_scheduled, 0) AS total_scheduled_in_group,
       coalesce(shc.correct_votes, 0) AS correct_votes_in_group,
       shc.head_correctness_pct AS head_correctness_pct
-    FROM eligible_slots e
+    FROM eligible_slots_filtered e
     LEFT JOIN slot_head_correctness shc ON e.slot = shc.slot
     LEFT JOIN slots_with_proposer_info spi ON e.slot = spi.slot
     LEFT JOIN slot_blob sb ON e.slot = sb.slot
@@ -303,31 +322,6 @@ def get_eligible_slots_query() -> str:
     ORDER BY slot
     """
 
-
-def get_node_classification_query() -> str:
-    """
-    Get node classifications from network configuration.
-    
-    Maps client names to node types, CL/EL implementations based on
-    the network specification YAML files.
-    """
-    return """
-    -- This query would need to be replaced with actual network mapping logic
-    -- For now returning a simplified version
-    SELECT DISTINCT
-        meta_client_name as client_name,
-        CASE 
-            WHEN meta_client_name LIKE '%%supernode%%' THEN 'supernode'
-            ELSE 'regular'
-        END as node_type,
-        splitByChar('-', meta_client_name)[1] as cl_implementation,
-        splitByChar('-', meta_client_name)[2] as el_implementation
-    FROM beacon_api_eth_v1_events_attestation
-    WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND meta_client_name != ''
-    GROUP BY meta_client_name
-    """
 
 
 def build_proposer_filter(proposer_indices: list = None) -> str:
