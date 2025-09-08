@@ -233,10 +233,6 @@ def get_peerdas_query(data_source: str, aggregation: str = "p90", group_by: str 
     - Phase 1: Calculate per-client, per-slot data availability time
     - Phase 2: Aggregate those times by chosen metric
     
-    NOTE: For fusaka-devnet-4, kzg_commitments_count appears to be 2× the actual
-    blob count (values are 2,4,6,8,10,12,14 instead of 1,2,3,4,5,6,7).
-    This might be a data collection issue or devnet-specific behavior.
-    
     Args:
         data_source: Either 'libp2p' or 'beacon_api'
         aggregation: Aggregation function ('mean', 'p50', 'p90', 'p95', 'p99')

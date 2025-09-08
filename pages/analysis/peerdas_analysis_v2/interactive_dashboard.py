@@ -19,12 +19,16 @@ logger = logging.getLogger(__name__)
 # Import shared components
 from shared.header import render_global_header, get_global_cluster, get_global_network
 from shared.database import get_database_connection
+from shared.ethereum.validator_filters import (
+    create_proposer_filters_ui,
+    create_attester_filters_ui,
+    get_node_classifications
+)
 
 # Import local modules
 from loader import (
     load_eligible_slots,
     load_head_correctness_data,
-    get_node_classifications,
     validate_data_availability,
     get_unique_clients,
     load_network_mapping
@@ -103,14 +107,9 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Time range selection
     st.sidebar.subheader("📅 Time Range")
     
-    # Set default time range for fusaka-devnet-4 (window with rich sidecar data)
-    if network == 'fusaka-devnet-4':
-        default_start = datetime(2025, 8, 12, 0, 0, 0)
-        default_end = datetime(2025, 8, 12, 2, 0, 0)
-    else:
-        # Default to last 24 hours for other networks
-        default_end = datetime.now()
-        default_start = default_end - timedelta(hours=24)
+    # Default to last 24 hours for all networks
+    default_end = datetime.now()
+    default_start = default_end - timedelta(hours=24)
     
     start_date = st.sidebar.date_input(
         "Start Date",
@@ -163,61 +162,10 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         help="Filter slots based on whether blocks were delivered via MEV relay or built locally"
     )
     
-    # Proposer filtering
-    st.sidebar.subheader("🎯 Proposer Filters")
-    
-    proposer_type = st.sidebar.selectbox(
-        "Proposer Node Type",
-        options=["all", "supernode", "regular"],
-        format_func=lambda x: {
-            "all": "All Node Types",
-            "supernode": "Supernodes Only",
-            "regular": "Regular Nodes Only"
-        }[x],
-        help="Filter by proposer node type"
-    )
-    
-    proposer_cl = st.sidebar.multiselect(
-        "Proposer CL Clients",
-        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
-        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
-        help="Filter by proposer consensus layer client"
-    )
-    
-    proposer_el = st.sidebar.multiselect(
-        "Proposer EL Clients",
-        options=["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"],
-        default=["geth", "nethermind", "besu", "erigon", "reth"],
-        help="Filter by proposer execution layer client"
-    )
-    
-    # Attester filtering
-    st.sidebar.subheader("👥 Attester Filters")
-    
-    attester_type = st.sidebar.selectbox(
-        "Attester Node Type",
-        options=["all", "supernode", "regular"],
-        format_func=lambda x: {
-            "all": "All Node Types",
-            "supernode": "Supernodes Only",
-            "regular": "Regular Nodes Only"
-        }[x],
-        help="Filter by attester node type"
-    )
-    
-    attester_cl = st.sidebar.multiselect(
-        "Attester CL Clients",
-        options=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
-        default=["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"],
-        help="Filter by attester consensus layer client"
-    )
-    
-    attester_el = st.sidebar.multiselect(
-        "Attester EL Clients",
-        options=["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"],
-        default=["geth", "nethermind", "besu", "erigon", "reth"],
-        help="Filter by attester execution layer client"
-    )
+    # Create filter UI components using shared utility
+    with st.sidebar:
+        proposer_filters = create_proposer_filters_ui(network)
+        attester_filters = create_attester_filters_ui(network)
     
     # Load data button
     st.sidebar.markdown("---")
@@ -278,11 +226,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             st.rerun()
             st.sidebar.success("Cache cleared and page refreshed!")
     
-    # If all clients are selected, treat as no filter (None)
-    all_cl_clients = ["lighthouse", "prysm", "teku", "nimbus", "lodestar", "grandine"]
-    all_el_clients = ["geth", "nethermind", "besu", "erigon", "reth", "nimbusel"]
-    
-    return {
+    # Combine all configuration
+    config = {
         'cluster': cluster,
         'network': network,
         'start_datetime': start_datetime,
@@ -290,17 +235,17 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'num_buckets': num_buckets,
         'grouping_dimension': grouping_dimension,
         'mev_filter': mev_filter,
-        'proposer_type': proposer_type if proposer_type != "all" else None,
-        'proposer_cl': proposer_cl if proposer_cl and set(proposer_cl) != set(all_cl_clients) else None,
-        'proposer_el': proposer_el if proposer_el and set(proposer_el) != set(all_el_clients) else None,
-        'attester_type': attester_type if attester_type != "all" else None,
-        'attester_cl': attester_cl if attester_cl and set(attester_cl) != set(all_cl_clients) else None,
-        'attester_el': attester_el if attester_el and set(attester_el) != set(all_el_clients) else None,
         'chart_type': chart_type,
         'show_trend_line': show_trend_line,
         'scatter_aggregation': scatter_aggregation,
         'load_data': load_data
     }
+    
+    # Add filter values from shared utility
+    config.update(proposer_filters)
+    config.update(attester_filters)
+    
+    return config
 
 
 def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[pd.DataFrame]:

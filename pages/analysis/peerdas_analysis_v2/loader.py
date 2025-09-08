@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from shared.database import get_database_connection
 from shared.network_spec import get_network_spec
+from shared.ethereum.validator_filters import get_node_classifications
 from queries import (
     get_eligible_slots_query,
     build_proposer_filter,
@@ -57,58 +58,7 @@ def load_network_mapping(network: str) -> Dict[str, Any]:
         return {}
 
 
-@st.cache_data(ttl=300, show_spinner=False, persist=False)
-def get_node_classifications(network: str, cluster_name: Optional[str] = None) -> pd.DataFrame:
-    """
-    Get node classifications from the network YAML file.
-    
-    Returns a DataFrame with node names and their classifications.
-    """
-    # Load network mapping from YAML
-    network_mapping = load_network_mapping(network)
-    if not network_mapping:
-        logger.error(f"No network mapping found for network: {network}")
-        return pd.DataFrame()
-    
-    try:
-        # Build classifications from YAML
-        classifications = []
-        
-        for node_name, node_config in network_mapping.items():
-            tags = node_config.get('tags', [])
-            groups = node_config.get('groups', [])
-            attributes = node_config.get('attributes', {})
-            
-            # Determine node type
-            node_type = 'regular'
-            if 'bootnode' in groups:
-                node_type = 'bootnode'
-            elif 'supernode' in tags or attributes.get('supernode', False):
-                node_type = 'supernode'
-            
-            # Extract CL and EL from tags
-            cl_implementation = None
-            el_implementation = None
-            
-            for tag in tags:
-                if tag.startswith('cl:'):
-                    cl_implementation = tag.split(':')[1]
-                elif tag.startswith('el:'):
-                    el_implementation = tag.split(':')[1]
-            
-            classifications.append({
-                'client_name': node_name,
-                'node_type': node_type,
-                'cl_implementation': cl_implementation,
-                'el_implementation': el_implementation
-            })
-        
-        df = pd.DataFrame(classifications)
-        return df
-        
-    except Exception as e:
-        logger.error(f"Error getting node classifications from YAML: {e}")
-        return pd.DataFrame()
+# Note: get_node_classifications function moved to shared.ethereum.validator_filters
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
@@ -991,21 +941,6 @@ def validate_data_availability(
     except Exception as e:
         logger.warning(f"Failed to check libp2p_gossipsub availability: {e}")
         availability['libp2p_gossipsub'] = False
-    
-    # Check message delivery
-    try:
-        query = """
-        SELECT COUNT(*) as count
-        FROM libp2p_deliver_message
-        WHERE meta_network_name = %(network)s
-            AND event_date_time BETWEEN %(start_date)s AND %(end_date)s
-        LIMIT 1
-        """
-        result = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
-        availability['message_delivery'] = result['count'].iloc[0] > 0 if not result.empty else False
-    except Exception as e:
-        logger.warning(f"Failed to check message_delivery availability: {e}")
-        availability['message_delivery'] = False
     
     return availability
 

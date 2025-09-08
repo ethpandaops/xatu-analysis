@@ -82,10 +82,17 @@ reorgs_page = st.Page(
     url_path="reorgs"
 )
 
+reorg_rates_page = st.Page(
+    "pages/analysis/reorg_rates/page.py",
+    title="Reorg Rates",
+    icon="📈",
+    url_path="reorg-rates"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page, reorg_rates_page]
 })
 
 # Run the selected page

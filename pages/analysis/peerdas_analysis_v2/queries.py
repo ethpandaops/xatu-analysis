@@ -20,8 +20,7 @@ def get_head_correctness_per_slot_query() -> str:
     - Unions canonical elaborated attestations (expands validators) with gossipsub aggregators.
     - Deduplicates per (slot, validator_index) and counts a validator as correct if ANY attestation
       for that (slot, validator) voted for the proposed block_root (including reorged blocks).
-    - Blob counts are derived from sidecar tables. For libp2p on fusaka-devnet-4, divide
-      kzg_commitments_count by 2 to correct the known doubling.
+    - Blob counts are derived from sidecar tables.
     - Uses GLOBAL IN to avoid distributed_product_mode errors.
     """
     return """
@@ -101,7 +100,7 @@ def get_head_correctness_per_slot_query() -> str:
       GROUP BY a.slot, a.validator_index
     ),
     blob_counts AS (
-      -- Prefer API counts; adjust libp2p counts for fusaka-devnet-4 by dividing by 2
+      -- Prefer API counts
       SELECT slot, toUInt64(length(anyLast(kzg_commitments))) AS blob_count
       FROM beacon_api_eth_v1_events_data_column_sidecar
       WHERE meta_network_name = %(network)s
@@ -110,11 +109,7 @@ def get_head_correctness_per_slot_query() -> str:
       GROUP BY slot
       UNION ALL
       SELECT slot,
-             toUInt64(
-               if(%(network)s = 'fusaka-devnet-4',
-                  greatest(kzg_commitments_count / 2, 0),
-                  kzg_commitments_count)
-             ) AS blob_count
+             toUInt64(kzg_commitments_count) AS blob_count
       FROM libp2p_gossipsub_data_column_sidecar
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
@@ -281,9 +276,7 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
         AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
       GROUP BY slot
       UNION ALL
-      SELECT slot, toUInt64(
-               if(%(network)s = 'fusaka-devnet-4', greatest(kzg_commitments_count / 2, 0), kzg_commitments_count)
-             ) AS blob_count
+      SELECT slot, toUInt64(kzg_commitments_count) AS blob_count
       FROM libp2p_gossipsub_data_column_sidecar
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
