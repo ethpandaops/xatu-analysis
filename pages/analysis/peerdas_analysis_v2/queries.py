@@ -155,7 +155,10 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     """
     # For MEV grouping, we need to handle the MEV check differently
     # Check if mev.slot is not null AND > 0 to handle corrupt data
-    if group_by == 'block_building':
+    if group_by == 'none':
+        # Special case: no grouping, show all proposers together
+        group_expr = "'all'"
+    elif group_by == 'block_building':
         group_expr = "if(isNotNull(mev.slot) AND mev.slot > 0, 'mev', 'non-mev')"
     elif group_by == 'node_type_mev':
         group_expr = "coalesce(concat(pm.node_type, '-', if(isNotNull(mev.slot) AND mev.slot > 0, 'mev', 'non-mev')), 'unknown')"

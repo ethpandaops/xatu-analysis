@@ -111,13 +111,18 @@ def get_available_clients(network: str) -> Tuple[List[str], List[str]]:
     return sorted(list(cl_clients)), sorted(list(el_clients))
 
 
-def create_proposer_filters_ui(network: str, key_prefix: str = "proposer") -> Dict[str, Any]:
+def create_proposer_filters_ui(
+    network: str, 
+    key_prefix: str = "proposer",
+    initial_values: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Create Streamlit UI components for proposer filtering.
     
     Args:
         network: Network name
         key_prefix: Prefix for Streamlit widget keys to avoid conflicts
+        initial_values: Optional dict with initial values from URL params
         
     Returns:
         Dictionary with filter values
@@ -127,9 +132,26 @@ def create_proposer_filters_ui(network: str, key_prefix: str = "proposer") -> Di
     # Get available clients for this network
     cl_clients, el_clients = get_available_clients(network)
     
+    # Determine initial values
+    if initial_values:
+        initial_type = initial_values.get('proposer_type', 'all')
+        if initial_type is None:
+            initial_type = 'all'
+        initial_cl = initial_values.get('proposer_cl', cl_clients)
+        if initial_cl is None:
+            initial_cl = cl_clients
+        initial_el = initial_values.get('proposer_el', [el for el in el_clients if el.lower() != 'nimbusel'])
+        if initial_el is None:
+            initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+    else:
+        initial_type = 'all'
+        initial_cl = cl_clients
+        initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+    
     proposer_type = st.selectbox(
         "Proposer Node Type",
         options=["all", "supernode", "regular"],
+        index=["all", "supernode", "regular"].index(initial_type) if initial_type in ["all", "supernode", "regular"] else 0,
         format_func=lambda x: {
             "all": "All Node Types",
             "supernode": "Supernodes Only", 
@@ -142,7 +164,7 @@ def create_proposer_filters_ui(network: str, key_prefix: str = "proposer") -> Di
     proposer_cl = st.multiselect(
         "Proposer CL Clients",
         options=cl_clients,
-        default=cl_clients,
+        default=initial_cl,
         key=f"{key_prefix}_cl",
         help="Filter by proposer consensus layer client"
     )
@@ -150,7 +172,7 @@ def create_proposer_filters_ui(network: str, key_prefix: str = "proposer") -> Di
     proposer_el = st.multiselect(
         "Proposer EL Clients", 
         options=el_clients,
-        default=el_clients,
+        default=initial_el,
         key=f"{key_prefix}_el",
         help="Filter by proposer execution layer client"
     )
@@ -162,13 +184,18 @@ def create_proposer_filters_ui(network: str, key_prefix: str = "proposer") -> Di
     }
 
 
-def create_attester_filters_ui(network: str, key_prefix: str = "attester") -> Dict[str, Any]:
+def create_attester_filters_ui(
+    network: str, 
+    key_prefix: str = "attester",
+    initial_values: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Create Streamlit UI components for attester filtering.
     
     Args:
         network: Network name
         key_prefix: Prefix for Streamlit widget keys to avoid conflicts
+        initial_values: Optional dict with initial values from URL params
         
     Returns:
         Dictionary with filter values
@@ -178,9 +205,26 @@ def create_attester_filters_ui(network: str, key_prefix: str = "attester") -> Di
     # Get available clients for this network
     cl_clients, el_clients = get_available_clients(network)
     
+    # Determine initial values
+    if initial_values:
+        initial_type = initial_values.get('attester_type', 'all')
+        if initial_type is None:
+            initial_type = 'all'
+        initial_cl = initial_values.get('attester_cl', cl_clients)
+        if initial_cl is None:
+            initial_cl = cl_clients
+        initial_el = initial_values.get('attester_el', [el for el in el_clients if el.lower() != 'nimbusel'])
+        if initial_el is None:
+            initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+    else:
+        initial_type = 'all'
+        initial_cl = cl_clients
+        initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+    
     attester_type = st.selectbox(
         "Attester Node Type",
         options=["all", "supernode", "regular"],
+        index=["all", "supernode", "regular"].index(initial_type) if initial_type in ["all", "supernode", "regular"] else 0,
         format_func=lambda x: {
             "all": "All Node Types", 
             "supernode": "Supernodes Only",
@@ -193,7 +237,7 @@ def create_attester_filters_ui(network: str, key_prefix: str = "attester") -> Di
     attester_cl = st.multiselect(
         "Attester CL Clients",
         options=cl_clients,
-        default=cl_clients,
+        default=initial_cl,
         key=f"{key_prefix}_cl", 
         help="Filter by attester consensus layer client"
     )
@@ -201,7 +245,7 @@ def create_attester_filters_ui(network: str, key_prefix: str = "attester") -> Di
     attester_el = st.multiselect(
         "Attester EL Clients",
         options=el_clients,
-        default=el_clients,
+        default=initial_el,
         key=f"{key_prefix}_el",
         help="Filter by attester execution layer client"
     )

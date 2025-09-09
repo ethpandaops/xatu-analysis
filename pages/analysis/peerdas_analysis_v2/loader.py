@@ -157,7 +157,14 @@ def load_eligible_slots(
     
     # ALWAYS filter to only validators in the spec
     # This prevents "unknown" entries from validators not in our config
-    # Filter by validator indices based on node characteristics
+    # Build list of ALL validators in spec first
+    all_spec_validators = []
+    for node_name in network_spec.get_all_nodes():
+        validators = network_spec.get_validators(node_name)
+        all_spec_validators.extend(validators)
+    logger.info(f"Network spec contains {len(all_spec_validators)} validators (0-{max(all_spec_validators) if all_spec_validators else 0})")
+    
+    # Now apply filters if any
     nodes_processed = 0
     nodes_matched = 0
     for node_name in network_spec.get_all_nodes():
@@ -211,6 +218,11 @@ def load_eligible_slots(
     
     logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {len(proposer_indices)}")
     
+    # CRITICAL: When no filters are applied, use ALL spec validators to filter out unknown proposers
+    if not has_filters:
+        proposer_indices = all_spec_validators
+        logger.info(f"No filters applied - using all {len(all_spec_validators)} spec validators to exclude unknown proposers")
+    
     # Show validator selection in UI
     with st.expander("🔎 Validator Selection Debug", expanded=False):
         st.write(f"**Nodes processed:** {nodes_processed}")
@@ -222,7 +234,7 @@ def load_eligible_slots(
         else:
             st.write("⚠️ No validators selected! This will return no results.")
     
-    # Build proposer filter
+    # Build proposer filter - this will exclude proposers outside our spec
     proposer_filter = build_proposer_filter(proposer_indices)
     
     # Debug logging
@@ -461,18 +473,16 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
     for slot in eligible_slots:
         # Get actual proposer index from database - NEVER use approximations
         if not slot_to_proposer or slot not in slot_to_proposer:
-            logger.warning(f"Missing proposer index for slot {slot} - marking as unknown")
-            select_sql = f"SELECT {slot} AS slot, 'unknown' AS node_type, 'unknown' AS cl_client, 'unknown' AS el_client"
-            selects.append(select_sql)
+            logger.warning(f"Missing proposer index for slot {slot} - EXCLUDING from analysis")
+            # Skip this slot entirely - don't add to selects
             continue
             
         proposer_index = slot_to_proposer[slot]
         
-        # If proposer not in our validator mapping, mark as unknown
+        # If proposer not in our validator mapping, EXCLUDE from analysis
         if proposer_index not in validator_to_node:
-            logger.debug(f"Proposer {proposer_index} for slot {slot} not in network spec - marking as unknown")
-            select_sql = f"SELECT {slot} AS slot, 'unknown' AS node_type, 'unknown' AS cl_client, 'unknown' AS el_client"
-            selects.append(select_sql)
+            logger.debug(f"Proposer {proposer_index} for slot {slot} not in network spec - EXCLUDING from analysis")
+            # Skip this slot entirely - don't add to selects
             continue
             
         node_name = validator_to_node[proposer_index]
@@ -502,7 +512,15 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
         select_sql = f"SELECT {slot} AS slot, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client"
         selects.append(select_sql)
     
-    logger.info(f"Built proposer map for {len(selects)} slots")
+    logger.info(f"Built proposer map for {len(selects)} slots out of {len(eligible_slots)} eligible slots")
+    if len(selects) < len(eligible_slots):
+        excluded_count = len(eligible_slots) - len(selects)
+        logger.warning(f"Excluded {excluded_count} slots ({excluded_count*100/len(eligible_slots):.1f}%) with proposers outside network spec")
+    
+    if not selects:
+        logger.error("No valid slots remaining after filtering out unknown proposers!")
+        return ""
+    
     result = "\nUNION ALL\n".join(selects)
     return result
 
@@ -633,12 +651,20 @@ def load_head_correctness_data(
     has_attester_filters = attester_type or cl_filter or el_filter
     
     if network_spec:
+        # First collect ALL validators in the spec
+        all_spec_validators = []
+        for node_name in network_spec.get_all_nodes():
+            validators = network_spec.get_validators(node_name)
+            all_spec_validators.extend(validators)
+        logger.info(f"Network spec contains {len(all_spec_validators)} validators for attester filtering")
+        
+        # Now apply filters if needed
         for node_name in network_spec.get_all_nodes():
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
                 continue
             
-            # If no filters, include all nodes from the spec
+            # If no filters, we'll use all_spec_validators later
             if not has_attester_filters:
                 validators = network_spec.get_validators(node_name)
                 validator_indices.extend(validators)
@@ -679,7 +705,12 @@ def load_head_correctness_data(
             validators = network_spec.get_validators(node_name)
             validator_indices.extend(validators)
         
-        logger.info(f"Attester filter: total validators: {len(validator_indices)}")
+        # CRITICAL: When no filters, use ALL spec validators to filter out unknown attesters
+        if not has_attester_filters:
+            validator_indices = all_spec_validators
+            logger.info(f"No attester filters - using all {len(all_spec_validators)} spec validators to exclude unknown attesters")
+        else:
+            logger.info(f"Attester filter applied: {len(validator_indices)} validators selected")
     
     # Check if committee data exists FIRST - REQUIRED for accurate head correctness
     committee_check_sql = """
@@ -883,7 +914,9 @@ def load_head_correctness_data(
 
             # Add labels
             df['group_key'] = df['group_key'].astype(str)
-            if grouping_dimension == 'block_building':
+            if grouping_dimension == 'none':
+                df['group_label'] = 'All Proposers'
+            elif grouping_dimension == 'block_building':
                 df['group_label'] = df['group_key'].map({'mev': 'Via MEV Relay', 'non-mev': 'Locally Built'}).fillna(df['group_key'])
             elif grouping_dimension == 'node_type':
                 df['group_label'] = df['group_key'].map({'supernode': 'Supernode', 'regular': 'Regular Node'}).fillna(df['group_key'])

@@ -11,6 +11,7 @@ import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import logging
+from urllib.parse import urlencode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,8 +40,96 @@ from plot_generators import (
     create_head_correctness_violin,
     create_advanced_grouped_boxplot,
     create_head_correctness_ecdf,
-    create_head_correctness_cdf
+    create_head_correctness_cdf,
+    create_head_correctness_summary,
+    create_head_correctness_bar
 )
+
+
+def parse_url_params() -> Dict[str, Any]:
+    """Parse URL query parameters and return configuration dict."""
+    params = st.query_params
+    config = {}
+    
+    # Parse datetime parameters
+    if 'start_date' in params:
+        try:
+            config['start_datetime'] = datetime.fromisoformat(params['start_date'])
+        except:
+            pass
+    
+    if 'end_date' in params:
+        try:
+            config['end_datetime'] = datetime.fromisoformat(params['end_date'])
+        except:
+            pass
+    
+    # Parse integer parameters
+    if 'num_buckets' in params:
+        try:
+            config['num_buckets'] = int(params['num_buckets'])
+        except:
+            pass
+    
+    # Parse string parameters
+    for key in ['grouping_dimension', 'mev_filter', 'view_mode', 'chart_type', 
+                'proposer_type', 'attester_type', 'scatter_aggregation']:
+        if key in params:
+            config[key] = params[key]
+    
+    # Parse list parameters (comma-separated)
+    for key in ['proposer_cl', 'proposer_el', 'attester_cl', 'attester_el']:
+        if key in params:
+            values = params[key].split(',')
+            config[key] = [v.strip() for v in values if v.strip()]
+    
+    # Parse float parameters
+    if 'performance_threshold' in params:
+        try:
+            config['performance_threshold'] = float(params['performance_threshold'])
+        except:
+            pass
+    
+    return config
+
+
+def generate_url_params(config: Dict[str, Any]) -> str:
+    """Generate URL parameters from configuration."""
+    params = {}
+    
+    # Add datetime parameters (use absolute timestamps)
+    if 'start_datetime' in config and config['start_datetime']:
+        params['start_date'] = config['start_datetime'].isoformat()
+    
+    if 'end_datetime' in config and config['end_datetime']:
+        params['end_date'] = config['end_datetime'].isoformat()
+    
+    # Add other parameters
+    simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode', 
+                     'chart_type', 'proposer_type', 'attester_type', 
+                     'scatter_aggregation', 'performance_threshold']
+    
+    for key in simple_params:
+        if key in config and config[key] is not None:
+            params[key] = str(config[key])
+    
+    # Add list parameters (comma-separated)
+    list_params = ['proposer_cl', 'proposer_el', 'attester_cl', 'attester_el']
+    for key in list_params:
+        if key in config and config[key]:
+            params[key] = ','.join(config[key])
+    
+    # Don't include load_data or show_trend_line in URL
+    params.pop('load_data', None)
+    params.pop('show_trend_line', None)
+    
+    return params
+
+
+def update_url_with_config(config: Dict[str, Any]):
+    """Update the browser URL with the current configuration."""
+    params = generate_url_params(config)
+    st.query_params.update(params)
 
 
 def initialize_session_state():
@@ -51,6 +140,11 @@ def initialize_session_state():
         st.session_state.peerdas_v2_analysis_data = {}
     if 'peerdas_v2_last_config' not in st.session_state:
         st.session_state.peerdas_v2_last_config = None
+    
+    # Load URL parameters on first run
+    if 'peerdas_v2_url_params_loaded' not in st.session_state:
+        st.session_state.peerdas_v2_url_params_loaded = True
+        st.session_state.peerdas_v2_url_config = parse_url_params()
 
 
 def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
@@ -86,12 +180,19 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         logger.info(f"Using experimental cluster for {network}")
         st.sidebar.info(f"Auto-selected experimental cluster for {network}")
     
+    # Get URL parameters
+    url_config = st.session_state.get('peerdas_v2_url_config', {})
+    
     # Grouping selection (moved to top)
     st.sidebar.subheader("🧩 Grouping")
     grouping_dimension = st.sidebar.selectbox(
         "Grouping Dimension",
-        options=['node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
+        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
+            url_config.get('grouping_dimension', 'node_type')
+        ),
         format_func=lambda x: {
+            'none': 'None (All Proposers)',
             'node_type': 'Node Type',
             'cl_client': 'CL Client',
             'el_client': 'EL Client',
@@ -104,80 +205,45 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         help="Compute head-correctness per slot per group directly in ClickHouse"
     )
     
-    # Time range selection
+    # Time range selection - Always use absolute timestamps
     st.sidebar.subheader("📅 Time Range")
     
-    # Relative time selector
-    time_selection = st.sidebar.selectbox(
-        "Time Range",
-        options=[
-            "Last 1 hour",
-            "Last 3 hours", 
-            "Last 6 hours",
-            "Last 12 hours",
-            "Last 24 hours",
-            "Last 48 hours",
-            "Last 7 days",
-            "Custom"
-        ],
-        index=3,  # Default to "Last 12 hours"
-        key="time_selection"
+    # Get defaults from URL or use last 12 hours
+    default_end = url_config.get('end_datetime') or datetime.now(timezone.utc).replace(tzinfo=None)
+    default_start = url_config.get('start_datetime') or (default_end - timedelta(hours=12))
+    
+    # Start Time
+    st.sidebar.subheader("Start Time")
+    start_col1, start_col2 = st.sidebar.columns(2)
+    start_date = start_col1.date_input(
+        "Start Date",
+        value=default_start.date(),
+        key="peerdas_v2_start_date"
+    )
+    start_time = start_col2.time_input(
+        "Start Time (UTC)",
+        value=default_start.time(),
+        key="peerdas_v2_start_time",
+        step=300  # 5 minute steps
     )
     
-    # Calculate time range based on selection - USE UTC for database compatibility
-    end_datetime = datetime.now(timezone.utc).replace(tzinfo=None)  # Remove timezone info for compatibility
+    # End Time
+    st.sidebar.subheader("End Time")
+    end_col1, end_col2 = st.sidebar.columns(2)
+    end_date = end_col1.date_input(
+        "End Date",
+        value=default_end.date(),
+        key="peerdas_v2_end_date"
+    )
+    end_time = end_col2.time_input(
+        "End Time (UTC)",
+        value=default_end.time(),
+        key="peerdas_v2_end_time",
+        step=300  # 5 minute steps
+    )
     
-    if time_selection == "Last 1 hour":
-        start_datetime = end_datetime - timedelta(hours=1)
-    elif time_selection == "Last 3 hours":
-        start_datetime = end_datetime - timedelta(hours=3)
-    elif time_selection == "Last 6 hours":
-        start_datetime = end_datetime - timedelta(hours=6)
-    elif time_selection == "Last 12 hours":
-        start_datetime = end_datetime - timedelta(hours=12)
-    elif time_selection == "Last 24 hours":
-        start_datetime = end_datetime - timedelta(hours=24)
-    elif time_selection == "Last 48 hours":
-        start_datetime = end_datetime - timedelta(hours=48)
-    elif time_selection == "Last 7 days":
-        start_datetime = end_datetime - timedelta(days=7)
-    else:  # Custom
-        # Default to last 12 hours for custom selection - USE UTC
-        default_end = datetime.now(timezone.utc).replace(tzinfo=None)
-        default_start = default_end - timedelta(hours=12)
-        
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            start_date = st.sidebar.date_input(
-                "Start Date",
-                value=default_start.date(),
-                key="start_date"
-            )
-        with col2:
-            start_time = st.sidebar.time_input(
-                "Start Time",
-                value=default_start.time(),
-                key="start_time",
-                step=300  # 5 minute steps
-            )
-        
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            end_date = st.sidebar.date_input(
-                "End Date",
-                value=default_end.date(),
-                key="end_date"
-            )
-        with col2:
-            end_time = st.sidebar.time_input(
-                "End Time",
-                value=default_end.time(),
-                key="end_time",
-                step=300  # 5 minute steps
-            )
-        
-        start_datetime = datetime.combine(start_date, start_time)
-        end_datetime = datetime.combine(end_date, end_time)
+    start_datetime = datetime.combine(start_date, start_time)
+    end_datetime = datetime.combine(end_date, end_time)
     
     # Bucketing options for blob count
     st.sidebar.subheader("🗂️ Blob Count Bucketing")
@@ -186,7 +252,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         "Number of Buckets",
         min_value=1,
         max_value=12,
-        value=10,
+        value=url_config.get('num_buckets', 10),
         help="Number of buckets to divide blob counts into (automatically calculates bucket size based on data range)"
     )
 
@@ -195,6 +261,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     mev_filter = st.sidebar.selectbox(
         "Block Source",
         options=['both', 'yes', 'no'],
+        index=['both', 'yes', 'no'].index(url_config.get('mev_filter', 'both')),
         format_func=lambda x: {
             'both': 'All Blocks',
             'yes': 'MEV Relay Blocks Only',
@@ -203,10 +270,30 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         help="Filter slots based on whether blocks were delivered via MEV relay or built locally"
     )
     
-    # Create filter UI components using shared utility
+    # Create filter UI components using shared utility with URL parameters
     with st.sidebar:
-        proposer_filters = create_proposer_filters_ui(network)
-        attester_filters = create_attester_filters_ui(network)
+        # Prepare initial values from URL config
+        proposer_initial = {}
+        attester_initial = {}
+        
+        if url_config:
+            # Convert URL params to the format expected by the filter functions
+            if 'proposer_type' in url_config:
+                proposer_initial['proposer_type'] = url_config['proposer_type']
+            if 'proposer_cl' in url_config:
+                proposer_initial['proposer_cl'] = url_config['proposer_cl']
+            if 'proposer_el' in url_config:
+                proposer_initial['proposer_el'] = url_config['proposer_el']
+                
+            if 'attester_type' in url_config:
+                attester_initial['attester_type'] = url_config['attester_type']
+            if 'attester_cl' in url_config:
+                attester_initial['attester_cl'] = url_config['attester_cl']
+            if 'attester_el' in url_config:
+                attester_initial['attester_el'] = url_config['attester_el']
+        
+        proposer_filters = create_proposer_filters_ui(network, initial_values=proposer_initial)
+        attester_filters = create_attester_filters_ui(network, initial_values=attester_initial)
     
     # Load data button
     st.sidebar.markdown("---")
@@ -214,31 +301,64 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Chart Options
     st.sidebar.subheader("📊 Chart Options")
     
+    # Add view mode selector
+    view_mode = st.sidebar.radio(
+        "View Mode",
+        options=['correct', 'incorrect'],
+        index=['correct', 'incorrect'].index(url_config.get('view_mode', 'correct')),
+        format_func=lambda x: {
+            'correct': '✅ Correct Votes',
+            'incorrect': '❌ Incorrect/Missing Votes'
+        }[x],
+        help="Show head correctness or incorrectness (inverse)"
+    )
+    
     chart_type = st.sidebar.selectbox(
         "Chart Type",
-        options=['boxplot', 'violin', 'scatter', 'ecdf_diff', 'cdf'],
+        options=['boxplot', 'violin', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'],
+        index=['boxplot', 'violin', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'].index(
+            url_config.get('chart_type', 'boxplot')
+        ),
         format_func=lambda x: {
             'boxplot': 'Box Plot Distribution',
             'violin': 'Violin Plot Distribution',
             'scatter': 'Scatter Plot with Trend',
+            'bar': 'Bar Chart Comparison',
             'ecdf_diff': 'Difference ECDF',
-            'cdf': 'Cumulative Distribution (CDF)'
+            'cdf': 'Cumulative Distribution (CDF)',
+            'summary': 'Statistical Summary Table'
         }[x]
     )
     
     show_trend_line = False
-    scatter_aggregation = 'p95'
-    if chart_type == 'scatter':
+    scatter_aggregation = url_config.get('scatter_aggregation', 'p95')
+    performance_threshold = url_config.get('performance_threshold', 95.0)
+    
+    if chart_type == 'summary':
+        performance_threshold = st.sidebar.slider(
+            "Performance Threshold (%)",
+            min_value=50.0,
+            max_value=100.0,
+            value=url_config.get('performance_threshold', 95.0),
+            step=0.5,
+            help="Threshold for considering a slot as 'good' performance. Slots with head correctness ≥ this value are counted as meeting the threshold."
+        )
+    elif chart_type == 'scatter':
         show_trend_line = st.sidebar.checkbox(
             "Show trend line",
             value=True,
             help="Display trend line on scatter plot"
         )
         
+        agg_options = ['mean', 'median', 'p25', 'p50', 'p75', 'p90', 'p95', 'p99', 'min', 'max']
+        default_agg = url_config.get('scatter_aggregation', 'p95')
+        if default_agg not in agg_options:
+            default_agg = 'p95'
+        
         scatter_aggregation = st.sidebar.selectbox(
             "Aggregation Method",
-            options=['mean', 'median', 'p25', 'p50', 'p75', 'p90', 'p95', 'p99', 'min', 'max'],
-            index=6,  # Default to p95
+            options=agg_options,
+            index=agg_options.index(default_agg),
             format_func=lambda x: {
                 'mean': 'Mean (Average)',
                 'median': 'Median',
@@ -276,9 +396,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'num_buckets': num_buckets,
         'grouping_dimension': grouping_dimension,
         'mev_filter': mev_filter,
+        'view_mode': view_mode,
         'chart_type': chart_type,
         'show_trend_line': show_trend_line,
         'scatter_aggregation': scatter_aggregation,
+        'performance_threshold': performance_threshold,
         'load_data': load_data
     }
     
@@ -429,17 +551,35 @@ def main():
     
     # Load and display data if requested
     if config['load_data']:
+        # Update URL with current configuration
+        update_url_with_config(config)
+        
         data = load_and_process_head_correctness_data(config)
         
         if data is not None and not data.empty:
+            # Transform data for incorrect view mode if selected
+            if config.get('view_mode') == 'incorrect':
+                data = data.copy()
+                data['head_correctness_pct'] = 100 - data['head_correctness_pct']
+                view_mode_label = "Incorrectness"
+            else:
+                view_mode_label = "Correctness"
+            
             # Create the visualization
             st.markdown("---")
+            
+            # Show shareable link
+            with st.expander("🔗 Share This Configuration", expanded=False):
+                st.info("The URL has been updated with your current configuration. Copy the URL from your browser's address bar to share this exact view.")
+                st.code(f"Configuration loaded at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
             
             # Prepare metadata
             metadata = {
                 'total_slots': st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0),
                 'total_slots_analyzed': st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0),
                 'filtered_out_slots': st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0),
+                'view_mode': config.get('view_mode', 'correct'),
+                'view_mode_label': view_mode_label
             }
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
@@ -494,6 +634,29 @@ def main():
                 )
             elif config['chart_type'] == 'cdf':
                 fig = create_head_correctness_cdf(
+                    data=data,
+                    num_buckets=config.get('num_buckets'),
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters
+                )
+            elif config['chart_type'] == 'summary':
+                fig = create_head_correctness_summary(
+                    data=data,
+                    num_buckets=config.get('num_buckets'),
+                    network=config['network'],
+                    time_range=time_range,
+                    metadata=metadata,
+                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                    proposer_filters=proposer_filters,
+                    attester_filters=attester_filters,
+                    performance_threshold=config.get('performance_threshold', 95.0)
+                )
+            elif config['chart_type'] == 'bar':
+                fig = create_head_correctness_bar(
                     data=data,
                     num_buckets=config.get('num_buckets'),
                     network=config['network'],
@@ -640,6 +803,7 @@ def main():
                 # Show grouping information if applicable
                 if config.get('grouping_dimension'):
                     group_labels = {
+                        'none': 'None (All Proposers)',
                         'node_type': 'Node Type',
                         'cl_client': 'CL Client',
                         'el_client': 'EL Client',
