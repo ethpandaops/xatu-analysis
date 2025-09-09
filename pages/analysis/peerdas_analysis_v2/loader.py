@@ -25,6 +25,7 @@ from queries import (
     build_validator_filter,
     get_head_correctness_per_slot_query,
     get_head_correctness_per_slot_grouped_query,
+    get_head_correctness_per_slot_attester_grouped_query,
     get_mev_slots_query
 )
 
@@ -353,14 +354,17 @@ def load_eligible_slots(
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
-def _build_attester_map_union_selects(network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]]) -> str:
+def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]]) -> str:
     """Build UNION ALL SELECT mapping for validator->group using network_spec ranges."""
     logger.info(f"Building attester map: attester_type={attester_type}, cl_filter={cl_filter}, el_filter={el_filter}")
     
     selects = []
-    if not network_spec:
+    if not _network_spec:
         logger.error("No network_spec provided to _build_attester_map_union_selects")
         return ""
+    
+    # Use the unhashed network_spec parameter
+    network_spec = _network_spec
 
     nodes_processed = 0
     nodes_included = 0
@@ -598,6 +602,7 @@ def load_head_correctness_data(
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
+    attester_grouping_dimension: Optional[str] = None,  # New parameter
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
@@ -972,6 +977,94 @@ def load_head_correctness_data(
                 df['group_label'] = df['group_key'].apply(format_cl_node_type_mev)
             else:
                 df['group_label'] = df['group_key']
+            
+            # If attester grouping is also requested, load that data too
+            if attester_grouping_dimension and attester_grouping_dimension != 'none':
+                logger.info(f"Loading attester-grouped data with dimension: {attester_grouping_dimension}")
+                
+                # Build attester map for grouping
+                attester_map_sql = _build_attester_map_union_selects(
+                    network_spec, 
+                    attester_type, 
+                    cl_filter, 
+                    el_filter
+                )
+                
+                if not attester_map_sql:
+                    logger.warning("No attester mapping available - skipping attester grouping")
+                    df['data_type'] = 'proposer'
+                    return df
+                
+                # Use the attester grouped query
+                attester_sql = get_head_correctness_per_slot_attester_grouped_query(group_by=attester_grouping_dimension)
+                attester_sql = attester_sql.replace('%(eligible_slots)s', slots_str)
+                attester_sql = attester_sql.replace('{attester_map_union_selects}', attester_map_sql)
+                # Remove the validator_filter placeholder lines entirely to avoid SQL formatting issues
+                attester_sql = attester_sql.replace('\n      {validator_filter}', '')
+                attester_sql = attester_sql.replace('{validator_filter}', '')
+                
+                # Debug: Log first part of query to check formatting
+                logger.debug(f"First 500 chars of attester SQL: {attester_sql[:500]}")
+                
+                # Execute attester query
+                try:
+                    attester_df = pd.read_sql(attester_sql, conn, params=params)
+                except Exception as e:
+                    logger.error(f"Attester query failed. First 2000 chars of SQL:\n{attester_sql[:2000]}")
+                    raise
+                
+                if not attester_df.empty:
+                    # Filter out any rows with null or empty group_key values
+                    # This can happen if validators are not in our network spec
+                    initial_count = len(attester_df)
+                    attester_df = attester_df[attester_df['group_key'].notna()]
+                    attester_df = attester_df[~attester_df['group_key'].isin(['', 'None', 'nan'])]
+                    filtered_count = initial_count - len(attester_df)
+                    if filtered_count > 0:
+                        logger.info(f"Filtered out {filtered_count} rows with empty/unknown group_key values")
+                    
+                    # Add labels for attester groups
+                    attester_df['group_key'] = attester_df['group_key'].astype(str)
+                    if attester_grouping_dimension == 'node_type':
+                        attester_df['group_label'] = attester_df['group_key'].map({
+                            'supernode': 'Supernode', 
+                            'regular': 'Regular Node'
+                        }).fillna(attester_df['group_key'])
+                    elif attester_grouping_dimension == 'cl_client':
+                        attester_df['group_label'] = attester_df['group_key'].str.title()
+                    elif attester_grouping_dimension == 'el_client':
+                        attester_df['group_label'] = attester_df['group_key'].str.title()
+                    elif attester_grouping_dimension == 'cl_el_combined':
+                        attester_df['group_label'] = attester_df['group_key'].apply(
+                            lambda s: ' + '.join([p.title() for p in s.split('-')]) if isinstance(s, str) else s
+                        )
+                    elif attester_grouping_dimension == 'cl_node_type':
+                        def format_cl_node_type(s):
+                            if isinstance(s, str) and '-' in s:
+                                parts = s.split('-')
+                                if len(parts) == 2:
+                                    cl, node_type = parts
+                                    node_type_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                                    return f"{cl.title()} + {node_type_label}"
+                            return s
+                        attester_df['group_label'] = attester_df['group_key'].apply(format_cl_node_type)
+                    else:
+                        attester_df['group_label'] = attester_df['group_key']
+                    
+                    # Mark data types
+                    df['data_type'] = 'proposer'
+                    attester_df['data_type'] = 'attester'
+                    
+                    # Combine both dataframes
+                    combined_df = pd.concat([df, attester_df], ignore_index=True)
+                    return combined_df
+                else:
+                    logger.warning("No attester grouped data returned")
+                    df['data_type'] = 'proposer'
+                    return df
+            else:
+                df['data_type'] = 'proposer'
+                return df
 
             return df
         else:

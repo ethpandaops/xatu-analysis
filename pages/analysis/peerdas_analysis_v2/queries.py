@@ -6,64 +6,87 @@ including those that may have been reorged) and blob counts, with support for
 filtering by proposer and attester node characteristics.
 """
 
-def get_head_correctness_per_slot_query() -> str:
-    """
-    Compute head correctness per slot entirely in ClickHouse.
+# ============================================================================
+# REUSABLE CTE COMPONENTS
+# ============================================================================
 
-    Inputs via params/formatting:
-    - %(network)s: network name
-    - %(start_date)s, %(end_date)s: datetime bounds (UTC)
-    - %(eligible_slots)s: slots tuple string e.g. "(26400,26401,...)" (loader injects)
-    - {{validator_filter}}: optional SQL fragment to restrict validators (e.g., "AND validator_index IN (...)")
-
-    Notes:
-    - Unions canonical elaborated attestations (expands validators) with gossipsub aggregators.
-    - Deduplicates per (slot, validator_index) and counts a validator as correct if ANY attestation
-      for that (slot, validator) voted for the proposed block_root (including reorged blocks).
-    - Blob counts are derived from sidecar tables.
-    - Uses GLOBAL IN to avoid distributed_product_mode errors.
-    """
+def _get_eligible_slots_cte() -> str:
+    """CTE for getting eligible slots with proposed blocks (including reorged)."""
     return """
-    WITH
     eligible_slots AS (
       -- CRITICAL: We use beacon_api_eth_v2_beacon_block NOT canonical_beacon_block
       -- This captures ALL proposed blocks including those that were reorged out
-      -- Using canonical would create survivorship bias - we want to see what validators
-      -- voted for AT THE TIME, not just the blocks that eventually won
-      SELECT slot, block_root
+      SELECT slot, block_root, proposer_index
       FROM beacon_api_eth_v2_beacon_block
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s
-      GROUP BY slot, block_root
+      GROUP BY slot, block_root, proposer_index
       -- In rare cases of multiple blocks per slot, just take any one (they're all valid proposals)
       LIMIT 1 BY slot
-    ),
-    -- Keep only slots that have committee data to avoid bogus counts from LEFT JOIN defaults
+    )"""
+
+
+def _get_mev_slots_cte() -> str:
+    """CTE for identifying MEV relay slots."""
+    return """
+    mev_slots AS (
+      -- Get slots that were delivered via MEV relay
+      -- IMPORTANT: Filter out slot = 0 which is invalid/corrupt data
+      SELECT DISTINCT slot
+      FROM mev_relay_proposer_payload_delivered
+      WHERE meta_network_name = %(network)s
+        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND slot GLOBAL IN %(eligible_slots)s
+        AND slot > 0  -- Filter out corrupt entries with slot = 0
+    )"""
+
+
+def _get_committee_members_cte() -> str:
+    """CTE for getting committee members with optional validator filter."""
+    return """
     committee_members AS (
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM canonical_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      {{validator_filter}}
+        AND slot GLOBAL IN %(eligible_slots)s
+      {validator_filter}
       UNION DISTINCT
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM beacon_api_eth_v1_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      {{validator_filter}}
-    ),
+        AND slot GLOBAL IN %(eligible_slots)s
+      {validator_filter}
+    )"""
+
+
+def _get_committee_slots_cte() -> str:
+    """CTE for getting distinct slots with committee data."""
+    return """
     committee_slots AS (
       SELECT DISTINCT slot FROM committee_members
-    ),
+    )"""
+
+
+def _get_eligible_slots_filtered_cte(include_proposer: bool = True) -> str:
+    """CTE for filtering eligible slots to those with committee data."""
+    if include_proposer:
+        fields = "es.slot AS slot, es.block_root AS block_root, es.proposer_index AS proposer_index"
+    else:
+        fields = "es.slot AS slot, es.block_root AS block_root"
+    return f"""
     eligible_slots_filtered AS (
-      -- Only include slots that have committee data
-      SELECT es.slot, es.block_root
+      SELECT {fields}
       FROM eligible_slots es
       INNER JOIN committee_slots cs ON es.slot = cs.slot
-    ),
+    )"""
+
+
+def _get_attested_unique_cte() -> str:
+    """CTE for getting unique attestations and checking correctness."""
+    return """
     attested_unique AS (
       -- Get attestations and check correctness in one step
       -- Only count attestations from validators who were assigned to attest in this slot
@@ -77,7 +100,7 @@ def get_head_correctness_per_slot_query() -> str:
         WHERE meta_network_name = %(network)s
           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot GLOBAL IN %(eligible_slots)s
-        {{validator_filter}}
+        {validator_filter}
         UNION ALL
         SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
         FROM libp2p_gossipsub_beacon_attestation
@@ -85,7 +108,7 @@ def get_head_correctness_per_slot_query() -> str:
           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot GLOBAL IN %(eligible_slots)s
           AND attesting_validator_index IS NOT NULL
-        {{validator_filter}}
+        {validator_filter}
         UNION ALL
         SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
         FROM beacon_api_eth_v1_events_attestation
@@ -93,35 +116,63 @@ def get_head_correctness_per_slot_query() -> str:
           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot GLOBAL IN %(eligible_slots)s
           AND attesting_validator_index IS NOT NULL
-        {{validator_filter}}
+        {validator_filter}
       ) a
       LEFT JOIN eligible_slots e ON a.slot = e.slot
       INNER JOIN committee_members cm ON a.slot = cm.slot AND a.validator_index = cm.validator_index
       GROUP BY a.slot, a.validator_index
-    ),
+    )"""
+
+
+def _get_blob_counts_cte() -> str:
+    """CTE for getting blob counts from sidecar data."""
+    return """
     blob_counts AS (
-      -- Prefer API counts
-      SELECT slot, toUInt64(length(anyLast(kzg_commitments))) AS blob_count
-      FROM beacon_api_eth_v1_events_data_column_sidecar
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      GROUP BY slot
+      SELECT b1.slot AS slot, toUInt64(length(anyLast(b1.kzg_commitments))) AS blob_count
+      FROM beacon_api_eth_v1_events_data_column_sidecar AS b1
+      WHERE b1.meta_network_name = %(network)s
+        AND b1.slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND b1.slot GLOBAL IN %(eligible_slots)s
+      GROUP BY b1.slot
       UNION ALL
-      SELECT slot,
-             toUInt64(kzg_commitments_count) AS blob_count
-      FROM libp2p_gossipsub_data_column_sidecar
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      GROUP BY slot, kzg_commitments_count
-    ),
+      SELECT b2.slot AS slot, toUInt64(b2.kzg_commitments_count) AS blob_count
+      FROM libp2p_gossipsub_data_column_sidecar AS b2
+      WHERE b2.meta_network_name = %(network)s
+        AND b2.slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND b2.slot GLOBAL IN %(eligible_slots)s
+      GROUP BY b2.slot, b2.kzg_commitments_count
+    )"""
+
+
+def _get_slot_blob_cte() -> str:
+    """CTE for aggregating blob counts per slot."""
+    return """
     slot_blob AS (
-      -- If both sources exist, they should match; take max to be safe
-      SELECT slot, max(blob_count) AS blob_count
+      SELECT blob_counts.slot AS slot, max(blob_counts.blob_count) AS blob_count
       FROM blob_counts
-      GROUP BY slot
-    )
+      GROUP BY blob_counts.slot
+    )"""
+
+def get_head_correctness_per_slot_query() -> str:
+    """
+    Compute head correctness per slot entirely in ClickHouse.
+    Uses reusable CTE components.
+    """
+    # Build CTEs properly
+    ctes = []
+    ctes.append(_get_eligible_slots_cte().strip())
+    ctes.append(_get_committee_members_cte().strip())
+    ctes.append(_get_committee_slots_cte().strip())
+    ctes.append(_get_eligible_slots_filtered_cte(include_proposer=False).strip())
+    ctes.append(_get_attested_unique_cte().strip())
+    ctes.append(_get_blob_counts_cte().strip())
+    ctes.append(_get_slot_blob_cte().strip())
+    
+    cte_string = ",\n    ".join(ctes)
+    
+    return f"""
+    WITH
+    {cte_string}
     SELECT e.slot,
            countDistinct(cm.validator_index) AS total_scheduled,
            countDistinctIf(cm.validator_index, au.correct_vote = 1) AS correct_votes,
@@ -131,7 +182,6 @@ def get_head_correctness_per_slot_query() -> str:
               NULL
            ) AS head_correctness_pct,
            coalesce(sb.blob_count, toUInt64(0)) AS blob_count
-    -- Start from slots that we KNOW have committee data
     FROM eligible_slots_filtered e
     INNER JOIN committee_members cm ON e.slot = cm.slot
     LEFT JOIN attested_unique au ON e.slot = au.slot AND cm.validator_index = au.validator_index
@@ -272,24 +322,24 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       GROUP BY a.slot, a.validator_index
     ),
     blob_counts AS (
-      SELECT slot, toUInt64(length(anyLast(kzg_commitments))) AS blob_count
-      FROM beacon_api_eth_v1_events_data_column_sidecar
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      GROUP BY slot
+      SELECT b1.slot AS slot, toUInt64(length(anyLast(b1.kzg_commitments))) AS blob_count
+      FROM beacon_api_eth_v1_events_data_column_sidecar AS b1
+      WHERE b1.meta_network_name = %(network)s
+        AND b1.slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND b1.slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
+      GROUP BY b1.slot
       UNION ALL
-      SELECT slot, toUInt64(kzg_commitments_count) AS blob_count
-      FROM libp2p_gossipsub_data_column_sidecar
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
-      GROUP BY slot, kzg_commitments_count
+      SELECT b2.slot AS slot, toUInt64(b2.kzg_commitments_count) AS blob_count
+      FROM libp2p_gossipsub_data_column_sidecar AS b2
+      WHERE b2.meta_network_name = %(network)s
+        AND b2.slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+        AND b2.slot GLOBAL IN %(eligible_slots)s  -- Use the full slot list, not just slots with blocks
+      GROUP BY b2.slot, b2.kzg_commitments_count
     ),
     slot_blob AS (
-      SELECT slot, max(blob_count) AS blob_count
+      SELECT blob_counts.slot AS slot, max(blob_counts.blob_count) AS blob_count
       FROM blob_counts
-      GROUP BY slot
+      GROUP BY blob_counts.slot
     ),
     slot_head_correctness AS (
       -- Calculate head correctness per slot
@@ -381,6 +431,96 @@ def build_validator_filter(validator_indices: list = None) -> str:
         indices_str = ','.join(str(idx) for idx in validator_indices)
         return f"AND validator_index IN ({indices_str})"
     return ""
+
+
+def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
+    """
+    Compute head correctness grouped by ATTESTER characteristics.
+    
+    This groups validators by their node characteristics and calculates
+    head correctness for each group across all slots.
+    
+    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'cl_el_combined'
+    
+    Requires inline attester mapping injected as {attester_map_union_selects}, e.g.,
+      SELECT 12345 AS validator_index, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client
+      UNION ALL  
+      SELECT 12346 AS validator_index, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client
+    """
+    # Determine group expression
+    # Note: No need for coalesce since we're INNER JOINing with attester_map
+    if group_by == 'none':
+        group_expr = "'all'"
+    else:
+        group_expr = {
+            'node_type': "am.node_type",
+            'cl_client': "am.cl_client",
+            'el_client': "am.el_client",
+            'cl_el_combined': "concat(am.cl_client, '-', am.el_client)",
+            'cl_node_type': "concat(am.cl_client, '-', am.node_type)"
+        }.get(group_by, "am.node_type")
+    
+    # Build CTEs properly - need to handle the placeholder replacements
+    eligible_slots = _get_eligible_slots_cte().strip()
+    attester_map = """attester_map AS (
+      {attester_map_union_selects}
+    )"""
+    committee_members = _get_committee_members_cte().strip()
+    committee_slots = _get_committee_slots_cte().strip()
+    eligible_slots_filtered = _get_eligible_slots_filtered_cte(include_proposer=False).strip()
+    attested_unique = _get_attested_unique_cte().strip()
+    blob_counts = _get_blob_counts_cte().strip()
+    slot_blob = _get_slot_blob_cte().strip()
+    
+    cte_string = f"""{eligible_slots},
+    {attester_map},
+    {committee_members},
+    {committee_slots},
+    {eligible_slots_filtered},
+    {attested_unique},
+    {blob_counts},
+    {slot_blob}"""
+    
+    # Determine join type based on grouping
+    # When group_by is 'none', include all validators
+    # Otherwise, only include validators in our network spec
+    if group_by == 'none':
+        attester_join = "LEFT JOIN attester_map am ON cm.validator_index = am.validator_index"
+    else:
+        attester_join = "INNER JOIN attester_map am ON cm.validator_index = am.validator_index  -- INNER JOIN to filter out unknown validators"
+    
+    return f"""
+    WITH
+    {cte_string},
+    -- Group attestations by attester characteristics
+    attester_grouped_correctness AS (
+      SELECT 
+        e.slot AS slot,
+        {group_expr} AS group_key,
+        cm.validator_index AS validator_index,
+        au.correct_vote AS correct_vote,
+        sb.blob_count AS blob_count
+      FROM eligible_slots_filtered e
+      INNER JOIN committee_members cm ON e.slot = cm.slot
+      {attester_join}
+      LEFT JOIN attested_unique au ON e.slot = au.slot AND cm.validator_index = au.validator_index
+      LEFT JOIN slot_blob sb ON e.slot = sb.slot
+    )
+    SELECT 
+      agc.slot,
+      agc.group_key,
+      countDistinct(agc.validator_index) AS total_scheduled,
+      countDistinctIf(agc.validator_index, agc.correct_vote = 1) AS correct_votes,
+      if(countDistinct(agc.validator_index) > 0,
+         round(100.0 * countDistinctIf(agc.validator_index, agc.correct_vote = 1)
+               / countDistinct(agc.validator_index), 2),
+         NULL
+      ) AS head_correctness_pct,
+      coalesce(agc.blob_count, toUInt64(0)) AS blob_count
+    FROM attester_grouped_correctness agc
+    GROUP BY agc.slot, agc.group_key, agc.blob_count
+    ORDER BY agc.slot, agc.group_key
+    """
 
 
 def get_mev_slots_query() -> str:

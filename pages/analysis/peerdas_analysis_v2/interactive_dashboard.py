@@ -185,8 +185,10 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     # Grouping selection (moved to top)
     st.sidebar.subheader("🧩 Grouping")
-    grouping_dimension = st.sidebar.selectbox(
-        "Grouping Dimension",
+    
+    # Proposer grouping
+    proposer_grouping = st.sidebar.selectbox(
+        "Proposer Grouping",
         options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
         index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
             url_config.get('grouping_dimension', 'node_type')
@@ -202,8 +204,29 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'node_type_mev': 'Node Type + Block Building',
             'cl_node_type_mev': 'CL+Node Type + Block Building'
         }[x],
-        help="Compute head-correctness per slot per group directly in ClickHouse"
+        help="Group slots by proposer characteristics"
     )
+    
+    # Attester grouping (new)
+    attester_grouping = st.sidebar.selectbox(
+        "Attester Grouping",
+        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type'].index(
+            url_config.get('attester_grouping', 'none')
+        ),
+        format_func=lambda x: {
+            'none': 'None (All Attesters)',
+            'node_type': 'Node Type',
+            'cl_client': 'CL Client',
+            'el_client': 'EL Client',
+            'cl_el_combined': 'CL+EL Combination',
+            'cl_node_type': 'CL+Node Type'
+        }[x],
+        help="Group attestations by attester characteristics"
+    )
+    
+    # For backward compatibility, keep grouping_dimension as proposer_grouping
+    grouping_dimension = proposer_grouping
     
     # Time range selection - Always use absolute timestamps
     st.sidebar.subheader("📅 Time Range")
@@ -395,6 +418,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'end_datetime': end_datetime,
         'num_buckets': num_buckets,
         'grouping_dimension': grouping_dimension,
+        'attester_grouping': attester_grouping,  # Add attester grouping
         'mev_filter': mev_filter,
         'view_mode': view_mode,
         'chart_type': chart_type,
@@ -486,6 +510,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 cl_filter=config.get('attester_cl'),
                 el_filter=config.get('attester_el'),
                 grouping_dimension=config.get('grouping_dimension'),
+                attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
                 cluster_name=config['cluster']
             )
             
@@ -598,90 +623,154 @@ def main():
             }
             
             # Create chart based on selected type
-            if config['chart_type'] == 'boxplot':
-                fig = create_head_correctness_boxplot(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters
-                )
-            elif config['chart_type'] == 'violin':
-                fig = create_head_correctness_violin(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters
-                )
-            elif config['chart_type'] == 'ecdf_diff':
-                fig = create_head_correctness_ecdf(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters,
-                    difference_mode=True
-                )
-            elif config['chart_type'] == 'cdf':
-                fig = create_head_correctness_cdf(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters
-                )
-            elif config['chart_type'] == 'summary':
-                fig = create_head_correctness_summary(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters,
-                    performance_threshold=config.get('performance_threshold', 95.0)
-                )
-            elif config['chart_type'] == 'bar':
-                fig = create_head_correctness_bar(
-                    data=data,
-                    num_buckets=config.get('num_buckets'),
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters
-                )
-            else:
-                fig = create_head_correctness_chart(
-                    data=data,
-                    num_buckets=config.get('num_buckets') or 6,
-                    network=config['network'],
-                    time_range=time_range,
-                    metadata=metadata,
-                    show_trend_line=config.get('show_trend_line', True),
-                    aggregation_method=config.get('scatter_aggregation', 'p95'),
-                    grouping_dimension=config.get('grouping_dimension') or 'node_type',
-                    proposer_filters=proposer_filters,
-                    attester_filters=attester_filters
-                )
+            # Check if we have both proposer and attester data
+            has_proposer_data = 'data_type' in data.columns and 'proposer' in data['data_type'].values
+            has_attester_data = 'data_type' in data.columns and 'attester' in data['data_type'].values
             
-            # Display the chart
-            st.plotly_chart(fig, use_container_width=True)
+            # Helper function to create chart with correct grouping dimension
+            def create_chart_for_data_type(data_subset, data_type_label, grouping_dim):
+                """Create chart for a specific data type with appropriate grouping."""
+                if config['chart_type'] == 'boxplot':
+                    return create_head_correctness_boxplot(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                elif config['chart_type'] == 'violin':
+                    return create_head_correctness_violin(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                elif config['chart_type'] == 'ecdf_diff':
+                    return create_head_correctness_ecdf(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        difference_mode=True,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                elif config['chart_type'] == 'cdf':
+                    return create_head_correctness_cdf(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                elif config['chart_type'] == 'bar':
+                    return create_head_correctness_bar(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                else:  # scatter/line chart
+                    return create_head_correctness_chart(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets') or 6,
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        show_trend_line=config.get('show_trend_line', True),
+                        aggregation_method=config.get('scatter_aggregation', 'p95'),
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+            
+            # Create and display charts
+            if has_proposer_data and has_attester_data:
+                # We have both - create separate charts
+                proposer_data = data[data['data_type'] == 'proposer'].copy()
+                attester_data = data[data['data_type'] == 'attester'].copy()
+                
+                # Display proposer chart first
+                proposer_fig = create_chart_for_data_type(
+                    proposer_data, 
+                    'proposer',
+                    config.get('grouping_dimension') or 'node_type'
+                )
+                st.plotly_chart(proposer_fig, use_container_width=True)
+                
+                # Display attester chart if attester grouping is enabled
+                if config.get('attester_grouping') and config.get('attester_grouping') != 'none':
+                    attester_fig = create_chart_for_data_type(
+                        attester_data,
+                        'attester', 
+                        config.get('attester_grouping')
+                    )
+                    st.plotly_chart(attester_fig, use_container_width=True)
+                
+            elif has_proposer_data:
+                # Only proposer data
+                proposer_data = data[data['data_type'] == 'proposer'].copy()
+                proposer_fig = create_chart_for_data_type(
+                    proposer_data,
+                    'proposer',
+                    config.get('grouping_dimension') or 'node_type'
+                )
+                st.plotly_chart(proposer_fig, use_container_width=True)
+                
+            elif has_attester_data:
+                # Only attester data
+                attester_data = data[data['data_type'] == 'attester'].copy()
+                attester_fig = create_chart_for_data_type(
+                    attester_data,
+                    'attester',
+                    config.get('attester_grouping') or 'node_type'
+                )
+                st.plotly_chart(attester_fig, use_container_width=True)
+                
+            else:
+                # No data type column - treat as proposer data for backward compatibility
+                if config['chart_type'] == 'summary':
+                    # Summary table doesn't need special handling
+                    fig = create_head_correctness_summary(
+                        data=data,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=config.get('grouping_dimension') or 'node_type',
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        performance_threshold=config.get('performance_threshold', 95.0)
+                    )
+                else:
+                    fig = create_chart_for_data_type(
+                        data,
+                        'proposer',
+                        config.get('grouping_dimension') or 'node_type'
+                    )
+                st.plotly_chart(fig, use_container_width=True)
             
             # Show debug information
             with st.expander("🔍 Debug Information", expanded=False):

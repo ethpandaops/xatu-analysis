@@ -10,6 +10,7 @@ grouped data computed by ClickHouse.
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from typing import Dict, Any, Optional
 import logging
 
@@ -23,6 +24,140 @@ def _get_metric_label(metadata: Dict[str, Any] = None) -> str:
     if metadata and metadata.get('view_mode') == 'incorrect':
         return 'Incorrectness'
     return 'Correctness'
+
+
+def _get_legend_title(data: pd.DataFrame) -> str:
+    """Get the legend title based on data type (Proposed by or Attested by)."""
+    if 'data_type' in data.columns and len(data) > 0:
+        # Check if all non-null values are 'attester'
+        unique_types = data['data_type'].dropna().unique()
+        if len(unique_types) == 1 and unique_types[0] == 'attester':
+            return 'Attested by'
+    return 'Proposed by'
+
+
+def _get_smart_colors(group_keys: list, grouping_dimension: str) -> Dict[str, str]:
+    """
+    Generate smart color assignments based on grouping hierarchy.
+    
+    For hierarchical groupings (e.g., CL+NodeType), assigns base colors to primary
+    components and shade variations to secondary components.
+    
+    Args:
+        group_keys: List of unique group keys
+        grouping_dimension: The grouping dimension being used
+        
+    Returns:
+        Dictionary mapping group_key to color hex code
+    """
+    # Base color palette - diverse, visually distinct colors
+    base_colors = [
+        '#FF6B6B',  # Coral red
+        '#FFD93D',  # Bright yellow
+        '#6C5CE7',  # Purple
+        '#4ECDC4',  # Teal
+        '#FF6FB5',  # Hot pink
+        '#95E77E',  # Lime green
+        '#FFA500',  # Orange
+        '#45B7D1',  # Sky blue
+        '#B19CD9',  # Lavender
+        '#FFAB91',  # Peach
+        '#81C784',  # Green
+        '#F06292',  # Pink
+        '#A1887F',  # Brown
+        '#64B5F6',  # Light blue
+        '#FFB74D'   # Amber
+    ]
+    
+    color_map = {}
+    
+    # Simple groupings - just assign colors directly
+    if grouping_dimension in ['none', 'node_type', 'cl_client', 'el_client', 'block_building']:
+        for idx, key in enumerate(sorted(group_keys)):
+            color_map[key] = base_colors[idx % len(base_colors)]
+        return color_map
+    
+    # Hierarchical groupings - parse and assign colors intelligently
+    if grouping_dimension in ['cl_el_combined', 'cl_node_type', 'node_type_mev', 'cl_node_type_mev']:
+        # Parse keys to find primary components
+        primary_components = {}
+        
+        for key in group_keys:
+            if not key or key == 'unknown':
+                primary_components[key] = ['unknown']
+                continue
+                
+            # Parse based on grouping type
+            if grouping_dimension == 'cl_el_combined':
+                # Format: "lighthouse-geth"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # CL client
+                    primary_components.setdefault(primary, []).append(key)
+            
+            elif grouping_dimension == 'cl_node_type':
+                # Format: "lighthouse-supernode"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # CL client
+                    primary_components.setdefault(primary, []).append(key)
+            
+            elif grouping_dimension == 'node_type_mev':
+                # Format: "supernode-mev" or "regular-non-mev"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # Node type
+                    primary_components.setdefault(primary, []).append(key)
+            
+            elif grouping_dimension == 'cl_node_type_mev':
+                # Format: "lighthouse-supernode-mev"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # CL client
+                    primary_components.setdefault(primary, []).append(key)
+        
+        # Assign base colors to primary components
+        primary_colors = {}
+        for idx, primary in enumerate(sorted(primary_components.keys())):
+            primary_colors[primary] = base_colors[idx % len(base_colors)]
+        
+        # Create shade variations for each primary's group
+        for primary, keys in primary_components.items():
+            base_color = primary_colors[primary]
+            
+            if len(keys) == 1:
+                # Only one variant, use base color
+                color_map[keys[0]] = base_color
+            else:
+                # Multiple variants, create shades
+                # Convert hex to RGB for manipulation
+                base_rgb = tuple(int(base_color[i:i+2], 16) for i in (1, 3, 5))
+                
+                for idx, key in enumerate(sorted(keys)):
+                    if idx == 0:
+                        # First variant gets the base color
+                        color_map[key] = base_color
+                    else:
+                        # Create variations by adjusting brightness
+                        # Alternate between darker and lighter
+                        if idx % 2 == 1:
+                            # Darker variant
+                            factor = 0.7 + (0.15 * ((idx - 1) // 2))  # 0.7, 0.85
+                            new_rgb = tuple(int(c * factor) for c in base_rgb)
+                        else:
+                            # Lighter variant
+                            factor = 0.15 * (idx // 2)  # 0.15, 0.30
+                            new_rgb = tuple(min(255, int(c + (255 - c) * factor)) for c in base_rgb)
+                        
+                        # Convert back to hex
+                        color_map[key] = '#{:02x}{:02x}{:02x}'.format(*new_rgb)
+    
+    else:
+        # Fallback for unknown grouping dimensions
+        for idx, key in enumerate(sorted(group_keys)):
+            color_map[key] = base_colors[idx % len(base_colors)]
+    
+    return color_map
 
 
 def _format_filter_description(filter_type: str, filters: Dict[str, Any]) -> str:
@@ -158,12 +293,16 @@ def create_head_correctness_chart(
         x_title = 'Blob Count'
     
     fig = go.Figure()
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
+    
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
     
     # Create traces for each group
-    for idx, g in enumerate(sorted(df['group_key'].unique())):
+    for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
         glabel = gdf['group_label'].iloc[0] if not gdf.empty else str(g)
+        color = color_map.get(g, '#999999')  # Fallback to gray if not found
         
         # Calculate aggregation for each x value based on selected method
         if aggregation_method == 'mean':
@@ -215,7 +354,7 @@ def create_head_correctness_chart(
                     y=agg['head_correctness_pct'],
                     mode='lines+markers',
                     name=f'{glabel} ({agg_display})',
-                    line=dict(color=colors[idx % len(colors)], width=2),
+                    line=dict(color=color, width=2),
                     marker=dict(size=6),
                     hovertemplate=f'<b>{glabel}</b><br>Blob: %{{x}}<br>{agg_display} Head Correctness: %{{y:.1f}}%<br>Samples: %{{customdata}}<extra></extra>',
                     customdata=agg['sample_count']
@@ -290,6 +429,9 @@ def create_head_correctness_chart(
 
     is_bucketed = num_buckets and num_buckets >= 1
     
+    # Determine legend title based on data type
+    legend_title = _get_legend_title(data)
+    
     fig.update_layout(
         title=dict(
             text=main_title,
@@ -300,7 +442,7 @@ def create_head_correctness_chart(
         height=600,
         showlegend=True,
         hovermode='closest',
-        legend=dict(title=dict(text='Proposed by'), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
+        legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
         xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=x_title, type='category' if is_bucketed else 'linear'),
         yaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=f'Head {metric_label} (%)', range=[0, 100]),
         margin=dict(r=200, t=120, l=80)
@@ -318,7 +460,8 @@ def create_head_correctness_boxplot(
     metadata: Dict[str, Any] = None,
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
-    attester_filters: Dict[str, Any] = None
+    attester_filters: Dict[str, Any] = None,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create grouped box plot using real grouped data (no synthetic expansion)."""
     if data.empty:
@@ -379,8 +522,12 @@ def create_head_correctness_boxplot(
         x_order = sorted(df['blob_count'].dropna().unique())
 
     fig = go.Figure()
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
-    for idx, g in enumerate(sorted(df['group_key'].unique())):
+    
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
+    
+    for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
         # Get the group label if it exists, otherwise format the key
         if 'group_label' in gdf.columns and not gdf.empty:
@@ -427,12 +574,14 @@ def create_head_correctness_boxplot(
             else:
                 glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
         
+        color = color_map.get(g, '#999999')  # Use smart color map
+        
         fig.add_trace(
             go.Box(
                 x=gdf[x_col],
                 y=gdf['head_correctness_pct'],
                 name=glabel,
-                marker_color=colors[idx % len(colors)],
+                marker_color=color,
                 boxmean='sd',
                 hovertemplate=f'<b>{glabel}</b><br><b>Blob Count</b>: %{{x}}<br>Head Correctness: %{{y:.1f}}%<extra></extra>',
                 offsetgroup=str(g)
@@ -443,6 +592,8 @@ def create_head_correctness_boxplot(
     metric_label = _get_metric_label(metadata)
     gname = group_names.get(grouping_dimension, grouping_dimension)
     title = f'Head {metric_label} Distribution by {gname}'
+    if title_suffix:
+        title += f' — {title_suffix}'
 
     # Build compact subtitle
     subtitle_parts = []
@@ -478,6 +629,9 @@ def create_head_correctness_boxplot(
     if subtitle_html:
         title = title + '<br>' + '<br>'.join(subtitle_html)
     
+    # Determine legend title based on data type
+    legend_title = _get_legend_title(data)
+    
     fig.update_layout(
         title=dict(
             text=title,
@@ -488,7 +642,7 @@ def create_head_correctness_boxplot(
         height=600,
         showlegend=True,
         hovermode='closest',
-        legend=dict(title=dict(text='Proposed by'), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
+        legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
         xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'), categoryorder='array', categoryarray=x_order),
         yaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=f'Head {metric_label} (%)', range=[0, 100]),
         margin=dict(r=200, t=120, l=80),
@@ -507,7 +661,8 @@ def create_head_correctness_violin(
     metadata: Dict[str, Any] = None,
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
-    attester_filters: Dict[str, Any] = None
+    attester_filters: Dict[str, Any] = None,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create violin plot showing distribution of head correctness by blob count."""
     if data.empty:
@@ -555,10 +710,11 @@ def create_head_correctness_violin(
     
     fig = go.Figure()
     
-    # Create violin plots for each group
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
     
-    for idx, g in enumerate(sorted(df['group_key'].unique())):
+    for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
         # Get the group label if it exists, otherwise format the key
         if 'group_label' in gdf.columns and not gdf.empty:
@@ -593,7 +749,7 @@ def create_head_correctness_violin(
                         name=glabel,
                         legendgroup=glabel,
                         showlegend=(x_val == x_order[0]),  # Only show legend once per group
-                        marker_color=colors[idx % len(colors)],
+                        marker_color=color_map.get(g, '#999999'),
                         box_visible=True,
                         meanline_visible=True,
                         opacity=0.7,
@@ -616,6 +772,8 @@ def create_head_correctness_violin(
     metric_label = _get_metric_label(metadata)
     gname = group_names.get(grouping_dimension, grouping_dimension)
     title = f'Head {metric_label} Distribution by {gname} (Violin Plot)'
+    if title_suffix:
+        title += f' — {title_suffix}'
     
     # Build compact subtitle
     subtitle_parts = []
@@ -662,7 +820,7 @@ def create_head_correctness_violin(
         showlegend=True,
         hovermode='closest',
         legend=dict(
-            title=dict(text='Proposed by'),
+            title=dict(text=_get_legend_title(data)),
             itemclick='toggle',
             itemdoubleclick='toggleothers',
             orientation='v',
@@ -745,7 +903,8 @@ def create_head_correctness_ecdf(
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
-    difference_mode: bool = True
+    difference_mode: bool = True,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create ECDF (Empirical Cumulative Distribution Function) for head correctness by blob buckets."""
     if data.empty:
@@ -800,7 +959,10 @@ def create_head_correctness_ecdf(
         bucket_order = sorted(df['blob_bucket_label'].unique(), key=lambda x: int(x) if x.isdigit() else 0)
     
     fig = go.Figure()
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
+    
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
     
     # Store reference ECDF for difference calculation if needed
     reference_ecdf = None
@@ -846,7 +1008,7 @@ def create_head_correctness_ecdf(
                             mode='lines',
                             name=f'{group_label} - Bucket {bucket}',
                             line=dict(
-                                color=colors[group_idx % len(colors)],
+                                color=color_map.get(group_key, '#999999'),
                                 width=2,
                                 dash='solid' if bucket_idx == 0 else ['dash', 'dot', 'dashdot'][bucket_idx % 3]
                             ),
@@ -872,6 +1034,9 @@ def create_head_correctness_ecdf(
             title += f'<br><span style="font-size: 12px; color: #666;">Reference: {reference_label}</span>'
     else:
         title = f'ECDF: Head {metric_label} by {gname} and Blob Buckets'
+    
+    if title_suffix:
+        title += f' — {title_suffix}'
     
     # Build subtitle
     subtitle_parts = []
@@ -920,7 +1085,7 @@ def create_head_correctness_ecdf(
         showlegend=True,
         hovermode='closest',
         legend=dict(
-            title=dict(text='Proposed by'),
+            title=dict(text=_get_legend_title(data)),
             itemclick='toggle',
             itemdoubleclick='toggleothers',
             orientation='v',
@@ -978,7 +1143,8 @@ def create_head_correctness_cdf(
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
-    inverse: bool = True
+    inverse: bool = True,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create CDF (or inverse CDF/quantile plot) for head correctness by blob buckets."""
     if inverse:
@@ -991,7 +1157,8 @@ def create_head_correctness_cdf(
             metadata=metadata,
             grouping_dimension=grouping_dimension,
             proposer_filters=proposer_filters,
-            attester_filters=attester_filters
+            attester_filters=attester_filters,
+            title_suffix=title_suffix
         )
     else:
         # Use ECDF function with difference_mode=False for normal CDF
@@ -1016,7 +1183,8 @@ def create_head_correctness_inverse_cdf(
     metadata: Dict[str, Any] = None,
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
-    attester_filters: Dict[str, Any] = None
+    attester_filters: Dict[str, Any] = None,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create inverse CDF (quantile plot) with axes swapped - percentiles on X, values on Y."""
     if data.empty:
@@ -1071,7 +1239,10 @@ def create_head_correctness_inverse_cdf(
         bucket_order = sorted(df['blob_bucket_label'].unique(), key=lambda x: int(x) if x.isdigit() else 0)
     
     fig = go.Figure()
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
+    
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
     
     # Create inverse CDF for each blob bucket
     for bucket_idx, bucket in enumerate(bucket_order):
@@ -1097,7 +1268,7 @@ def create_head_correctness_inverse_cdf(
                             mode='lines',
                             name=f'{group_label} - Bucket {bucket}',
                             line=dict(
-                                color=colors[group_idx % len(colors)],
+                                color=color_map.get(group_key, '#999999'),
                                 width=2,
                                 dash='solid' if bucket_idx == 0 else ['dash', 'dot', 'dashdot'][bucket_idx % 3]
                             ),
@@ -1118,6 +1289,8 @@ def create_head_correctness_inverse_cdf(
     
     metric_label = _get_metric_label(metadata)
     title = f'Quantile Plot: Head {metric_label} by {gname} and Blob Buckets'
+    if title_suffix:
+        title += f' — {title_suffix}'
     
     # Build subtitle
     subtitle_parts = []
@@ -1167,7 +1340,7 @@ def create_head_correctness_inverse_cdf(
         showlegend=True,
         hovermode='closest',
         legend=dict(
-            title=dict(text='Proposed by'),
+            title=dict(text=_get_legend_title(data)),
             itemclick='toggle',
             itemdoubleclick='toggleothers',
             orientation='v',
@@ -1452,7 +1625,8 @@ def create_head_correctness_bar(
     metadata: Dict[str, Any] = None,
     grouping_dimension: str = "node_type",
     proposer_filters: Dict[str, Any] = None,
-    attester_filters: Dict[str, Any] = None
+    attester_filters: Dict[str, Any] = None,
+    title_suffix: str = ""
 ) -> go.Figure:
     """Create grouped bar chart for head correctness/incorrectness data by blob buckets."""
     if data.empty:
@@ -1542,11 +1716,22 @@ def create_head_correctness_bar(
     # Create figure
     fig = go.Figure()
     
-    # Color palette
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#6C5CE7', '#FFD93D', '#A8E6CF']
+    # Get smart color assignments for the groups
+    group_keys = df['group_key'].unique()
+    color_map = _get_smart_colors(list(group_keys), grouping_dimension)
+    
+    # Map group labels back to keys for color lookup
+    label_to_key_map = {}
+    for key in df['group_key'].unique():
+        key_df = df[df['group_key'] == key]
+        if not key_df.empty:
+            label = key_df['group_label'].iloc[0] if 'group_label' in key_df.columns else str(key)
+            # Apply same formatting as in bar_data creation
+            label = str(label).replace("supernode", "Supernode").replace("regular", "Regular").replace("-", " + ").title()
+            label_to_key_map[label] = key
     
     # Add bars for each group
-    for idx, group_data in enumerate(bar_data):
+    for group_data in bar_data:
         # Create custom hover text for each bar
         hover_texts = []
         for i, bucket in enumerate(group_data["buckets"]):
@@ -1564,7 +1749,7 @@ def create_head_correctness_bar(
             name=group_data["group"],
             x=group_data["buckets"],
             y=group_data["means"],
-            marker_color=colors[idx % len(colors)],
+            marker_color=color_map.get(label_to_key_map.get(group_data["group"], group_data["group"]), '#999999'),
             opacity=0.9,
             text=[f"{mean:.1f}%" for mean in group_data["means"]],
             textposition='outside',
@@ -1579,6 +1764,8 @@ def create_head_correctness_bar(
     
     # Create title with subtitle
     title = f"<b>Head {metric_label} by Blob Count and {_get_grouping_label(grouping_dimension)}</b>"
+    if title_suffix:
+        title += f" — {title_suffix}"
     
     subtitle_parts = []
     if network:
@@ -1643,7 +1830,7 @@ def create_head_correctness_bar(
         height=600,
         showlegend=True,
         legend=dict(
-            title=dict(text='Proposed by'),
+            title=dict(text=_get_legend_title(data)),
             itemclick='toggle',
             itemdoubleclick='toggleothers',
             orientation='v',
@@ -1692,3 +1879,96 @@ def _get_grouping_label(grouping_dimension: str) -> str:
         'cl_node_type_mev': 'CL+Node Type + MEV'
     }
     return labels.get(grouping_dimension, grouping_dimension)
+
+
+def create_dual_chart_if_needed(
+    data: pd.DataFrame,
+    chart_function,
+    **kwargs
+) -> go.Figure:
+    """
+    Wrapper function to create dual charts when both proposer and attester data are present.
+    
+    If data contains both data_type='proposer' and data_type='attester', creates side-by-side
+    subplots. Otherwise, returns a single chart.
+    """
+    # Check if we have dual data
+    if 'data_type' not in data.columns:
+        # No data_type column, treat as single chart
+        return chart_function(data, **kwargs)
+    
+    data_types = data['data_type'].unique()
+    
+    if len(data_types) == 1:
+        # Only one data type, create single chart
+        return chart_function(data, **kwargs)
+    
+    # We have both proposer and attester data - create dual charts
+    proposer_data = data[data['data_type'] == 'proposer'].copy()
+    attester_data = data[data['data_type'] == 'attester'].copy()
+    
+    # Create subplots
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=("Proposer Grouping", "Attester Grouping"),
+        horizontal_spacing=0.12
+    )
+    
+    # Generate individual charts
+    proposer_fig = chart_function(proposer_data, **kwargs)
+    attester_fig = chart_function(attester_data, **kwargs)
+    
+    # Extract traces and add to subplots
+    for trace in proposer_fig.data:
+        fig.add_trace(trace, row=1, col=1)
+    
+    for trace in attester_fig.data:
+        # Update trace names to avoid legend conflicts
+        trace.name = f"{trace.name} (Attester)" if trace.name else "Attester"
+        trace.showlegend = False  # Hide attester legend to avoid clutter
+        fig.add_trace(trace, row=1, col=2)
+    
+    # Update layout
+    metric_label = _get_metric_label(kwargs.get('metadata'))
+    main_title = f'Head {metric_label} Analysis: Proposer vs Attester Characteristics'
+    
+    if kwargs.get('network'):
+        main_title = f'{kwargs["network"]} — {main_title}'
+    if kwargs.get('time_range'):
+        main_title += f'<br><span style="font-size: 12px; color: #666;">Time: {kwargs["time_range"]}</span>'
+    
+    fig.update_layout(
+        title=dict(
+            text=main_title,
+            x=0,
+            xanchor='left',
+            font=dict(size=16)
+        ),
+        height=600,
+        showlegend=True,
+        hovermode='x unified',
+        margin=dict(r=150, t=120, l=80, b=80)
+    )
+    
+    # Update axes labels
+    fig.update_xaxes(title_text="Blob Count", row=1, col=1)
+    fig.update_xaxes(title_text="Blob Count", row=1, col=2)
+    fig.update_yaxes(title_text=f"Head {metric_label} (%)", range=[0, 100], row=1, col=1)
+    fig.update_yaxes(title_text=f"Head {metric_label} (%)", range=[0, 100], row=1, col=2)
+    
+    # Add logo
+    fig.add_layout_image(
+        dict(
+            source='https://ethpandaops.io/img/logo-slim.png',
+            xref='paper',
+            yref='paper',
+            x=0.02,
+            y=0.98,
+            sizex=0.08,
+            sizey=0.08,
+            xanchor='left',
+            yanchor='top'
+        )
+    )
+    
+    return fig
