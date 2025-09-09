@@ -38,12 +38,12 @@ from gap_analysis import create_node_performance_gap_analysis
 
 def initialize_session_state():
     """Initialize session state variables."""
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'analysis_data' not in st.session_state:
-        st.session_state.analysis_data = {}
-    if 'last_config' not in st.session_state:
-        st.session_state.last_config = None
+    if 'peerdas_data_loaded' not in st.session_state:
+        st.session_state.peerdas_data_loaded = False
+    if 'peerdas_analysis_data' not in st.session_state:
+        st.session_state.peerdas_analysis_data = {}
+    if 'peerdas_last_config' not in st.session_state:
+        st.session_state.peerdas_last_config = None
 
 
 def render_sidebar_configuration() -> Dict[str, Any]:
@@ -61,17 +61,17 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         return None
     
     # Check if cluster or network changed
-    prev_cluster = st.session_state.get('previous_cluster', None)
-    prev_network = st.session_state.get('previous_network', None)
+    prev_cluster = st.session_state.get('peerdas_previous_cluster', None)
+    prev_network = st.session_state.get('peerdas_previous_network', None)
     
     if (prev_cluster and prev_cluster != cluster) or (prev_network and prev_network != network):
         logger.info(f"Cluster/Network changed from {prev_cluster}/{prev_network} to {cluster}/{network}, clearing cache")
         st.cache_data.clear()
-        st.session_state.analysis_data = {}
-        st.session_state.data_loaded = False
+        st.session_state.peerdas_analysis_data = {}
+        st.session_state.peerdas_data_loaded = False
     
-    st.session_state.previous_cluster = cluster
-    st.session_state.previous_network = network
+    st.session_state.peerdas_previous_cluster = cluster
+    st.session_state.peerdas_previous_network = network
     
     st.sidebar.header("📊 Analysis Configuration")
     
@@ -209,7 +209,7 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     source_names = {k: v["name"] for k, v in data_sources.items()}
     
     # Track previous data source to clear cache on change
-    previous_source = st.session_state.get('previous_data_source', None)
+    previous_source = st.session_state.get('peerdas_previous_data_source', None)
     
     selected_source = st.sidebar.radio(
         "Select Data Source",
@@ -223,10 +223,10 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     if previous_source and previous_source != selected_source:
         logger.info(f"Data source changed from {previous_source} to {selected_source}, clearing cache")
         st.cache_data.clear()
-        st.session_state.analysis_data = {}
-        st.session_state.data_loaded = False
+        st.session_state.peerdas_analysis_data = {}
+        st.session_state.peerdas_data_loaded = False
     
-    st.session_state.previous_data_source = selected_source
+    st.session_state.peerdas_previous_data_source = selected_source
     
     # Custody count filter
     st.sidebar.subheader("⚙️ Analysis Settings")
@@ -324,8 +324,8 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     with col2:
         if st.sidebar.button("🗑️ Clear Cache", use_container_width=True, help="Clear all cached data"):
             st.cache_data.clear()
-            st.session_state.analysis_data = {}
-            st.session_state.data_loaded = False
+            st.session_state.peerdas_analysis_data = {}
+            st.session_state.peerdas_data_loaded = False
             st.sidebar.success("Cache cleared!")
     
     # Convert dates to datetime objects with appropriate times
@@ -411,7 +411,7 @@ def load_and_process_data(config: Dict[str, Any], agg_function: str = "p90") -> 
                 custody_filter=config['custody_filter'],
                 cluster_name=config['cluster'],
                 group_by=config['x_axis_metric'],
-                client_filter=config.get('client_filter')
+                client_filter=config.get('peerdas_client_filter')
             )
             
             if data.empty:
@@ -419,14 +419,14 @@ def load_and_process_data(config: Dict[str, Any], agg_function: str = "p90") -> 
                 return None
             
             # Store metadata in session state
-            st.session_state.analysis_data = {
+            st.session_state.peerdas_analysis_data = {
                 'aggregated_data': data,
                 'unique_slots': validation['unique_slots'],
                 'unique_clients': validation['unique_clients'],
                 'total_rows': validation['total_rows']
             }
-            st.session_state.data_loaded = True
-            st.session_state.last_config = config
+            st.session_state.peerdas_data_loaded = True
+            st.session_state.peerdas_last_config = config
             
             return data
             
@@ -465,14 +465,14 @@ def render_peerdas_dashboard():
         cache_key = f"{config['network']}_{config['start_date']}_{config['end_date']}_{config['data_source']}_{config['cluster']}"
         
         # Check if configuration changed and clear client selection if needed
-        if 'last_client_cache_key' not in st.session_state:
-            st.session_state.last_client_cache_key = None
+        if 'peerdas_last_client_cache_key' not in st.session_state:
+            st.session_state.peerdas_last_client_cache_key = None
         
-        if st.session_state.last_client_cache_key != cache_key:
+        if st.session_state.peerdas_last_client_cache_key != cache_key:
             # Configuration changed, reset client selection
-            if 'client_filter' in st.session_state:
-                del st.session_state.client_filter
-            st.session_state.last_client_cache_key = cache_key
+            if 'peerdas_client_filter' in st.session_state:
+                del st.session_state.peerdas_client_filter
+            st.session_state.peerdas_last_client_cache_key = cache_key
         
         # Get unique clients for the selected time range
         with st.spinner("Loading available clients..."):
@@ -493,8 +493,8 @@ def render_peerdas_dashboard():
             st.caption(f"Found {len(available_clients)} unique clients in the selected time range")
             
             # Initialize session state for client selection if needed
-            if 'client_selection_override' not in st.session_state:
-                st.session_state.client_selection_override = None
+            if 'peerdas_client_selection_override' not in st.session_state:
+                st.session_state.peerdas_client_selection_override = None
             
             # Create columns for better layout
             col1, col2 = st.columns([4, 1])
@@ -503,24 +503,24 @@ def render_peerdas_dashboard():
                 st.write("")  # Add spacing
                 # Add select all/none buttons for convenience
                 if st.button("Select All", use_container_width=True, key="select_all_btn"):
-                    st.session_state.client_selection_override = 'all'
+                    st.session_state.peerdas_client_selection_override = 'all'
                     st.rerun()
                 if st.button("Clear All", use_container_width=True, key="clear_all_btn"):
-                    st.session_state.client_selection_override = 'none'
+                    st.session_state.peerdas_client_selection_override = 'none'
                     st.rerun()
             
             with col1:
                 # Determine default selection based on override
-                if st.session_state.client_selection_override == 'all':
+                if st.session_state.peerdas_client_selection_override == 'all':
                     default_selection = available_clients
-                    st.session_state.client_selection_override = None  # Reset override
-                elif st.session_state.client_selection_override == 'none':
+                    st.session_state.peerdas_client_selection_override = None  # Reset override
+                elif st.session_state.peerdas_client_selection_override == 'none':
                     default_selection = []
-                    st.session_state.client_selection_override = None  # Reset override
+                    st.session_state.peerdas_client_selection_override = None  # Reset override
                 else:
                     # Use previous selection if exists, otherwise all
                     # But filter to only include clients that still exist
-                    previous_selection = st.session_state.get('client_filter', available_clients)
+                    previous_selection = st.session_state.get('peerdas_client_filter', available_clients)
                     if isinstance(previous_selection, list):
                         # Keep only clients that are still available
                         default_selection = [c for c in previous_selection if c in available_clients]
@@ -550,7 +550,7 @@ def render_peerdas_dashboard():
             st.warning("No clients found for the selected time range")
     
     # Add client filter to config
-    config['client_filter'] = selected_clients if selected_clients else None
+    config['peerdas_client_filter'] = selected_clients if selected_clients else None
     
     st.markdown("---")
     
@@ -681,7 +681,7 @@ def render_peerdas_dashboard():
                         data_source=config['data_source'],
                         custody_filter=config['custody_filter'],
                         cluster_name=config['cluster'],
-                        client_filter=config.get('client_filter')
+                        client_filter=config.get('peerdas_client_filter')
                     )
                     
                     if data is not None and not data.empty:
@@ -719,14 +719,14 @@ def render_peerdas_dashboard():
                         st.plotly_chart(fig, use_container_width=True)
                         
                         # Store metadata in session state
-                        st.session_state.analysis_data = {
+                        st.session_state.peerdas_analysis_data = {
                             'raw_data': data,
                             'unique_slots': validation['unique_slots'],
                             'unique_clients': validation['unique_clients'],
                             'total_rows': validation['total_rows']
                         }
-                        st.session_state.data_loaded = True
-                        st.session_state.last_config = config
+                        st.session_state.peerdas_data_loaded = True
+                        st.session_state.peerdas_last_config = config
                         
                 except Exception as e:
                     logger.error(f"Error loading box plot data: {e}")
@@ -741,8 +741,8 @@ def render_peerdas_dashboard():
                 
                 # Prepare metadata
                 metadata = {
-                    'total_blocks': st.session_state.analysis_data.get('unique_slots', 0),
-                    'unique_nodes': st.session_state.analysis_data.get('unique_clients', 0)
+                    'total_blocks': st.session_state.peerdas_analysis_data.get('unique_slots', 0),
+                    'unique_nodes': st.session_state.peerdas_analysis_data.get('unique_clients', 0)
                 }
                 
                 # Create the chart
@@ -769,13 +769,13 @@ def render_peerdas_dashboard():
                 with col1:
                     st.metric(
                         "Total Slots Analyzed",
-                        f"{st.session_state.analysis_data.get('unique_slots', 0):,}"
+                        f"{st.session_state.peerdas_analysis_data.get('unique_slots', 0):,}"
                     )
                 
                 with col2:
                     st.metric(
                         "Unique Clients",
-                        f"{st.session_state.analysis_data.get('unique_clients', 0)}"
+                        f"{st.session_state.peerdas_analysis_data.get('unique_clients', 0)}"
                     )
                 
                 with col3:
@@ -794,8 +794,8 @@ def render_peerdas_dashboard():
                 if config['analysis_type'] in ['boxplot', 'gap']:
                     st.subheader("Node Classification Summary")
                     # Show summary stats by node class
-                    if 'raw_data' in st.session_state.analysis_data:
-                        raw_data = st.session_state.analysis_data['raw_data']
+                    if 'raw_data' in st.session_state.peerdas_analysis_data:
+                        raw_data = st.session_state.peerdas_analysis_data['raw_data']
                         summary = raw_data.groupby('node_class')['data_available_time'].agg([
                             ('Count', 'count'),
                             ('Mean (ms)', 'mean'),
@@ -812,8 +812,8 @@ def render_peerdas_dashboard():
                     display_cols = [metric_col, 'data_available_time', 'sample_count']
                     # Only show columns that exist
                     available_cols = [col for col in display_cols if col in data.columns]
-                    if 'aggregated_data' in st.session_state.analysis_data:
-                        agg_data = st.session_state.analysis_data['aggregated_data']
+                    if 'aggregated_data' in st.session_state.peerdas_analysis_data:
+                        agg_data = st.session_state.peerdas_analysis_data['aggregated_data']
                         st.dataframe(
                             agg_data[available_cols],
                             use_container_width=True

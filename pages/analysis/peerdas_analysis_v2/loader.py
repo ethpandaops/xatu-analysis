@@ -134,85 +134,117 @@ def load_eligible_slots(
         Tuple of (slot_list, slot_to_block_root_mapping, slot_to_proposer_index_mapping, mev_slots_list)
     """
     logger.info(f"Loading eligible slots for network={network}")
+    logger.info(f"Filters: proposer_type={proposer_type}, cl_filter={cl_filter}, el_filter={el_filter}, mev_filter={mev_filter}")
     
     conn = get_database_connection(cluster_name)
     if not conn:
         logger.error(f"Failed to get database connection for cluster: {cluster_name}")
-        return [], {}
+        return [], {}, {}, []
     
     # Get network spec for filtering
     network_spec = get_network_spec(network)
+    
+    if not network_spec:
+        logger.error(f"Network spec not found for {network} - cannot proceed")
+        return [], {}, {}, []
+    
+    logger.info(f"Network spec loaded for {network}")
     
     proposer_indices = []
     
     # Check for filters that require network spec
     has_filters = proposer_type or cl_filter or el_filter
     
-    if not network_spec and has_filters:
-        logger.warning(f"Network spec not found for {network} but filters requested - ignoring filters")
-    
-    # If we have a network spec, ALWAYS filter to only validators in the spec
+    # ALWAYS filter to only validators in the spec
     # This prevents "unknown" entries from validators not in our config
-    if network_spec:
-        # Filter by validator indices based on node characteristics
-        nodes_processed = 0
-        nodes_matched = 0
-        for node_name in network_spec.get_all_nodes():
-            nodes_processed += 1
-            node_info = network_spec.get_node_info(node_name)
-            if not node_info:
-                continue
-            
-            # If no filters, include all nodes from the spec
-            if not has_filters:
-                validators = network_spec.get_validators(node_name)
-                proposer_indices.extend(validators)
-                nodes_matched += 1
-                continue
-                
-            # Check if node matches filters
-            tags = node_info.get('tags', [])
-            node_is_supernode = 'supernode' in tags
-            
-            # Check node type filter
-            if proposer_type:
-                if proposer_type == 'supernode' and not node_is_supernode:
-                    continue
-                if proposer_type == 'regular' and node_is_supernode:
-                    continue
-            
-            # Check CL filter
-            if cl_filter:
-                node_cl = None
-                for tag in tags:
-                    if tag.startswith('cl:'):
-                        node_cl = tag.split(':')[1]
-                        break
-                if not node_cl or node_cl not in cl_filter:
-                    continue
-            
-            # Check EL filter
-            if el_filter:
-                node_el = None
-                for tag in tags:
-                    if tag.startswith('el:'):
-                        node_el = tag.split(':')[1]
-                        break
-                if not node_el or node_el not in el_filter:
-                    continue
-            
-            # Add validator indices for this node
+    # Filter by validator indices based on node characteristics
+    nodes_processed = 0
+    nodes_matched = 0
+    for node_name in network_spec.get_all_nodes():
+        nodes_processed += 1
+        node_info = network_spec.get_node_info(node_name)
+        if not node_info:
+            continue
+        
+        # If no filters, include all nodes from the spec
+        if not has_filters:
             validators = network_spec.get_validators(node_name)
             proposer_indices.extend(validators)
             nodes_matched += 1
+            continue
+            
+        # Check if node matches filters
+        tags = node_info.get('tags', [])
+        node_is_supernode = 'supernode' in tags
         
-        logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {len(proposer_indices)}")
+        # Check node type filter
+        if proposer_type:
+            if proposer_type == 'supernode' and not node_is_supernode:
+                continue
+            if proposer_type == 'regular' and node_is_supernode:
+                continue
+        
+        # Check CL filter
+        if cl_filter:
+            node_cl = None
+            for tag in tags:
+                if tag.startswith('cl:'):
+                    node_cl = tag.split(':')[1]
+                    break
+            if not node_cl or node_cl not in cl_filter:
+                continue
+        
+        # Check EL filter
+        if el_filter:
+            node_el = None
+            for tag in tags:
+                if tag.startswith('el:'):
+                    node_el = tag.split(':')[1]
+                    break
+            if not node_el or node_el not in el_filter:
+                continue
+        
+        # Add validator indices for this node
+        validators = network_spec.get_validators(node_name)
+        proposer_indices.extend(validators)
+        nodes_matched += 1
+    
+    logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {len(proposer_indices)}")
+    
+    # Show validator selection in UI
+    with st.expander("🔎 Validator Selection Debug", expanded=False):
+        st.write(f"**Nodes processed:** {nodes_processed}")
+        st.write(f"**Nodes matched filters:** {nodes_matched}")
+        st.write(f"**Total validator indices selected:** {len(proposer_indices)}")
+        if proposer_indices:
+            st.write(f"**Validator range:** {min(proposer_indices)} to {max(proposer_indices)}")
+            st.write(f"**Sample validators (first 20):** {sorted(proposer_indices)[:20]}")
+        else:
+            st.write("⚠️ No validators selected! This will return no results.")
     
     # Build proposer filter
     proposer_filter = build_proposer_filter(proposer_indices)
     
+    # Debug logging
+    logger.info(f"Proposer indices count: {len(proposer_indices) if proposer_indices else 0}")
+    if proposer_indices and len(proposer_indices) > 0:
+        logger.info(f"First 10 proposer indices: {proposer_indices[:10]}")
+        logger.info(f"Last 10 proposer indices: {proposer_indices[-10:]}")
+    
     # Get query with filter (do NOT restrict to sidecars; 0-blob slots are valid)
     query = get_eligible_slots_query().format(proposer_filter=proposer_filter)
+    
+    # Debug: Log part of the query
+    if proposer_filter:
+        logger.info(f"Proposer filter applied: ...{proposer_filter[:100]}...")
+        with st.expander("🔍 SQL Query Debug", expanded=False):
+            st.write("**Proposer filter:**")
+            if len(proposer_filter) > 500:
+                st.code(f"{proposer_filter[:200]}...{proposer_filter[-200:]}")
+            else:
+                st.code(proposer_filter)
+    else:
+        logger.info("No proposer filter applied")
     
     params = {
         'network': network,
@@ -221,9 +253,60 @@ def load_eligible_slots(
     }
     
     try:
+        # First, let's check what's actually in the database
+        with st.expander("🔍 Database Query Debug", expanded=False):
+            st.write("**Running eligibility query...**")
+            st.code(query[:500] + "..." if len(query) > 500 else query)
+            
+            # Run a simpler test query first
+            test_query = """
+            SELECT COUNT(*) as total_blocks,
+                   COUNT(DISTINCT proposer_index) as unique_proposers,
+                   MIN(proposer_index) as min_proposer,
+                   MAX(proposer_index) as max_proposer
+            FROM beacon_api_eth_v2_beacon_block
+            WHERE meta_network_name = %(network)s
+              AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+            """
+            test_df = pd.read_sql(test_query, conn, params=params)
+            st.write("**Test query results:**")
+            st.write(test_df)
+            
         df = pd.read_sql(query, conn, params=params)
+        
+        with st.expander("✅ Query Results", expanded=False):
+            st.write(f"**Slots found:** {len(df) if not df.empty else 0}")
+            if not df.empty:
+                st.write(f"**Unique slots:** {df['slot'].nunique() if 'slot' in df.columns else 0}")
+                st.write(f"**Slot range:** {df['slot'].min()} to {df['slot'].max()}" if 'slot' in df.columns else "N/A")
+        
         if df.empty:
             logger.warning(f"No slots found in database for network {network}")
+            
+            # Show what proposers are actually in the database
+            with st.expander("🔍 Available Proposers in Database", expanded=False):
+                check_query = """
+                SELECT proposer_index, COUNT(*) as block_count
+                FROM beacon_api_eth_v2_beacon_block
+                WHERE meta_network_name = %(network)s
+                  AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                GROUP BY proposer_index
+                ORDER BY proposer_index
+                LIMIT 20
+                """
+                check_df = pd.read_sql(check_query, conn, params=params)
+                st.write("**Sample proposers in database:**")
+                st.write(check_df)
+                
+                if proposer_indices:
+                    # Check overlap
+                    db_proposers = set(check_df['proposer_index'].tolist()) if not check_df.empty else set()
+                    filter_proposers = set(proposer_indices)
+                    overlap = db_proposers.intersection(filter_proposers)
+                    st.write(f"**Overlap between filter and database:** {len(overlap)} proposers")
+                    if overlap:
+                        st.write(f"**Overlapping proposers:** {sorted(overlap)[:20]}")
+                    
             return [], {}, {}, []
         
         # Load MEV slots

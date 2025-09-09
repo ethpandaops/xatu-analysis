@@ -8,7 +8,7 @@ proposer and attester characteristics.
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import logging
 
@@ -45,12 +45,12 @@ from plot_generators import (
 
 def initialize_session_state():
     """Initialize session state variables."""
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'analysis_data' not in st.session_state:
-        st.session_state.analysis_data = {}
-    if 'last_config' not in st.session_state:
-        st.session_state.last_config = None
+    if 'peerdas_v2_data_loaded' not in st.session_state:
+        st.session_state.peerdas_v2_data_loaded = False
+    if 'peerdas_v2_analysis_data' not in st.session_state:
+        st.session_state.peerdas_v2_analysis_data = {}
+    if 'peerdas_v2_last_config' not in st.session_state:
+        st.session_state.peerdas_v2_last_config = None
 
 
 def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
@@ -63,21 +63,21 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     st.sidebar.header("⚙️ Configuration")
     
     # Check if network changed to clear cache
-    if 'last_network' not in st.session_state:
-        st.session_state.last_network = network
-    elif st.session_state.last_network != network:
-        st.session_state.last_network = network
-        st.session_state.data_loaded = False
-        st.session_state.analysis_data = {}
+    if 'peerdas_v2_last_network' not in st.session_state:
+        st.session_state.peerdas_v2_last_network = network
+    elif st.session_state.peerdas_v2_last_network != network:
+        st.session_state.peerdas_v2_last_network = network
+        st.session_state.peerdas_v2_data_loaded = False
+        st.session_state.peerdas_v2_analysis_data = {}
         logger.info(f"Network changed to {network}, clearing cache")
     
     # Check if cluster changed
-    if 'last_cluster' not in st.session_state:
-        st.session_state.last_cluster = cluster
-    elif st.session_state.last_cluster != cluster:
-        st.session_state.last_cluster = cluster
-        st.session_state.data_loaded = False
-        st.session_state.analysis_data = {}
+    if 'peerdas_v2_last_cluster' not in st.session_state:
+        st.session_state.peerdas_v2_last_cluster = cluster
+    elif st.session_state.peerdas_v2_last_cluster != cluster:
+        st.session_state.peerdas_v2_last_cluster = cluster
+        st.session_state.peerdas_v2_data_loaded = False
+        st.session_state.peerdas_v2_analysis_data = {}
         logger.info(f"Cluster changed to {cluster}, clearing cache")
     
     # Auto-select experimental cluster for fusaka networks
@@ -107,36 +107,77 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Time range selection
     st.sidebar.subheader("📅 Time Range")
     
-    # Default to last 24 hours for all networks
-    default_end = datetime.now()
-    default_start = default_end - timedelta(hours=24)
-    
-    start_date = st.sidebar.date_input(
-        "Start Date",
-        value=default_start.date(),
-        key="start_date"
+    # Relative time selector
+    time_selection = st.sidebar.selectbox(
+        "Time Range",
+        options=[
+            "Last 1 hour",
+            "Last 3 hours", 
+            "Last 6 hours",
+            "Last 12 hours",
+            "Last 24 hours",
+            "Last 48 hours",
+            "Last 7 days",
+            "Custom"
+        ],
+        index=3,  # Default to "Last 12 hours"
+        key="time_selection"
     )
     
-    start_time = st.sidebar.time_input(
-        "Start Time",
-        value=default_start.time(),
-        key="start_time"
-    )
+    # Calculate time range based on selection - USE UTC for database compatibility
+    end_datetime = datetime.now(timezone.utc).replace(tzinfo=None)  # Remove timezone info for compatibility
     
-    end_date = st.sidebar.date_input(
-        "End Date",
-        value=default_end.date(),
-        key="end_date"
-    )
-    
-    end_time = st.sidebar.time_input(
-        "End Time",
-        value=default_end.time(),
-        key="end_time"
-    )
-    
-    start_datetime = datetime.combine(start_date, start_time)
-    end_datetime = datetime.combine(end_date, end_time)
+    if time_selection == "Last 1 hour":
+        start_datetime = end_datetime - timedelta(hours=1)
+    elif time_selection == "Last 3 hours":
+        start_datetime = end_datetime - timedelta(hours=3)
+    elif time_selection == "Last 6 hours":
+        start_datetime = end_datetime - timedelta(hours=6)
+    elif time_selection == "Last 12 hours":
+        start_datetime = end_datetime - timedelta(hours=12)
+    elif time_selection == "Last 24 hours":
+        start_datetime = end_datetime - timedelta(hours=24)
+    elif time_selection == "Last 48 hours":
+        start_datetime = end_datetime - timedelta(hours=48)
+    elif time_selection == "Last 7 days":
+        start_datetime = end_datetime - timedelta(days=7)
+    else:  # Custom
+        # Default to last 12 hours for custom selection - USE UTC
+        default_end = datetime.now(timezone.utc).replace(tzinfo=None)
+        default_start = default_end - timedelta(hours=12)
+        
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date = st.sidebar.date_input(
+                "Start Date",
+                value=default_start.date(),
+                key="start_date"
+            )
+        with col2:
+            start_time = st.sidebar.time_input(
+                "Start Time",
+                value=default_start.time(),
+                key="start_time",
+                step=300  # 5 minute steps
+            )
+        
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            end_date = st.sidebar.date_input(
+                "End Date",
+                value=default_end.date(),
+                key="end_date"
+            )
+        with col2:
+            end_time = st.sidebar.time_input(
+                "End Time",
+                value=default_end.time(),
+                key="end_time",
+                step=300  # 5 minute steps
+            )
+        
+        start_datetime = datetime.combine(start_date, start_time)
+        end_datetime = datetime.combine(end_date, end_time)
     
     # Bucketing options for blob count
     st.sidebar.subheader("🗂️ Blob Count Bucketing")
@@ -220,8 +261,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     with col2:
         if st.sidebar.button("🗑️ Clear", use_container_width=True):
             st.cache_data.clear()
-            st.session_state.analysis_data = {}
-            st.session_state.data_loaded = False
+            st.session_state.peerdas_v2_analysis_data = {}
+            st.session_state.peerdas_v2_data_loaded = False
             # Force clear all caches
             st.rerun()
             st.sidebar.success("Cache cleared and page refreshed!")
@@ -274,6 +315,39 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
             
             if not eligible_slots:
                 st.error("No eligible slots found for the selected proposer filters and time range")
+                
+                # Show more detailed debug info
+                with st.expander("🐛 Debug: Why no slots?", expanded=False):
+                    st.write("Possible reasons:")
+                    st.write("1. Network spec might not be loading correctly")
+                    st.write("2. Validator indices might not match any proposers in the time range")
+                    st.write("3. The filters might be too restrictive")
+                    st.write("4. There might be no blocks in the selected time range")
+                    
+                    # Try to query directly
+                    try:
+                        from shared.database import get_database_connection
+                        conn = get_database_connection(config['cluster'])
+                        if conn:
+                            import pandas as pd
+                            test_query = """
+                            SELECT COUNT(*) as count, 
+                                   MIN(slot_start_date_time) as min_time,
+                                   MAX(slot_start_date_time) as max_time
+                            FROM beacon_api_eth_v2_beacon_block
+                            WHERE meta_network_name = %(network)s
+                              AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
+                            """
+                            test_df = pd.read_sql(test_query, conn, params={
+                                'network': config['network'],
+                                'start_date': config['start_datetime'],
+                                'end_date': config['end_datetime']
+                            })
+                            st.write("**Direct query results:**")
+                            st.write(test_df)
+                    except Exception as e:
+                        st.write(f"Error running test query: {e}")
+                        
                 st.cache_data.clear()
                 return None
             
@@ -313,8 +387,8 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     """)
                 # Clear cache to avoid bad data persistence
                 st.cache_data.clear()
-                st.session_state.analysis_data = {}
-                st.session_state.data_loaded = False
+                st.session_state.peerdas_v2_analysis_data = {}
+                st.session_state.peerdas_v2_data_loaded = False
                 return None
             
             # Compute slot-level coverage after filtering to only slots with committee data
@@ -323,7 +397,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
             filtered_out = max(eligible_count - slots_in_result, 0)
 
             # Store in session state
-            st.session_state.analysis_data = {
+            st.session_state.peerdas_v2_analysis_data = {
                 'raw_data': data,
                 'unique_slots': eligible_count,
                 'total_slots_analyzed': slots_in_result,
@@ -332,7 +406,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 'mev_slots': mev_slots if mev_slots else []
             }
             logger.info(f"Stored {len(mev_slots) if mev_slots else 0} MEV slots in session state")
-            st.session_state.data_loaded = True
+            st.session_state.peerdas_v2_data_loaded = True
             
             return data
             
@@ -363,9 +437,9 @@ def main():
             
             # Prepare metadata
             metadata = {
-                'total_slots': st.session_state.analysis_data.get('unique_slots', 0),
-                'total_slots_analyzed': st.session_state.analysis_data.get('total_slots_analyzed', 0),
-                'filtered_out_slots': st.session_state.analysis_data.get('filtered_out_slots', 0),
+                'total_slots': st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0),
+                'total_slots_analyzed': st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0),
+                'filtered_out_slots': st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0),
             }
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
@@ -446,6 +520,42 @@ def main():
             # Display the chart
             st.plotly_chart(fig, use_container_width=True)
             
+            # Show debug information
+            with st.expander("🔍 Debug Information", expanded=False):
+                st.write("### Filter Settings")
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**Proposer Filters:**")
+                    st.write(f"- Node Type: {config.get('proposer_type', 'All')}")
+                    st.write(f"- CL Clients: {config.get('proposer_cl', 'All')}")
+                    st.write(f"- EL Clients: {config.get('proposer_el', 'All')}")
+                    st.write(f"- MEV Filter: {config.get('mev_filter', 'both')}")
+                with col2:
+                    st.write("**Attester Filters:**")
+                    st.write(f"- Node Type: {config.get('attester_type', 'All')}")
+                    st.write(f"- CL Clients: {config.get('attester_cl', 'All')}")
+                    st.write(f"- EL Clients: {config.get('attester_el', 'All')}")
+                
+                st.write(f"**Time Range:** {config['start_datetime']} to {config['end_datetime']}")
+                st.write(f"**Network:** {config['network']}")
+                st.write(f"**Cluster:** {config['cluster']}")
+                
+                st.write("### Data Loading Results")
+                if 'peerdas_v2_analysis_data' in st.session_state:
+                    analysis_data = st.session_state.peerdas_v2_analysis_data
+                    st.write(f"**Eligible slots returned:** {analysis_data.get('unique_slots', 0)}")
+                    st.write(f"**MEV slots found:** {len(analysis_data.get('mev_slots', []))}")
+                    st.write(f"**Slots analyzed:** {analysis_data.get('total_slots_analyzed', 0)}")
+                    st.write(f"**Slots filtered out:** {analysis_data.get('filtered_out_slots', 0)}")
+                    
+                    if 'raw_data' in analysis_data and not analysis_data['raw_data'].empty:
+                        data = analysis_data['raw_data']
+                        if 'slot' in data.columns:
+                            st.write(f"**Sample slots (first 10):** {sorted(data['slot'].unique())[:10]}")
+                            st.write(f"**Slot range:** {data['slot'].min()} to {data['slot'].max()}")
+                else:
+                    st.write("No data loaded yet.")
+            
             # Show data summary
             with st.expander("📊 Data Summary", expanded=False):
                 # First row of metrics
@@ -466,7 +576,7 @@ def main():
                     )
                 
                 with col3:
-                    avg_correctness = st.session_state.analysis_data.get('avg_head_correctness', 0)
+                    avg_correctness = st.session_state.peerdas_v2_analysis_data.get('avg_head_correctness', 0)
                     st.metric(
                         "Avg Head Correctness",
                         f"{avg_correctness:.1f}%",
@@ -484,7 +594,7 @@ def main():
                         )
                 
                 # Second row with MEV info
-                mev_slots = st.session_state.analysis_data.get('mev_slots', [])
+                mev_slots = st.session_state.peerdas_v2_analysis_data.get('mev_slots', [])
                 # Debug: Always show MEV info, even if empty
                 col1, col2, col3, col4 = st.columns(4)
                 mev_slots_set = set(mev_slots) if mev_slots else set()
@@ -570,7 +680,7 @@ def main():
                         if 'slot' in data.columns:
                             sample_slots = data['slot'].head(10).tolist()
                             st.write(f"Sample slots from data: {sample_slots}")
-                            mev_slots_set = set(st.session_state.analysis_data.get('mev_slots', []))
+                            mev_slots_set = set(st.session_state.peerdas_v2_analysis_data.get('mev_slots', []))
                             st.write(f"MEV slots loaded: {len(mev_slots_set)}")
                             if mev_slots_set and sample_slots:
                                 overlap = set(sample_slots).intersection(mev_slots_set)
@@ -655,11 +765,11 @@ def main():
                     st.write("**Slot Coverage:**")
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Eligible Slots", st.session_state.analysis_data.get('unique_slots', 0))
+                        st.metric("Eligible Slots", st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0))
                     with col2:
-                        st.metric("Analyzed Slots", st.session_state.analysis_data.get('total_slots_analyzed', 0))
+                        st.metric("Analyzed Slots", st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0))
                     with col3:
-                        st.metric("Filtered Out", st.session_state.analysis_data.get('filtered_out_slots', 0))
+                        st.metric("Filtered Out", st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0))
                 else:
                     st.warning("No node classifications found in network YAML file")
     

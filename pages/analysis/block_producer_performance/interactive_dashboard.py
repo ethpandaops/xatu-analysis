@@ -45,17 +45,17 @@ def main():
     # Render the global header
     render_global_header()
     
-    # Initialize session state variables
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'last_config' not in st.session_state:
-        st.session_state.last_config = None
-    if 'slot_metrics_df' not in st.session_state:
-        st.session_state.slot_metrics_df = None
-    if 'validators' not in st.session_state:
-        st.session_state.validators = {}
-    if 'entities' not in st.session_state:
-        st.session_state.entities = {}
+    # Initialize session state variables with unique prefix to avoid conflicts
+    if 'block_producer_data_loaded' not in st.session_state:
+        st.session_state.block_producer_data_loaded = False
+    if 'block_producer_last_config' not in st.session_state:
+        st.session_state.block_producer_last_config = None
+    if 'block_producer_slot_metrics_df' not in st.session_state:
+        st.session_state.block_producer_slot_metrics_df = None
+    if 'block_producer_validators' not in st.session_state:
+        st.session_state.block_producer_validators = {}
+    if 'block_producer_entities' not in st.session_state:
+        st.session_state.block_producer_entities = {}
     
     # Header
     st.title("🏗️ Block Producer Performance")
@@ -182,11 +182,11 @@ def main():
     
     # Check if configuration changed
     current_config = (network, str(time_ranges), event_date)
-    config_changed = st.session_state.last_config != current_config
+    config_changed = st.session_state.block_producer_last_config != current_config
     
-    if config_changed and st.session_state.data_loaded:
+    if config_changed and st.session_state.block_producer_data_loaded:
         st.sidebar.warning("⚠️ Configuration changed. Click 'Load Data' to refresh.")
-        st.session_state.data_loaded = False
+        st.session_state.block_producer_data_loaded = False
     
     if st.sidebar.button("🔄 Load Data", type="primary"):
         with st.spinner("Loading data from Xatu parquet files..."):
@@ -194,12 +194,12 @@ def main():
                 # Load blockprint clients (cached) - still uses ClickHouse for client mapping
                 st.info("Loading blockprint clients...")
                 validators = load_blockprint_clients(network)
-                st.session_state.validators = validators
+                st.session_state.block_producer_validators = validators
                 
                 # Load ethseer validator entities (cached) - also uses ClickHouse
                 st.info("Loading ethseer validator entities...")
                 entities = load_validators_from_ethseer(network)
-                st.session_state.entities = entities
+                st.session_state.block_producer_entities = entities
                 
                 # Load attestation data from parquet files (cached)
                 st.info("Loading attestation data from parquet files...")
@@ -261,9 +261,9 @@ def main():
                 slot_metrics_df['entity'] = slot_metrics_df['entity'].fillna('unknown')
                 
                 # Store in session state
-                st.session_state.slot_metrics_df = slot_metrics_df
-                st.session_state.data_loaded = True
-                st.session_state.last_config = current_config
+                st.session_state.block_producer_slot_metrics_df = slot_metrics_df
+                st.session_state.block_producer_data_loaded = True
+                st.session_state.block_producer_last_config = current_config
                 
                 st.success(f"✅ Data loaded successfully! {len(slot_metrics_df)} blocks analyzed.")
                 
@@ -273,8 +273,8 @@ def main():
                 st.error(f"Full error: {traceback.format_exc()}")
     
     # Main content area
-    if st.session_state.data_loaded and st.session_state.slot_metrics_df is not None:
-        data = st.session_state.slot_metrics_df
+    if st.session_state.block_producer_data_loaded and st.session_state.block_producer_slot_metrics_df is not None:
+        data = st.session_state.block_producer_slot_metrics_df
         
         # Display enhanced data summary
         st.markdown("---")
@@ -520,14 +520,14 @@ def main():
                     with col1:
                         if st.button("📈 Select Top 10"):
                             top_10_entities = entity_counts.head(10).index.tolist()
-                            st.session_state.manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_10_entities if entity in entities_to_show]
+                            st.session_state.block_producer_manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_10_entities if entity in entities_to_show]
                     with col2:
                         if st.button("🎯 Select Top 20"):
                             top_20_entities = entity_counts.head(20).index.tolist()
-                            st.session_state.manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_20_entities if entity in entities_to_show]
+                            st.session_state.block_producer_manual_entity_selection = [f"{entity} ({entity_counts[entity]:,} blocks)" for entity in top_20_entities if entity in entities_to_show]
                     with col3:
                         if st.button("🗑️ Clear Selection"):
-                            st.session_state.manual_entity_selection = []
+                            st.session_state.block_producer_manual_entity_selection = []
                     
                     # Create a more informative list with counts
                     entity_info = []

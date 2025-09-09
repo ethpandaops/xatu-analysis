@@ -40,12 +40,12 @@ from plot_generators import (
 
 def initialize_session_state():
     """Initialize session state variables."""
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'analysis_data' not in st.session_state:
-        st.session_state.analysis_data = {}
-    if 'last_config' not in st.session_state:
-        st.session_state.last_config = None
+    if 'reorg_rates_data_loaded' not in st.session_state:
+        st.session_state.reorg_rates_data_loaded = False
+    if 'reorg_rates_analysis_data' not in st.session_state:
+        st.session_state.reorg_rates_analysis_data = {}
+    if 'reorg_rates_last_config' not in st.session_state:
+        st.session_state.reorg_rates_last_config = None
 
 
 def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
@@ -58,21 +58,21 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     st.sidebar.header("⚙️ Configuration")
     
     # Check if network changed to clear cache
-    if 'last_network' not in st.session_state:
-        st.session_state.last_network = network
-    elif st.session_state.last_network != network:
-        st.session_state.last_network = network
-        st.session_state.data_loaded = False
-        st.session_state.analysis_data = {}
+    if 'reorg_rates_last_network' not in st.session_state:
+        st.session_state.reorg_rates_last_network = network
+    elif st.session_state.reorg_rates_last_network != network:
+        st.session_state.reorg_rates_last_network = network
+        st.session_state.reorg_rates_data_loaded = False
+        st.session_state.reorg_rates_analysis_data = {}
         logger.info(f"Network changed to {network}, clearing cache")
     
     # Check if cluster changed
-    if 'last_cluster' not in st.session_state:
-        st.session_state.last_cluster = cluster
-    elif st.session_state.last_cluster != cluster:
-        st.session_state.last_cluster = cluster
-        st.session_state.data_loaded = False
-        st.session_state.analysis_data = {}
+    if 'reorg_rates_last_cluster' not in st.session_state:
+        st.session_state.reorg_rates_last_cluster = cluster
+    elif st.session_state.reorg_rates_last_cluster != cluster:
+        st.session_state.reorg_rates_last_cluster = cluster
+        st.session_state.reorg_rates_data_loaded = False
+        st.session_state.reorg_rates_analysis_data = {}
         logger.info(f"Cluster changed to {cluster}, clearing cache")
     
     # Auto-select experimental cluster for fusaka networks
@@ -508,11 +508,11 @@ def main():
     config = render_sidebar_config(cluster, network)
     
     # Check if configuration changed
-    config_changed = st.session_state.last_config != config
+    config_changed = st.session_state.reorg_rates_last_config != config
     if config_changed:
-        st.session_state.last_config = config.copy()
-        st.session_state.data_loaded = False
-        st.session_state.analysis_data = {}
+        st.session_state.reorg_rates_last_config = config.copy()
+        st.session_state.reorg_rates_data_loaded = False
+        st.session_state.reorg_rates_analysis_data = {}
         logger.info("Configuration changed, clearing cache")
     
     # Load and Clear Cache buttons in sidebar
@@ -523,8 +523,8 @@ def main():
     with col2:
         if st.sidebar.button("🗑️ Clear", use_container_width=True):
             st.cache_data.clear()
-            st.session_state.analysis_data = {}
-            st.session_state.data_loaded = False
+            st.session_state.reorg_rates_analysis_data = {}
+            st.session_state.reorg_rates_data_loaded = False
             st.rerun()
     
     if load_button:
@@ -532,16 +532,16 @@ def main():
         df = load_and_process_data(config, network)
         
         if df is not None:
-            st.session_state.analysis_data = df
-            st.session_state.data_loaded = True
+            st.session_state.reorg_rates_analysis_data = df
+            st.session_state.reorg_rates_data_loaded = True
             logger.info("Data loaded and cached successfully")
         else:
-            st.session_state.data_loaded = False
+            st.session_state.reorg_rates_data_loaded = False
             return
     
     # Render results if data is loaded
-    if st.session_state.data_loaded and not st.session_state.analysis_data.empty:
-        render_analysis_results(st.session_state.analysis_data, config, network)
+    if st.session_state.reorg_rates_data_loaded and not st.session_state.reorg_rates_analysis_data.empty:
+        render_analysis_results(st.session_state.reorg_rates_analysis_data, config, network)
 
 
 if __name__ == "__main__":

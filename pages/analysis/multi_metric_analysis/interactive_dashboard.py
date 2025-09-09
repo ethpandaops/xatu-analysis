@@ -54,17 +54,17 @@ logger = logging.getLogger(__name__)
 
 
 def initialize_session_state():
-    """Initialize session state variables."""
-    if 'data_loaded' not in st.session_state:
-        st.session_state.data_loaded = False
-    if 'analysis_data' not in st.session_state:
-        st.session_state.analysis_data = {}
-    if 'last_config' not in st.session_state:
-        st.session_state.last_config = None
-    if 'time_buckets_data' not in st.session_state:
-        st.session_state.time_buckets_data = {}
-    if 'selected_metrics' not in st.session_state:
-        st.session_state.selected_metrics = ['gas_used', 'block_gossip_time_mean']
+    """Initialize session state variables with unique prefix to avoid conflicts."""
+    if 'multi_metric_data_loaded' not in st.session_state:
+        st.session_state.multi_metric_data_loaded = False
+    if 'multi_metric_analysis_data' not in st.session_state:
+        st.session_state.multi_metric_analysis_data = {}
+    if 'multi_metric_last_config' not in st.session_state:
+        st.session_state.multi_metric_last_config = None
+    if 'multi_metric_time_buckets_data' not in st.session_state:
+        st.session_state.multi_metric_time_buckets_data = {}
+    if 'multi_metric_selected_metrics' not in st.session_state:
+        st.session_state.multi_metric_selected_metrics = ['gas_used', 'block_gossip_time_mean']
 
 
 def render_sidebar_configuration() -> Dict[str, Any]:
@@ -210,7 +210,7 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                 config.get('cluster')
             )
             
-            st.session_state.analysis_data['period1'] = period1_data
+            st.session_state.multi_metric_analysis_data['period1'] = period1_data
             
             # Load Period 2 data if comparison enabled
             if config['enable_comparison']:
@@ -222,7 +222,7 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                     config.get('enable_chunking', True),
                     config.get('cluster')
                 )
-                st.session_state.analysis_data['period2'] = period2_data
+                st.session_state.multi_metric_analysis_data['period2'] = period2_data
             
             # Data quality check
             if period1_data['combined_data'].empty:
@@ -236,28 +236,28 @@ def load_and_validate_data(config: Dict[str, Any]) -> bool:
                         period1_data['combined_data'], 
                         config['time_buckets']
                     )
-                    st.session_state.time_buckets_data['period1'] = bucketed_data
+                    st.session_state.multi_metric_time_buckets_data['period1'] = bucketed_data
                     logger.info(f"Successfully created {config['time_buckets']} time buckets")
                 except Exception as e:
                     logger.error(f"Error creating time buckets: {e}")
                     st.error(f"Failed to create time buckets: {str(e)}")
                     return False
                 
-                if config['enable_comparison'] and not st.session_state.analysis_data['period2']['combined_data'].empty:
+                if config['enable_comparison'] and not st.session_state.multi_metric_analysis_data['period2']['combined_data'].empty:
                     bucketed_data2 = create_time_buckets(
-                        st.session_state.analysis_data['period2']['combined_data'],
+                        st.session_state.multi_metric_analysis_data['period2']['combined_data'],
                         config['time_buckets']
                     )
-                    st.session_state.time_buckets_data['period2'] = bucketed_data2
+                    st.session_state.multi_metric_time_buckets_data['period2'] = bucketed_data2
             
-            st.session_state.data_loaded = True
+            st.session_state.multi_metric_data_loaded = True
             st.success("✅ Data loaded successfully!")
             return True
             
         except Exception as e:
             logger.error(f"Error loading data: {e}")
             st.error(f"❌ Error loading data: {str(e)}")
-            st.session_state.data_loaded = False
+            st.session_state.multi_metric_data_loaded = False
             return False
 
 
@@ -274,11 +274,11 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
     lineage = DataLineageTracker()
     
     # Get available data
-    if 'period1' not in st.session_state.analysis_data:
+    if 'period1' not in st.session_state.multi_metric_analysis_data:
         st.warning("No data loaded yet")
         return {}, lineage
         
-    data = st.session_state.analysis_data['period1']['combined_data']
+    data = st.session_state.multi_metric_analysis_data['period1']['combined_data']
     lineage.set_initial_state(data, "Client-level block propagation and performance data")
     
     # Discover metrics dynamically
@@ -603,7 +603,7 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
             st.text("Save your current settings as a reusable template")
         with save_col2:
             if st.button("Save as Template", type="secondary", use_container_width=True):
-                st.session_state.show_save_template_dialog = True
+                st.session_state.multi_metric_show_save_template_dialog = True
         
         if st.session_state.get('show_save_template_dialog', False):
             with st.form("save_template_form"):
@@ -640,7 +640,7 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
                             
                             if save_template(save_config, template_name, template_description):
                                 st.success(f"✅ Template '{template_name}' saved successfully!")
-                                st.session_state.show_save_template_dialog = False
+                                st.session_state.multi_metric_show_save_template_dialog = False
                                 st.rerun()
                             else:
                                 st.error("Failed to save template")
@@ -649,7 +649,7 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
                 
                 with col2:
                     if st.form_submit_button("Cancel", use_container_width=True):
-                        st.session_state.show_save_template_dialog = False
+                        st.session_state.multi_metric_show_save_template_dialog = False
                         st.rerun()
     
     # Build configuration
@@ -772,12 +772,12 @@ def render_analysis_controls() -> Tuple[Dict[str, Any], DataLineageTracker]:
 
 def render_analysis_dashboard():
     """Render the main analysis dashboard with all visualizations."""
-    if not st.session_state.data_loaded or 'period1' not in st.session_state.analysis_data:
+    if not st.session_state.multi_metric_data_loaded or 'period1' not in st.session_state.multi_metric_analysis_data:
         st.warning("⚠️ No data loaded. Please configure analysis parameters and load data.")
         return
     
-    period1_data = st.session_state.analysis_data['period1']['combined_data']
-    period1_bucketed = st.session_state.time_buckets_data.get('period1', pd.DataFrame())
+    period1_data = st.session_state.multi_metric_analysis_data['period1']['combined_data']
+    period1_bucketed = st.session_state.multi_metric_time_buckets_data.get('period1', pd.DataFrame())
     
     if period1_data.empty:
         st.error("❌ No data available for analysis")
@@ -984,7 +984,7 @@ def render_analysis_dashboard():
                     st.write(f"**Implementations found:** {', '.join(implementations)}")
                     
                     # Show node count per implementation
-                    period1_data_info = st.session_state.analysis_data.get('period1', {})
+                    period1_data_info = st.session_state.multi_metric_analysis_data.get('period1', {})
                     if period1_data_info and 'combined_data' in period1_data_info:
                         original_data = period1_data_info['combined_data']
                         if 'meta_client_name' in original_data.columns:
@@ -1031,7 +1031,7 @@ def render_analysis_dashboard():
             analysis_config['y_metrics'],
             analysis_config['agg_function'], 
             analysis_config, 
-            st.session_state.analysis_data.get('period1', {})
+            st.session_state.multi_metric_analysis_data.get('period1', {})
         )
     
 
@@ -1506,8 +1506,8 @@ def render_statistical_summary(data: pd.DataFrame, metrics: List[str]):
         st.dataframe(percentiles, use_container_width=True)
     
     # Comparison analysis if multiple periods
-    if 'period2' in st.session_state.analysis_data:
-        period2_data = st.session_state.analysis_data['period2']['combined_data']
+    if 'period2' in st.session_state.multi_metric_analysis_data:
+        period2_data = st.session_state.multi_metric_analysis_data['period2']['combined_data']
         if not period2_data.empty:
             st.write("#### Period Comparison")
             comparison = calculate_comparative_analysis(data, period2_data, metrics)
@@ -1554,19 +1554,19 @@ def main():
         str(config.get('period2_end', '')),
         config['time_buckets']
     )
-    config_changed = st.session_state.last_config != current_config
+    config_changed = st.session_state.multi_metric_last_config != current_config
     
-    if config_changed and st.session_state.data_loaded:
+    if config_changed and st.session_state.multi_metric_data_loaded:
         st.sidebar.warning("⚠️ Configuration changed. Click 'Load Data' to refresh.")
-        st.session_state.data_loaded = False
+        st.session_state.multi_metric_data_loaded = False
     
     # Data loading
     if st.sidebar.button("🔄 Load Analysis Data", type="primary"):
         if load_and_validate_data(config):
-            st.session_state.last_config = current_config
+            st.session_state.multi_metric_last_config = current_config
     
     # Main analysis display
-    if st.session_state.data_loaded:
+    if st.session_state.multi_metric_data_loaded:
         render_analysis_dashboard()
     else:
         # Show information when no data is loaded
