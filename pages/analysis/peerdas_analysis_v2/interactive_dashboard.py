@@ -438,27 +438,40 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
 def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[pd.DataFrame]:
     """
     Load and process head correctness data.
-    
+
     Args:
         config: Configuration dictionary
-        
+
     Returns:
         Processed DataFrame with head correctness data or None if loading fails
     """
     with st.spinner("🔄 Loading head correctness data..."):
         try:
             # Load eligible slots (filtered by proposer and MEV status)
-            eligible_slots, slot_to_block, slot_to_proposer, mev_slots = load_eligible_slots(
-                network=config['network'],
-                start_date=config['start_datetime'],
-                end_date=config['end_datetime'],
-                proposer_type=config.get('proposer_type'),
-                cl_filter=config.get('proposer_cl'),
-                el_filter=config.get('proposer_el'),
-                mev_filter=config.get('mev_filter'),
-                cluster_name=config['cluster']
-            )
-            
+            try:
+                eligible_slots, slot_to_block, slot_to_proposer, mev_slots = load_eligible_slots(
+                    network=config['network'],
+                    start_date=config['start_datetime'],
+                    end_date=config['end_datetime'],
+                    proposer_type=config.get('proposer_type'),
+                    cl_filter=config.get('proposer_cl'),
+                    el_filter=config.get('proposer_el'),
+                    mev_filter=config.get('mev_filter'),
+                    cluster_name=config['cluster']
+                )
+            except Exception as e:
+                # Display the actual backend error
+                st.error(f"🚨 Backend Error: {str(e)}")
+
+                # Check if there's additional error context in session state
+                if 'peerdas_v2_last_error' in st.session_state:
+                    with st.expander("🔍 Error Details", expanded=True):
+                        st.code(st.session_state['peerdas_v2_last_error'])
+
+                # Clear cache to allow retry
+                st.cache_data.clear()
+                return None
+
             if not eligible_slots:
                 st.error("No eligible slots found for the selected proposer filters and time range")
                 
@@ -498,22 +511,37 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 return None
             
             # Load head correctness data (against proposed blocks, including reorged)
-            data = load_head_correctness_data(
-                network=config['network'],
-                start_date=config['start_datetime'],
-                end_date=config['end_datetime'],
-                eligible_slots=eligible_slots,
-                slot_to_block=slot_to_block,
-                slot_to_proposer=slot_to_proposer,
-                mev_slots=mev_slots,
-                attester_type=config.get('attester_type'),
-                cl_filter=config.get('attester_cl'),
-                el_filter=config.get('attester_el'),
-                grouping_dimension=config.get('grouping_dimension'),
-                attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
-                cluster_name=config['cluster']
-            )
-            
+            try:
+                data = load_head_correctness_data(
+                    network=config['network'],
+                    start_date=config['start_datetime'],
+                    end_date=config['end_datetime'],
+                    eligible_slots=eligible_slots,
+                    slot_to_block=slot_to_block,
+                    slot_to_proposer=slot_to_proposer,
+                    mev_slots=mev_slots,
+                    attester_type=config.get('attester_type'),
+                    cl_filter=config.get('attester_cl'),
+                    el_filter=config.get('attester_el'),
+                    grouping_dimension=config.get('grouping_dimension'),
+                    attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
+                    cluster_name=config['cluster']
+                )
+            except Exception as e:
+                # Display the actual backend error
+                st.error(f"🚨 Backend Error Loading Head Correctness: {str(e)}")
+
+                # Check if there's additional error context in session state
+                if 'peerdas_v2_last_error' in st.session_state:
+                    with st.expander("🔍 Error Details", expanded=True):
+                        st.code(st.session_state['peerdas_v2_last_error'])
+
+                # Clear cache to allow retry
+                st.cache_data.clear()
+                st.session_state.peerdas_v2_analysis_data = {}
+                st.session_state.peerdas_v2_data_loaded = False
+                return None
+
             if data.empty:
                 st.error("No head correctness data returned!")
                 # Check if there were any SQL errors in the session state
@@ -559,7 +587,17 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
             
         except Exception as e:
             logger.error(f"Error loading attestation data: {e}")
-            st.error(f"Failed to load data: {str(e)}")
+            st.error(f"🚨 Failed to load data: {str(e)}")
+
+            # Check if there's additional error context in session state
+            if 'peerdas_v2_last_error' in st.session_state:
+                with st.expander("🔍 Full Error Details", expanded=True):
+                    st.code(st.session_state['peerdas_v2_last_error'])
+
+            # Clear cache to allow retry
+            st.cache_data.clear()
+            st.session_state.peerdas_v2_analysis_data = {}
+            st.session_state.peerdas_v2_data_loaded = False
             return None
 
 

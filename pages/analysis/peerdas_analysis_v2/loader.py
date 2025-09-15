@@ -23,6 +23,8 @@ from queries import (
     get_eligible_slots_query,
     build_proposer_filter,
     build_validator_filter,
+    build_proposer_filter_ranges,
+    build_validator_filter_ranges,
     get_head_correctness_per_slot_query,
     get_head_correctness_per_slot_grouped_query,
     get_head_correctness_per_slot_attester_grouped_query,
@@ -151,47 +153,55 @@ def load_eligible_slots(
     
     logger.info(f"Network spec loaded for {network}")
     
-    proposer_indices = []
-    
+    proposer_ranges = []  # Will store (start, end) tuples
+    total_validator_count = 0
+
     # Check for filters that require network spec
     has_filters = proposer_type or cl_filter or el_filter
-    
+
     # ALWAYS filter to only validators in the spec
     # This prevents "unknown" entries from validators not in our config
-    # Build list of ALL validators in spec first
-    all_spec_validators = []
+    # Build list of ALL validator ranges in spec first
+    all_spec_ranges = []
     for node_name in network_spec.get_all_nodes():
-        validators = network_spec.get_validators(node_name)
-        all_spec_validators.extend(validators)
-    logger.info(f"Network spec contains {len(all_spec_validators)} validators (0-{max(all_spec_validators) if all_spec_validators else 0})")
-    
+        v_range = network_spec.get_validator_range(node_name)
+        if v_range:
+            all_spec_ranges.append(v_range)
+            total_validator_count += (v_range[1] - v_range[0])
+    logger.info(f"Network spec contains {total_validator_count} validators across {len(all_spec_ranges)} ranges")
+
     # Now apply filters if any
     nodes_processed = 0
     nodes_matched = 0
+    filtered_validator_count = 0
     for node_name in network_spec.get_all_nodes():
         nodes_processed += 1
         node_info = network_spec.get_node_info(node_name)
         if not node_info:
             continue
-        
+
+        v_range = network_spec.get_validator_range(node_name)
+        if not v_range:
+            continue
+
         # If no filters, include all nodes from the spec
         if not has_filters:
-            validators = network_spec.get_validators(node_name)
-            proposer_indices.extend(validators)
+            proposer_ranges.append(v_range)
+            filtered_validator_count += (v_range[1] - v_range[0])
             nodes_matched += 1
             continue
-            
+
         # Check if node matches filters
         tags = node_info.get('tags', [])
         node_is_supernode = 'supernode' in tags
-        
+
         # Check node type filter
         if proposer_type:
             if proposer_type == 'supernode' and not node_is_supernode:
                 continue
             if proposer_type == 'regular' and node_is_supernode:
                 continue
-        
+
         # Check CL filter
         if cl_filter:
             node_cl = None
@@ -201,7 +211,7 @@ def load_eligible_slots(
                     break
             if not node_cl or node_cl not in cl_filter:
                 continue
-        
+
         # Check EL filter
         if el_filter:
             node_el = None
@@ -211,51 +221,87 @@ def load_eligible_slots(
                     break
             if not node_el or node_el not in el_filter:
                 continue
-        
-        # Add validator indices for this node
-        validators = network_spec.get_validators(node_name)
-        proposer_indices.extend(validators)
+
+        # Add validator range for this node
+        proposer_ranges.append(v_range)
+        filtered_validator_count += (v_range[1] - v_range[0])
         nodes_matched += 1
-    
-    logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {len(proposer_indices)}")
-    
+
+    logger.info(f"Proposer filter: processed {nodes_processed} nodes, matched {nodes_matched}, total validators: {filtered_validator_count}")
+
     # CRITICAL: When no filters are applied, use ALL spec validators to filter out unknown proposers
     if not has_filters:
-        proposer_indices = all_spec_validators
-        logger.info(f"No filters applied - using all {len(all_spec_validators)} spec validators to exclude unknown proposers")
+        proposer_ranges = all_spec_ranges
+        logger.info(f"No filters applied - using all {len(all_spec_ranges)} ranges to exclude unknown proposers")
     
     # Show validator selection in UI
     with st.expander("🔎 Validator Selection Debug", expanded=False):
         st.write(f"**Nodes processed:** {nodes_processed}")
         st.write(f"**Nodes matched filters:** {nodes_matched}")
-        st.write(f"**Total validator indices selected:** {len(proposer_indices)}")
-        if proposer_indices:
-            st.write(f"**Validator range:** {min(proposer_indices)} to {max(proposer_indices)}")
-            st.write(f"**Sample validators (first 20):** {sorted(proposer_indices)[:20]}")
+        st.write(f"**Total validator count:** {filtered_validator_count}")
+        st.write(f"**Number of ranges:** {len(proposer_ranges)}")
+        if proposer_ranges:
+            st.write(f"**Sample ranges (first 5):** {proposer_ranges[:5]}")
+            # Calculate query size reduction
+            old_size = sum((r[1] - r[0]) * 6 for r in proposer_ranges)  # Approx 6 chars per number
+            new_size = len(proposer_ranges) * 15  # Approx 15 chars per range
+            st.write(f"**Query size reduction:** {old_size:,} bytes → {new_size:,} bytes ({100 - (new_size*100//old_size)}% reduction)")
         else:
             st.write("⚠️ No validators selected! This will return no results.")
     
-    # Build proposer filter - this will exclude proposers outside our spec
-    proposer_filter = build_proposer_filter(proposer_indices)
-    
+    # Build proposer filter using ranges - this will exclude proposers outside our spec
+    # If we have many validators, use range-based approach
+    if proposer_ranges and sum(r[1] - r[0] for r in proposer_ranges) > 1000:
+        filter_result = build_proposer_filter_ranges(proposer_ranges)
+
+        # Parse the CTE and WHERE clause from the result
+        if filter_result:
+            parts = filter_result.split('|||')
+            proposer_cte = parts[0] if len(parts) > 0 else ""
+            proposer_where = parts[1] if len(parts) > 1 else ""
+        else:
+            proposer_cte = ""
+            proposer_where = ""
+    else:
+        # For small sets, still use the old approach to avoid unnecessary complexity
+        proposer_cte = ""
+        if proposer_ranges:
+            # Convert ranges back to indices for small sets
+            proposer_indices = []
+            for start, end in proposer_ranges:
+                proposer_indices.extend(range(start, end))
+            proposer_where = build_proposer_filter(proposer_indices)
+        else:
+            proposer_where = ""
+
     # Debug logging
-    logger.info(f"Proposer indices count: {len(proposer_indices) if proposer_indices else 0}")
-    if proposer_indices and len(proposer_indices) > 0:
-        logger.info(f"First 10 proposer indices: {proposer_indices[:10]}")
-        logger.info(f"Last 10 proposer indices: {proposer_indices[-10:]}")
+    logger.info(f"Proposer ranges count: {len(proposer_ranges)}")
+    if proposer_ranges:
+        logger.info(f"First 5 ranges: {proposer_ranges[:5]}")
+        logger.info(f"Total validators covered: {sum(r[1] - r[0] for r in proposer_ranges)}")
     
-    # Get query with filter (do NOT restrict to sidecars; 0-blob slots are valid)
-    query = get_eligible_slots_query().format(proposer_filter=proposer_filter)
-    
+    # Get base query and inject the CTE if needed
+    base_query = get_eligible_slots_query()
+
+    if proposer_cte:
+        # Inject the CTE at the beginning of the query
+        if "WITH" in base_query:
+            # Add to existing WITH clause
+            query = base_query.replace("WITH", f"WITH {proposer_cte},", 1)
+        else:
+            # Add new WITH clause
+            query = f"WITH {proposer_cte}\n{base_query}"
+        # Apply the WHERE clause
+        query = query.format(proposer_filter=proposer_where)
+    else:
+        query = base_query.format(proposer_filter="")
+
     # Debug: Log part of the query
-    if proposer_filter:
-        logger.info(f"Proposer filter applied: ...{proposer_filter[:100]}...")
+    if proposer_cte:
+        logger.info(f"Proposer CTE applied with {len(proposer_ranges)} ranges")
         with st.expander("🔍 SQL Query Debug", expanded=False):
-            st.write("**Proposer filter:**")
-            if len(proposer_filter) > 500:
-                st.code(f"{proposer_filter[:200]}...{proposer_filter[-200:]}")
-            else:
-                st.code(proposer_filter)
+            st.write("**Range-based filter (CTE):**")
+            st.code(proposer_cte[:500] + "..." if len(proposer_cte) > 500 else proposer_cte)
     else:
         logger.info("No proposer filter applied")
     
@@ -349,31 +395,40 @@ def load_eligible_slots(
         logger.info(f"Returning {len(mev_slots)} MEV slots along with eligible slots")
         return slots, slot_to_block, slot_to_proposer, mev_slots
     except Exception as e:
-        logger.error(f"Error loading eligible slots: {e}")
-        return [], {}, {}, []
+        error_msg = f"Error loading eligible slots: {str(e)}"
+        logger.error(error_msg)
+        logger.error(f"Orig exception: {e}", exc_info=True)
+        # Store error in session state for display
+        if hasattr(st, 'session_state'):
+            st.session_state['peerdas_v2_last_error'] = error_msg
+        # Re-raise the exception so it can be caught and displayed in the UI
+        raise Exception(error_msg) from e
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
 def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]]) -> str:
     """Build UNION ALL SELECT mapping for validator->group using network_spec ranges."""
     logger.info(f"Building attester map: attester_type={attester_type}, cl_filter={cl_filter}, el_filter={el_filter}")
-    
-    selects = []
+
     if not _network_spec:
         logger.error("No network_spec provided to _build_attester_map_union_selects")
         return ""
-    
+
     # Use the unhashed network_spec parameter
     network_spec = _network_spec
 
     nodes_processed = 0
     nodes_included = 0
-    
+
+    # Group ranges by their characteristics to minimize query size
+    # Key: (node_type, cl_client, el_client) -> List of (start, end) ranges
+    grouped_ranges = {}
+
     for node_name in network_spec.get_all_nodes():
         nodes_processed += 1
         node_info = network_spec.get_node_info(node_name) or {}
         v_range = network_spec.get_validator_range(node_name)
-        
+
         if not v_range:
             logger.debug(f"Node {node_name} has no validator range, skipping")
             continue
@@ -393,7 +448,7 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
         el = ''
         cl_tags = []
         el_tags = []
-        
+
         for tag in tags:
             if tag.startswith('cl:'):
                 parts = tag.split(':')
@@ -407,7 +462,7 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
                     el_tags.append(parts[1])
                 else:
                     logger.error(f"Node {node_name} has malformed EL tag: '{tag}'")
-        
+
         cl = cl_tags[0] if cl_tags else ''
         el = el_tags[0] if el_tags else ''
 
@@ -416,7 +471,7 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
             if cl_filter and not cl:
                 logger.error(f"Node {node_name} has no CL client information but CL filter is applied! Available tags: {tags}")
                 raise ValueError(f"Missing CL client info for node {node_name} when CL filtering is required")
-            
+
             if el_filter and not el:
                 logger.error(f"Node {node_name} has no EL client information but EL filter is applied! Available tags: {tags}")
                 raise ValueError(f"Missing EL client info for node {node_name} when EL filtering is required")
@@ -428,17 +483,55 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
             continue
 
         node_type = 'supernode' if node_is_supernode else 'regular'
-        select_sql = f"SELECT arrayJoin(range({int(start)},{int(end)})) AS validator_index, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client"
-        selects.append(select_sql)
+
+        # Group by characteristics
+        key = (node_type, cl, el)
+        if key not in grouped_ranges:
+            grouped_ranges[key] = []
+        grouped_ranges[key].append((int(start), int(end)))
         nodes_included += 1
-        
+
         # Debug: Log nodes that don't have clear supernode determination
         if not node_is_supernode and 'supernode' not in tags and not node_info.get('attributes', {}).get('supernode', False):
             logger.debug(f"DEBUG: Node {node_name} classified as 'regular' - tags: {tags}, supernode attr: {node_info.get('attributes', {}).get('supernode')}")
 
     logger.info(f"Processed {nodes_processed} nodes, included {nodes_included} in attester map")
-    
+    logger.info(f"Grouped into {len(grouped_ranges)} unique characteristic combinations")
+
+    # Build efficient SELECT statements using arrayConcat for each group
+    selects = []
+    for (node_type, cl, el), ranges in grouped_ranges.items():
+        # Build range expressions
+        range_parts = [f"range({start}, {end})" for start, end in ranges]
+
+        # If we have many ranges for this group, chunk them
+        if len(range_parts) > 50:
+            # Split into chunks of 50 ranges
+            chunk_size = 50
+            chunks = [range_parts[i:i + chunk_size] for i in range(0, len(range_parts), chunk_size)]
+
+            for chunk in chunks:
+                select_sql = f"""SELECT
+      arrayJoin(arrayConcat({','.join(chunk)})) AS validator_index,
+      '{node_type}' AS node_type,
+      '{cl}' AS cl_client,
+      '{el}' AS el_client"""
+                selects.append(select_sql)
+        else:
+            # For smaller sets, use a single arrayConcat
+            select_sql = f"""SELECT
+      arrayJoin(arrayConcat({','.join(range_parts)})) AS validator_index,
+      '{node_type}' AS node_type,
+      '{cl}' AS cl_client,
+      '{el}' AS el_client"""
+            selects.append(select_sql)
+
+    if not selects:
+        logger.warning("No SELECT statements generated for attester map")
+        return ""
+
     result = "\nUNION ALL\n".join(selects)
+    logger.info(f"Generated {len(selects)} SELECT statements for attester map")
     return result
 
 
@@ -652,40 +745,48 @@ def load_head_correctness_data(
     
     # Filter validators if network spec is available
     # If we have a network spec, ALWAYS filter to only validators in the spec
-    validator_indices = []
+    validator_ranges = []  # Will store (start, end) tuples
+    total_attester_count = 0
     has_attester_filters = attester_type or cl_filter or el_filter
-    
+
     if network_spec:
-        # First collect ALL validators in the spec
-        all_spec_validators = []
+        # First collect ALL validator ranges in the spec
+        all_spec_ranges = []
         for node_name in network_spec.get_all_nodes():
-            validators = network_spec.get_validators(node_name)
-            all_spec_validators.extend(validators)
-        logger.info(f"Network spec contains {len(all_spec_validators)} validators for attester filtering")
-        
+            v_range = network_spec.get_validator_range(node_name)
+            if v_range:
+                all_spec_ranges.append(v_range)
+                total_attester_count += (v_range[1] - v_range[0])
+        logger.info(f"Network spec contains {total_attester_count} validators for attester filtering")
+
         # Now apply filters if needed
+        filtered_attester_count = 0
         for node_name in network_spec.get_all_nodes():
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
                 continue
-            
-            # If no filters, we'll use all_spec_validators later
-            if not has_attester_filters:
-                validators = network_spec.get_validators(node_name)
-                validator_indices.extend(validators)
+
+            v_range = network_spec.get_validator_range(node_name)
+            if not v_range:
                 continue
-                
+
+            # If no filters, we'll use all_spec_ranges later
+            if not has_attester_filters:
+                validator_ranges.append(v_range)
+                filtered_attester_count += (v_range[1] - v_range[0])
+                continue
+
             # Check if node matches filters
             tags = node_info.get('tags', [])
             node_is_supernode = 'supernode' in tags
-            
+
             # Check node type filter
             if attester_type:
                 if attester_type == 'supernode' and not node_is_supernode:
                     continue
                 if attester_type == 'regular' and node_is_supernode:
                     continue
-            
+
             # Check CL filter
             if cl_filter:
                 node_cl = None
@@ -695,7 +796,7 @@ def load_head_correctness_data(
                         break
                 if not node_cl or node_cl not in cl_filter:
                     continue
-            
+
             # Check EL filter
             if el_filter:
                 node_el = None
@@ -705,17 +806,17 @@ def load_head_correctness_data(
                         break
                 if not node_el or node_el not in el_filter:
                     continue
-            
-            # Add validator indices for this node
-            validators = network_spec.get_validators(node_name)
-            validator_indices.extend(validators)
-        
+
+            # Add validator range for this node
+            validator_ranges.append(v_range)
+            filtered_attester_count += (v_range[1] - v_range[0])
+
         # CRITICAL: When no filters, use ALL spec validators to filter out unknown attesters
         if not has_attester_filters:
-            validator_indices = all_spec_validators
-            logger.info(f"No attester filters - using all {len(all_spec_validators)} spec validators to exclude unknown attesters")
+            validator_ranges = all_spec_ranges
+            logger.info(f"No attester filters - using all {len(all_spec_ranges)} ranges to exclude unknown attesters")
         else:
-            logger.info(f"Attester filter applied: {len(validator_indices)} validators selected")
+            logger.info(f"Attester filter applied: {filtered_attester_count} validators selected across {len(validator_ranges)} ranges")
     
     # Check if committee data exists FIRST - REQUIRED for accurate head correctness
     committee_check_sql = """
@@ -806,11 +907,25 @@ def load_head_correctness_data(
                     sql = sql.replace('{proposer_map_union_selects}', proposer_map_sql)
                     
                     # Apply validator filter for attester filtering even in grouped queries
-                    # Build validator filter from the attester-filtered validator indices
-                    chunk_validator_filter = build_validator_filter(validator_indices)
-                    if chunk_validator_filter:
-                        logger.info(f"Chunk {chunk_idx + 1}: Applying attester filter to {len(validator_indices)} validators in grouped query")
-                    sql = sql.replace('{validator_filter}', f"\n      {chunk_validator_filter}" if chunk_validator_filter else '')
+                    # Build validator filter from the attester-filtered validator ranges
+                    filter_result = build_validator_filter_ranges(validator_ranges)
+                    if filter_result:
+                        parts = filter_result.split('|||')
+                        validator_cte = parts[0] if len(parts) > 0 else ""
+                        validator_where = parts[1] if len(parts) > 1 else ""
+
+                        # Add the CTE to the query
+                        if validator_cte:
+                            # Find the WITH clause and add our CTE
+                            if "WITH" in sql:
+                                sql = sql.replace("WITH", f"WITH {validator_cte},", 1)
+                            else:
+                                sql = f"WITH {validator_cte}\n{sql}"
+
+                        logger.info(f"Chunk {chunk_idx + 1}: Applying attester filter using {len(validator_ranges)} ranges")
+                        sql = sql.replace('{validator_filter}', f"\n      {validator_where}" if validator_where else '')
+                    else:
+                        sql = sql.replace('{validator_filter}', '')
                     
                     # Debug: Check if query still has unreplaced placeholders
                     if '{' in sql and '}' in sql:
@@ -1069,14 +1184,30 @@ def load_head_correctness_data(
             return df
         else:
             # Non-grouped per-slot computation
-            validator_filter = build_validator_filter(validator_indices)
-            if validator_filter:
-                logger.info(f"Applying attester filter to {len(validator_indices)} validators in non-grouped query")
-            
+            # Build validator filter using ranges
+            filter_result = build_validator_filter_ranges(validator_ranges)
+
+            # Parse the CTE and WHERE clause from the result
+            if filter_result:
+                parts = filter_result.split('|||')
+                validator_cte = parts[0] if len(parts) > 0 else ""
+                validator_where = parts[1] if len(parts) > 1 else ""
+                logger.info(f"Applying attester filter to {sum(r[1] - r[0] for r in validator_ranges)} validators using {len(validator_ranges)} ranges")
+            else:
+                validator_cte = ""
+                validator_where = ""
+
             # Use the per-slot query
-            sql = get_head_correctness_per_slot_query().format(
-                validator_filter=f"\n      {validator_filter}" if validator_filter else ""
-            )
+            base_query = get_head_correctness_per_slot_query()
+
+            # Inject the CTE if needed
+            if validator_cte:
+                # The query already has WITH clause from CTEs, so we need to add our CTE
+                sql = base_query.replace("WITH\n    ", f"WITH\n    {validator_cte},\n    ")
+                sql = sql.format(validator_filter=f"\n      {validator_where}" if validator_where else "")
+            else:
+                sql = base_query.format(validator_filter="")
+
             sql = sql.replace('%(eligible_slots)s', slots_str)
             
 
@@ -1096,9 +1227,15 @@ def load_head_correctness_data(
             return df
 
     except Exception as e:
-        logger.error(f"Error loading head correctness data: {e}")
+        error_msg = f"Error loading head correctness data: {str(e)}"
+        logger.error(error_msg)
         import traceback
-        return pd.DataFrame()
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Store error in session state for display
+        if hasattr(st, 'session_state'):
+            st.session_state['peerdas_v2_last_error'] = error_msg
+        # Re-raise the exception so it can be caught and displayed in the UI
+        raise Exception(error_msg) from e
 
 
 

@@ -400,12 +400,12 @@ def get_eligible_slots_query() -> str:
 def build_proposer_filter(proposer_indices: list = None) -> str:
     """
     Build SQL filter clause for proposer eligibility.
-    
+
     Only works with network spec - filters by proposer indices.
-    
+
     Args:
         proposer_indices: List of specific proposer indices from network spec
-    
+
     Returns:
         SQL WHERE clause fragment
     """
@@ -415,15 +415,68 @@ def build_proposer_filter(proposer_indices: list = None) -> str:
     return ""
 
 
+def build_proposer_filter_ranges(validator_ranges: list = None) -> str:
+    """
+    Build SQL filter clause for proposer eligibility using range-based CTE.
+    More efficient for large validator sets.
+
+    Args:
+        validator_ranges: List of tuples (start, end) representing validator ranges
+
+    Returns:
+        SQL CTE and WHERE clause fragment
+    """
+    if not validator_ranges:
+        return ""
+
+    # Build the range expansion using arrayJoin and arrayConcat
+    range_parts = []
+    for start, end in validator_ranges:
+        range_parts.append(f"range({start}, {end})")
+
+    # If we have many ranges, chunk them to avoid hitting limits
+    if len(range_parts) > 100:
+        # For very large sets, use UNION ALL approach with chunking
+        # Split ranges into chunks of 50 to avoid query size limits
+        chunk_size = 50
+        chunks = [range_parts[i:i + chunk_size] for i in range(0, len(range_parts), chunk_size)]
+
+        union_parts = []
+        for chunk in chunks:
+            union_parts.append(f"""
+      SELECT arrayJoin(
+        arrayConcat(
+          {','.join(chunk)}
+        )
+      ) AS proposer_index""")
+
+        cte = f"""valid_proposers AS (
+      {' UNION ALL '.join(union_parts)}
+    )"""
+        where_clause = "AND proposer_index IN (SELECT proposer_index FROM valid_proposers)"
+    else:
+        # Use arrayConcat for smaller sets
+        cte = f"""valid_proposers AS (
+      SELECT arrayJoin(
+        arrayConcat(
+          {',\n          '.join(range_parts)}
+        )
+      ) AS proposer_index
+    )"""
+        where_clause = "AND proposer_index IN (SELECT proposer_index FROM valid_proposers)"
+
+    return cte + "|||" + where_clause  # Use ||| as separator
+
+
 def build_validator_filter(validator_indices: list = None) -> str:
     """
     Build SQL filter clause for validator filtering.
-    
+
     Only works with network spec - filters by validator indices.
-    
+
     Args:
         validator_indices: List of specific validator indices from network spec
-    
+
     Returns:
         SQL WHERE clause fragment
     """
@@ -431,6 +484,59 @@ def build_validator_filter(validator_indices: list = None) -> str:
         indices_str = ','.join(str(idx) for idx in validator_indices)
         return f"AND validator_index IN ({indices_str})"
     return ""
+
+
+def build_validator_filter_ranges(validator_ranges: list = None) -> str:
+    """
+    Build SQL filter clause for validator filtering using range-based CTE.
+    More efficient for large validator sets.
+
+    Args:
+        validator_ranges: List of tuples (start, end) representing validator ranges
+
+    Returns:
+        SQL CTE and WHERE clause fragment
+    """
+    if not validator_ranges:
+        return ""
+
+    # Build the range expansion using arrayJoin and arrayConcat
+    range_parts = []
+    for start, end in validator_ranges:
+        range_parts.append(f"range({start}, {end})")
+
+    # If we have many ranges, chunk them to avoid hitting limits
+    if len(range_parts) > 100:
+        # For very large sets, use UNION ALL approach with chunking
+        # Split ranges into chunks of 50 to avoid query size limits
+        chunk_size = 50
+        chunks = [range_parts[i:i + chunk_size] for i in range(0, len(range_parts), chunk_size)]
+
+        union_parts = []
+        for chunk in chunks:
+            union_parts.append(f"""
+      SELECT arrayJoin(
+        arrayConcat(
+          {','.join(chunk)}
+        )
+      ) AS validator_index""")
+
+        cte = f"""valid_validators AS (
+      {' UNION ALL '.join(union_parts)}
+    )"""
+        where_clause = "AND validator_index IN (SELECT validator_index FROM valid_validators)"
+    else:
+        # Use arrayConcat for smaller sets
+        cte = f"""valid_validators AS (
+      SELECT arrayJoin(
+        arrayConcat(
+          {',\n          '.join(range_parts)}
+        )
+      ) AS validator_index
+    )"""
+        where_clause = "AND validator_index IN (SELECT validator_index FROM valid_validators)"
+
+    return cte + "|||" + where_clause  # Use ||| as separator
 
 
 def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:

@@ -81,6 +81,12 @@ networks:
     description: "Fusaka development network"
     genesis_timestamp: 1754640000  # August 8, 2025, 08:00:00 AM UTC
     enabled: true
+  fusaka-devnet-5:
+    name: "Fusaka Devnet 5"
+    chain_id: null
+    description: "Fusaka development network"
+    genesis_timestamp: 1757512800
+    enabled: true
 
 # API integrations
 integrations:
