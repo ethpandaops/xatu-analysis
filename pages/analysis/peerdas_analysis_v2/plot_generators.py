@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import Dict, Any, Optional
 import logging
+from scipy import stats
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -78,7 +79,7 @@ def _get_smart_colors(group_keys: list, grouping_dimension: str) -> Dict[str, st
         return color_map
     
     # Hierarchical groupings - parse and assign colors intelligently
-    if grouping_dimension in ['cl_el_combined', 'cl_node_type', 'node_type_mev', 'cl_node_type_mev']:
+    if grouping_dimension in ['cl_el_combined', 'cl_node_type', 'el_node_type', 'node_type_mev', 'cl_node_type_mev']:
         # Parse keys to find primary components
         primary_components = {}
         
@@ -101,7 +102,14 @@ def _get_smart_colors(group_keys: list, grouping_dimension: str) -> Dict[str, st
                 if len(parts) >= 1:
                     primary = parts[0]  # CL client
                     primary_components.setdefault(primary, []).append(key)
-            
+
+            elif grouping_dimension == 'el_node_type':
+                # Format: "geth-supernode"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # EL client
+                    primary_components.setdefault(primary, []).append(key)
+
             elif grouping_dimension == 'node_type_mev':
                 # Format: "supernode-mev" or "regular-non-mev"
                 parts = key.split('-')
@@ -323,7 +331,7 @@ def create_head_correctness_chart(
         
         agg = gdf.groupby(x_col).agg({
             'head_correctness_pct': agg_func,
-            'slot': 'count'
+            'slot': 'nunique'  # Count unique slots, not rows
         }).reset_index()
         agg.rename(columns={'slot': 'sample_count'}, inplace=True)
         
@@ -361,6 +369,20 @@ def create_head_correctness_chart(
                 )
             )
 
+            # Add sample count annotations below each point
+            for idx, row in agg.iterrows():
+                fig.add_annotation(
+                    x=row[x_col],
+                    y=0,
+                    text=f"({row['sample_count']:,} slots)",
+                    showarrow=False,
+                    font=dict(size=10, color=color),
+                    yshift=-20,
+                    opacity=0.8,
+                    xref='x',
+                    yref='paper'
+                )
+
     # Skip trend line for multi-group charts as it becomes too cluttered
     # Trend lines only make sense for single-group analysis
 
@@ -391,10 +413,11 @@ def create_head_correctness_chart(
     # Set title based on grouping and aggregation method
     group_names = {
         'node_type': 'Node Type',
-        'cl_client': 'CL Client', 
+        'cl_client': 'CL Client',
         'el_client': 'EL Client',
         'cl_el_combined': 'CL+EL Combination',
-        'cl_node_type': 'CL+Node Type'
+        'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type'
     }
     gname = group_names.get(grouping_dimension, grouping_dimension)
     
@@ -445,7 +468,7 @@ def create_head_correctness_chart(
         legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
         xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=x_title, type='category' if is_bucketed else 'linear'),
         yaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=f'Head {metric_label} (%)', range=[0, 100]),
-        margin=dict(r=200, t=120, l=80)
+        margin=dict(r=200, t=120, l=80, b=80)
     )
 
     fig.add_layout_image(dict(source='https://ethpandaops.io/img/logo-slim.png', xref='paper', yref='paper', x=0.02, y=0.98, sizex=0.08, sizey=0.08, xanchor='left', yanchor='top'))
@@ -527,6 +550,21 @@ def create_head_correctness_boxplot(
     unique_groups = df['group_key'].unique()
     color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
     
+    # Track unique slots per bucket (across all groups)
+    # Calculate from actual data to ensure accuracy with grouped data
+    unique_slots_per_bucket = {}
+    for x_val in x_order:
+        bucket_data = df[df[x_col] == x_val]
+        if not bucket_data.empty:
+            # Ensure we have the slot column and count unique values properly
+            if 'slot' not in bucket_data.columns:
+                logger.error(f"Missing 'slot' column in data for bucket {x_val}")
+                unique_slots_per_bucket[x_val] = len(bucket_data)
+            else:
+                # Count unique slots in this bucket (regardless of how many groups we have)
+                unique_count = bucket_data['slot'].nunique()
+                unique_slots_per_bucket[x_val] = unique_count
+
     for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
         # Get the group label if it exists, otherwise format the key
@@ -573,9 +611,11 @@ def create_head_correctness_boxplot(
                     glabel = str(g)
             else:
                 glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
-        
+
         color = color_map.get(g, '#999999')  # Use smart color map
-        
+
+        # No longer need to track per-group sample counts
+
         fig.add_trace(
             go.Box(
                 x=gdf[x_col],
@@ -588,7 +628,20 @@ def create_head_correctness_boxplot(
             )
         )
 
-    group_names = {'node_type': 'Node Type', 'cl_client': 'CL Client', 'el_client': 'EL Client', 'cl_el_combined': 'CL+EL Combination', 'cl_node_type': 'CL+Node Type'}
+    # Add sample count annotations with true unique slot counts
+    for x_val in x_order:
+        if x_val in unique_slots_per_bucket:
+            fig.add_annotation(
+                x=x_val,
+                y=-0.12,  # Position below the plot area
+                text=f"({unique_slots_per_bucket[x_val]:,} slots)",
+                showarrow=False,
+                font=dict(size=10, color='#333'),
+                xref='x',
+                yref='paper'
+            )
+
+    group_names = {'node_type': 'Node Type', 'cl_client': 'CL Client', 'el_client': 'EL Client', 'cl_el_combined': 'CL+EL Combination', 'cl_node_type': 'CL+Node Type', 'el_node_type': 'EL+Node Type'}
     metric_label = _get_metric_label(metadata)
     gname = group_names.get(grouping_dimension, grouping_dimension)
     title = f'Head {metric_label} Distribution by {gname}'
@@ -643,9 +696,9 @@ def create_head_correctness_boxplot(
         showlegend=True,
         hovermode='closest',
         legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
-        xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'), categoryorder='array', categoryarray=x_order),
+        xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=dict(text='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'), standoff=25), categoryorder='array', categoryarray=x_order),
         yaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=f'Head {metric_label} (%)', range=[0, 100]),
-        margin=dict(r=200, t=120, l=80),
+        margin=dict(r=200, t=120, l=80, b=100),
         boxmode='group'
     )
 
@@ -709,11 +762,26 @@ def create_head_correctness_violin(
         x_order = sorted(df['blob_count'].dropna().unique())
     
     fig = go.Figure()
-    
+
     # Get smart color assignments
     unique_groups = df['group_key'].unique()
     color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
-    
+
+    # Track unique slots per bucket (across all groups)
+    # Calculate from actual data to ensure accuracy with grouped data
+    unique_slots_per_bucket = {}
+    for x_val in x_order:
+        bucket_data = df[df[x_col] == x_val]
+        if not bucket_data.empty:
+            # Ensure we have the slot column and count unique values properly
+            if 'slot' not in bucket_data.columns:
+                logger.error(f"Missing 'slot' column in data for bucket {x_val}")
+                unique_slots_per_bucket[x_val] = len(bucket_data)
+            else:
+                # Count unique slots in this bucket (regardless of how many groups we have)
+                unique_count = bucket_data['slot'].nunique()
+                unique_slots_per_bucket[x_val] = unique_count
+
     for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
         # Get the group label if it exists, otherwise format the key
@@ -737,11 +805,13 @@ def create_head_correctness_violin(
                     glabel = str(g)
             else:
                 glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
-        
+
         # For each x value (blob count or bucket), create a violin
         for x_val in x_order:
             subset = gdf[gdf[x_col] == x_val]
             if not subset.empty:
+                # No longer track per-group counts (handled at bucket level)
+
                 fig.add_trace(
                     go.Violin(
                         x=[x_val] * len(subset),
@@ -760,14 +830,28 @@ def create_head_correctness_violin(
                         scalemode='width'
                     )
                 )
+
+    # Add sample count annotations with true unique slot counts
+    for x_val in x_order:
+        if x_val in unique_slots_per_bucket:
+            fig.add_annotation(
+                x=x_val,
+                y=-0.12,  # Position below the plot area
+                text=f"({unique_slots_per_bucket[x_val]:,} slots)",
+                showarrow=False,
+                font=dict(size=10, color='#333'),
+                xref='x',
+                yref='paper'
+            )
     
     # Set title based on grouping
     group_names = {
         'node_type': 'Node Type',
-        'cl_client': 'CL Client', 
+        'cl_client': 'CL Client',
         'el_client': 'EL Client',
         'cl_el_combined': 'CL+EL Combination',
-        'cl_node_type': 'CL+Node Type'
+        'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type'
     }
     metric_label = _get_metric_label(metadata)
     gname = group_names.get(grouping_dimension, grouping_dimension)
@@ -837,7 +921,10 @@ def create_head_correctness_violin(
             linewidth=1,
             linecolor='black',
             ticks='outside',
-            title='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'),
+            title=dict(
+                text='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'),
+                standoff=25
+            ),
             categoryorder='array',
             categoryarray=x_order
         ),
@@ -849,7 +936,7 @@ def create_head_correctness_violin(
             title=f'Head {metric_label} (%)',
             range=[0, 100]
         ),
-        margin=dict(r=200, t=120, l=80),
+        margin=dict(r=200, t=120, l=80, b=100),
         violinmode='group'
     )
     
@@ -867,6 +954,285 @@ def create_head_correctness_violin(
         )
     )
     
+    return fig
+
+
+def create_head_correctness_ridgeline(
+    data: pd.DataFrame,
+    num_buckets: Optional[int] = None,
+    network: str = None,
+    time_range: str = None,
+    metadata: Dict[str, Any] = None,
+    grouping_dimension: str = 'node_type',
+    proposer_filters: Dict[str, Any] = None,
+    attester_filters: Dict[str, Any] = None,
+    title_suffix: str = ""
+) -> go.Figure:
+    """Create overlaid ridgeline plot with blob buckets overlaid per group."""
+    if data.empty:
+        return go.Figure()
+
+    if 'head_correctness_pct' not in data.columns or 'blob_count' not in data.columns:
+        logger.error("Missing required columns: head_correctness_pct, blob_count")
+        return go.Figure()
+
+    df = data.copy()
+
+    # Add grouping if not present
+    if 'group_key' not in df.columns:
+        df['group_key'] = 'all'
+        df['group_label'] = 'All Nodes'
+    if 'group_label' not in df.columns:
+        df['group_label'] = df['group_key']
+
+    # Create blob buckets
+    max_blobs = int(df['blob_count'].max())
+    min_blobs = int(df['blob_count'].min())
+    blob_range = max_blobs - min_blobs + 1
+
+    if num_buckets == 1:
+        df['blob_bucket_label'] = 'All blobs'
+        bucket_col = 'blob_bucket_label'
+        bucket_order = ['All blobs']
+    elif num_buckets and num_buckets > 1:
+        if blob_range <= num_buckets:
+            df['blob_bucket_label'] = df['blob_count'].astype(str) + ' blobs'
+            bucket_col = 'blob_bucket_label'
+            bucket_order = [f"{i} blobs" for i in sorted(df['blob_count'].unique())]
+        else:
+            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
+            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
+            edges[-1] = max_blobs + 1
+
+            df['blob_bucket'] = pd.cut(df['blob_count'], bins=edges, include_lowest=True, right=False)
+            df['blob_bucket_label'] = df['blob_bucket'].apply(
+                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)} blobs" if pd.notna(x) else "Unknown"
+            )
+            bucket_col = 'blob_bucket_label'
+            bucket_order = sorted(df['blob_bucket_label'].dropna().unique(),
+                                key=lambda s: int(str(s).split('-')[0]) if '-' in str(s).split()[0] else int(str(s).split()[0]) if str(s).split()[0].isdigit() else 0)
+    else:
+        df['blob_bucket_label'] = df['blob_count'].astype(str) + ' blobs'
+        bucket_col = 'blob_bucket_label'
+        bucket_order = [f"{i} blobs" for i in sorted(df['blob_count'].unique())]
+
+    fig = go.Figure()
+
+    # Get unique groups and format labels
+    unique_groups = sorted(df['group_key'].unique())
+    group_labels = {}
+    for g in unique_groups:
+        group_df = df[df['group_key'] == g]
+        if not group_df.empty and 'group_label' in group_df.columns:
+            label = group_df['group_label'].iloc[0]
+            if label:
+                label = str(label).replace('supernode', 'Supernode').replace('regular', 'Regular')
+            group_labels[g] = label
+        else:
+            group_labels[g] = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').title()
+
+    # Define consistent colors for blob buckets
+    bucket_colors = {
+        bucket: f'hsl({i * 360 / len(bucket_order)}, 70%, 50%)'
+        for i, bucket in enumerate(bucket_order)
+    }
+
+    # Ridge parameters
+    y_step = 1.0  # Vertical spacing between groups
+    ridge_height = 0.8  # Max height of density curves
+    x_range = np.linspace(0, 100, 300)  # Head correctness grid
+
+    # Create ridges for each group
+    for group_idx, group_key in enumerate(unique_groups):
+        y_base = group_idx * y_step
+        group_data = df[df['group_key'] == group_key]
+        group_label = group_labels.get(group_key, str(group_key))
+
+        # Add invisible baseline trace for this ridge first
+        fig.add_trace(go.Scatter(
+            x=x_range,
+            y=[y_base] * len(x_range),
+            mode='lines',
+            line=dict(color='rgba(0,0,0,0)', width=0),
+            showlegend=False,
+            hoverinfo='skip',
+            name=f'{group_label}_baseline'
+        ))
+
+        # Overlay blob buckets on this ridge
+        for bucket_idx, bucket in enumerate(bucket_order):
+            bucket_data = group_data[group_data[bucket_col] == bucket]
+
+            if not bucket_data.empty and len(bucket_data) > 1:
+                try:
+                    values = bucket_data['head_correctness_pct'].dropna().values
+
+                    # Safe KDE with fallback
+                    if len(values) > 1 and np.std(values) > 0:
+                        kde = stats.gaussian_kde(values, bw_method='scott')
+                        density = kde(x_range)
+                    else:
+                        # Fallback: small gaussian around mean
+                        mean_val = np.mean(values)
+                        density = np.exp(-0.5 * ((x_range - mean_val) / 1.0) ** 2)
+
+                    # Normalize and scale
+                    if np.max(density) > 0:
+                        density = density / np.max(density) * ridge_height
+
+                    y_values = density + y_base
+
+                    # Get color for this bucket
+                    color = bucket_colors[bucket]
+                    # Convert to rgba for transparency
+                    fillcolor = color.replace('hsl', 'hsla').replace(')', ', 0.4)')
+
+                    fig.add_trace(go.Scatter(
+                        x=x_range,
+                        y=y_values,
+                        mode='lines',
+                        fill='tonexty',  # Fill to the previous trace (baseline or previous bucket)
+                        fillcolor=fillcolor,
+                        line=dict(color=color, width=1.5),
+                        name=bucket,
+                        legendgroup=bucket,
+                        showlegend=(group_idx == 0),  # Show legend only for first group
+                        hovertemplate=(
+                            f'<b>{group_label}</b><br>'
+                            f'Bucket: {bucket}<br>'
+                            f'Head Correctness: %{{x:.1f}}%<br>'
+                            f'Density: %{{y:.3f}}<br>'
+                            f'n={bucket_data["slot"].nunique()}<extra></extra>'  # Count unique slots
+                        )
+                    ))
+
+                    # Add another baseline trace after each bucket to reset the fill reference
+                    if bucket_idx < len(bucket_order) - 1:  # Don't add after the last bucket
+                        fig.add_trace(go.Scatter(
+                            x=x_range,
+                            y=[y_base] * len(x_range),
+                            mode='lines',
+                            line=dict(color='rgba(0,0,0,0)', width=0),
+                            showlegend=False,
+                            hoverinfo='skip',
+                            name=f'{group_label}_baseline_{bucket_idx}'
+                        ))
+
+                except Exception as e:
+                    logger.warning(f"Could not create density for {group_key}/{bucket}: {e}")
+
+    # Set title based on grouping
+    group_names = {
+        'node_type': 'Node Type',
+        'cl_client': 'CL Client',
+        'el_client': 'EL Client',
+        'cl_el_combined': 'CL+EL Combination',
+        'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type'
+    }
+    metric_label = _get_metric_label(metadata)
+    gname = group_names.get(grouping_dimension, grouping_dimension)
+
+    title = f'Head {metric_label} Density by {gname} (Ridgeline Plot)'
+    if title_suffix:
+        title += f' — {title_suffix}'
+
+    # Build compact subtitle
+    subtitle_parts = []
+    if network:
+        subtitle_parts.append(f'<b>{network}</b>')
+    if time_range:
+        subtitle_parts.append(time_range)
+    if metadata and 'total_slots' in metadata:
+        subtitle_parts.append(f'{metadata["total_slots"]:,} slots')
+
+    subtitle_line1 = '  •  '.join(subtitle_parts) if subtitle_parts else None
+
+    # Add filter descriptions
+    filter_parts = []
+    if proposer_filters:
+        filter_desc = _format_filter_description("Proposed by", proposer_filters)
+        filter_parts.append(filter_desc)
+    if attester_filters:
+        filter_desc = _format_filter_description("Attested by", attester_filters)
+        filter_parts.append(filter_desc)
+
+    subtitle_line2 = '  |  '.join(filter_parts) if filter_parts else None
+
+    # Build title with integrated subtitle
+    subtitle_html = []
+    if subtitle_line1:
+        subtitle_html.append(f'<span style="font-size: 12px; color: #666;">{subtitle_line1}</span>')
+    if subtitle_line2:
+        subtitle_html.append(f'<span style="font-size: 11px; color: #888;">{subtitle_line2}</span>')
+
+    if subtitle_html:
+        title = title + '<br>' + '<br>'.join(subtitle_html)
+
+    # Set up y-axis labels for each group
+    y_tick_vals = [i * y_step for i in range(len(unique_groups))]
+    y_tick_labels = [group_labels.get(g, str(g)) for g in unique_groups]
+
+    fig.update_layout(
+        title=dict(
+            text=title,
+            x=0,
+            xanchor='left',
+            font=dict(size=16)
+        ),
+        height=max(350, 120 * len(unique_groups)),  # Dynamic height based on number of groups
+        showlegend=True,
+        legend=dict(
+            title=dict(text='Blob Buckets'),
+            orientation='v',
+            yanchor='top',
+            y=0.95,
+            xanchor='left',
+            x=1.02,
+            bgcolor='rgba(255,255,255,0.9)',
+            bordercolor='rgba(0,0,0,0.3)',
+            borderwidth=1
+        ),
+        hovermode='closest',
+        xaxis=dict(
+            showline=True,
+            linewidth=1,
+            linecolor='black',
+            ticks='outside',
+            title='Head Correctness (%)',
+            range=[0, 100],
+            showgrid=True,
+            gridcolor='rgba(200,200,200,0.3)',
+            dtick=10
+        ),
+        yaxis=dict(
+            tickmode='array',
+            tickvals=y_tick_vals,
+            ticktext=y_tick_labels,
+            showline=False,
+            showgrid=False,
+            zeroline=False,
+            range=[-0.2, (len(unique_groups) - 1) * y_step + ridge_height + 0.2]
+        ),
+        margin=dict(r=180, t=120, l=150, b=80),
+        plot_bgcolor='white'
+    )
+
+    # Add logo
+    fig.add_layout_image(
+        dict(
+            source='https://ethpandaops.io/img/logo-slim.png',
+            xref='paper',
+            yref='paper',
+            x=0.02,
+            y=0.98,
+            sizex=0.08,
+            sizey=0.08,
+            xanchor='left',
+            yanchor='top'
+        )
+    )
+
     return fig
 
 
@@ -1023,7 +1389,8 @@ def create_head_correctness_ecdf(
         'cl_client': 'CL Client',
         'el_client': 'EL Client',
         'cl_el_combined': 'CL+EL Combination',
-        'cl_node_type': 'CL+Node Type'
+        'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type'
     }
     metric_label = _get_metric_label(metadata)
     gname = group_names.get(grouping_dimension, grouping_dimension)
@@ -1283,7 +1650,8 @@ def create_head_correctness_inverse_cdf(
         'cl_client': 'CL Client',
         'el_client': 'EL Client',
         'cl_el_combined': 'CL+EL Combination',
-        'cl_node_type': 'CL+Node Type'
+        'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type'
     }
     gname = group_names.get(grouping_dimension, grouping_dimension)
     
@@ -1470,9 +1838,9 @@ def create_head_correctness_summary(
                 correctness_values = bucket_df["head_correctness_pct"].values
                 
                 # Calculate statistics
-                total_slots = len(correctness_values)
+                total_slots = bucket_df['slot'].nunique()  # Count unique slots
                 slots_above_threshold = np.sum(correctness_values >= performance_threshold)
-                pct_above_threshold = (slots_above_threshold / total_slots * 100) if total_slots > 0 else 0
+                pct_above_threshold = (slots_above_threshold / len(correctness_values) * 100) if len(correctness_values) > 0 else 0
                 
                 mean_val = np.mean(correctness_values)
                 median_val = np.median(correctness_values)
@@ -1540,6 +1908,7 @@ def create_head_correctness_summary(
             "el_client": "EL Client",
             "cl_el_combined": "CL+EL Combination",
             "cl_node_type": "CL+Node Type",
+            "el_node_type": "EL+Node Type",
             "block_building": "Block Building Method",
             "node_type_mev": "Node Type + Block Building",
             "cl_node_type_mev": "CL+Node Type + Block Building"
@@ -1699,7 +2068,7 @@ def create_head_correctness_bar(
             if not bucket_df.empty:
                 bucket_means.append(bucket_df["head_correctness_pct"].mean())
                 bucket_stds.append(bucket_df["head_correctness_pct"].std())
-                bucket_counts.append(len(bucket_df))
+                bucket_counts.append(bucket_df['slot'].nunique())  # Count unique slots
             else:
                 bucket_means.append(0)
                 bucket_stds.append(0)
@@ -1757,7 +2126,29 @@ def create_head_correctness_bar(
             hovertemplate=hover_texts,
             hovertext=hover_texts
         ))
-    
+
+    # Add sample count annotations
+    # Aggregate counts for each bucket across all groups
+    bucket_totals = {}
+    for group_data in bar_data:
+        for i, bucket in enumerate(group_data["buckets"]):
+            if bucket not in bucket_totals:
+                bucket_totals[bucket] = 0
+            bucket_totals[bucket] += group_data["counts"][i]
+
+    # Add annotations for each bucket
+    for bucket in bucket_order:
+        if bucket in bucket_totals:
+            fig.add_annotation(
+                x=bucket,
+                y=-0.12,  # Position below the plot area
+                text=f"({bucket_totals[bucket]:,} slots)",
+                showarrow=False,
+                font=dict(size=10, color='#333'),
+                xref='x',
+                yref='paper'
+            )
+
     # Determine if showing correctness or incorrectness
     is_incorrect = metadata and metadata.get('view_mode') == 'incorrect'
     metric_label = _get_metric_label(metadata)
@@ -1810,7 +2201,10 @@ def create_head_correctness_bar(
         ),
         barmode='group',
         xaxis=dict(
-            title='All Blob Counts' if num_buckets == 1 else 'Blob Count Bucket',
+            title=dict(
+                text='All Blob Counts' if num_buckets == 1 else 'Blob Count Bucket',
+                standoff=25
+            ),
             tickmode='array',
             tickvals=bucket_order,
             ticktext=bucket_order,
@@ -1845,7 +2239,7 @@ def create_head_correctness_bar(
         bargap=0.15,
         bargroupgap=0.1,
         hovermode='x unified',
-        margin=dict(r=200, t=140, l=80, b=80)
+        margin=dict(r=200, t=140, l=80, b=100)
     )
     
     # Add logo
@@ -1874,6 +2268,7 @@ def _get_grouping_label(grouping_dimension: str) -> str:
         'el_client': 'EL Client',
         'cl_el_combined': 'CL+EL Combination',
         'cl_node_type': 'CL+Node Type',
+        'el_node_type': 'EL+Node Type',
         'block_building': 'Block Building Method',
         'node_type_mev': 'Node Type + MEV',
         'cl_node_type_mev': 'CL+Node Type + MEV'

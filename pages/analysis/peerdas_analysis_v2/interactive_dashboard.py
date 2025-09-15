@@ -8,6 +8,7 @@ proposer and attester characteristics.
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 import logging
@@ -38,6 +39,7 @@ from plot_generators import (
     create_head_correctness_boxplot,
     create_head_correctness_chart,
     create_head_correctness_violin,
+    create_head_correctness_ridgeline,
     create_advanced_grouped_boxplot,
     create_head_correctness_ecdf,
     create_head_correctness_cdf,
@@ -210,8 +212,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Attester grouping (new)
     attester_grouping = st.sidebar.selectbox(
         "Attester Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type'].index(
+        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'el_node_type'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'el_node_type'].index(
             url_config.get('attester_grouping', 'none')
         ),
         format_func=lambda x: {
@@ -220,7 +222,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'cl_client': 'CL Client',
             'el_client': 'EL Client',
             'cl_el_combined': 'CL+EL Combination',
-            'cl_node_type': 'CL+Node Type'
+            'cl_node_type': 'CL+Node Type',
+            'el_node_type': 'EL+Node Type'
         }[x],
         help="Group attestations by attester characteristics"
     )
@@ -249,7 +252,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         key="peerdas_v2_start_time",
         step=300  # 5 minute steps
     )
-    
+
     # End Time
     st.sidebar.subheader("End Time")
     end_col1, end_col2 = st.sidebar.columns(2)
@@ -338,13 +341,14 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     chart_type = st.sidebar.selectbox(
         "Chart Type",
-        options=['boxplot', 'violin', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'],
-        index=['boxplot', 'violin', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'].index(
+        options=['boxplot', 'violin', 'ridgeline', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'],
+        index=['boxplot', 'violin', 'ridgeline', 'scatter', 'bar', 'ecdf_diff', 'cdf', 'summary'].index(
             url_config.get('chart_type', 'boxplot')
         ),
         format_func=lambda x: {
             'boxplot': 'Box Plot Distribution',
             'violin': 'Violin Plot Distribution',
+            'ridgeline': 'Ridgeline Plot (Joy Plot)',
             'scatter': 'Scatter Plot with Trend',
             'bar': 'Bar Chart Comparison',
             'ecdf_diff': 'Difference ECDF',
@@ -636,13 +640,54 @@ def main():
                 st.info("The URL has been updated with your current configuration. Copy the URL from your browser's address bar to share this exact view.")
                 st.code(f"Configuration loaded at: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}")
             
+            # Pre-calculate unique slot counts per bucket from combined data
+            # This ensures consistent counts between proposer and attester charts
+            # Use only proposer data (or the first data type) to avoid double-counting slots
+            bucket_slot_counts = {}
+            if 'blob_count' in data.columns and 'slot' in data.columns:
+                # If we have data_type column, use only one type to avoid double-counting
+                count_data = data
+                if 'data_type' in data.columns:
+                    # Prefer proposer data if available, otherwise use first type
+                    if 'proposer' in data['data_type'].values:
+                        count_data = data[data['data_type'] == 'proposer'].copy()
+                    else:
+                        first_type = data['data_type'].iloc[0]
+                        count_data = data[data['data_type'] == first_type].copy()
+
+                if config.get('num_buckets') == 1:
+                    # Single bucket
+                    bucket_slot_counts['All'] = count_data['slot'].nunique()
+                elif config.get('num_buckets') and config.get('num_buckets') > 1:
+                    # Multiple buckets - calculate for each
+                    max_blobs = int(count_data['blob_count'].max())
+                    min_blobs = int(count_data['blob_count'].min())
+                    edges = np.linspace(min_blobs, max_blobs + 1, config.get('num_buckets') + 1)
+                    edges = np.unique(np.floor(edges).astype(int))
+                    data_temp = count_data.copy()
+                    data_temp['blob_bucket'] = pd.cut(data_temp['blob_count'], bins=edges, include_lowest=True, right=False)
+                    data_temp['blob_bucket_label'] = data_temp['blob_bucket'].apply(
+                        lambda x: f"{int(x.left)}-{int(x.right-1)}" if pd.notna(x) else "Unknown"
+                    )
+                    for bucket_label in data_temp['blob_bucket_label'].unique():
+                        if pd.notna(bucket_label):
+                            bucket_data = data_temp[data_temp['blob_bucket_label'] == bucket_label]
+                            bucket_slot_counts[bucket_label] = bucket_data['slot'].nunique()
+                else:
+                    # No bucketing - count by individual blob counts
+                    for blob_count in sorted(count_data['blob_count'].dropna().unique()):
+                        bucket_data = count_data[count_data['blob_count'] == blob_count]
+                        bucket_slot_counts[blob_count] = bucket_data['slot'].nunique()
+
             # Prepare metadata
             metadata = {
                 'total_slots': st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0),
                 'total_slots_analyzed': st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0),
                 'filtered_out_slots': st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0),
                 'view_mode': config.get('view_mode', 'correct'),
-                'view_mode_label': view_mode_label
+                'view_mode_label': view_mode_label,
+                'unique_slots_in_data': data['slot'].nunique() if 'slot' in data.columns else 0,  # Track actual unique slots
+                'bucket_slot_counts': bucket_slot_counts  # Pre-calculated slot counts per bucket
             }
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
@@ -682,6 +727,18 @@ def main():
                     )
                 elif config['chart_type'] == 'violin':
                     return create_head_correctness_violin(
+                        data=data_subset,
+                        num_buckets=config.get('num_buckets'),
+                        network=config['network'],
+                        time_range=time_range,
+                        metadata=metadata,
+                        grouping_dimension=grouping_dim,
+                        proposer_filters=proposer_filters,
+                        attester_filters=attester_filters,
+                        title_suffix=f"({data_type_label.capitalize()} Grouping)"
+                    )
+                elif config['chart_type'] == 'ridgeline':
+                    return create_head_correctness_ridgeline(
                         data=data_subset,
                         num_buckets=config.get('num_buckets'),
                         network=config['network'],
@@ -749,6 +806,10 @@ def main():
                 # We have both - create separate charts
                 proposer_data = data[data['data_type'] == 'proposer'].copy()
                 attester_data = data[data['data_type'] == 'attester'].copy()
+
+                # Debug: Log unique slot counts
+                logger.info(f"Proposer data: {len(proposer_data)} rows, {proposer_data['slot'].nunique()} unique slots")
+                logger.info(f"Attester data: {len(attester_data)} rows, {attester_data['slot'].nunique()} unique slots")
                 
                 # Display proposer chart first
                 proposer_fig = create_chart_for_data_type(

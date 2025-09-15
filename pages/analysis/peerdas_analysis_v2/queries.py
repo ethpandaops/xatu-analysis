@@ -43,18 +43,16 @@ def _get_mev_slots_cte() -> str:
 
 
 def _get_committee_members_cte() -> str:
-    """CTE for getting committee members with optional validator filter."""
+    """CTE for getting committee members with optional validator filter.
+
+    NOTE: Only uses canonical_beacon_committee table. The beacon_api_eth_v1_beacon_committee
+    table has been found to contain duplicate/corrupt data that incorrectly inflates
+    committee sizes and causes head correctness to be underreported.
+    """
     return """
     committee_members AS (
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM canonical_beacon_committee
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-      {validator_filter}
-      UNION DISTINCT
-      SELECT slot, arrayJoin(validators) AS validator_index
-      FROM beacon_api_eth_v1_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s
@@ -85,13 +83,18 @@ def _get_eligible_slots_filtered_cte(include_proposer: bool = True) -> str:
 
 
 def _get_attested_unique_cte() -> str:
-    """CTE for getting unique attestations and checking correctness."""
+    """CTE for getting unique attestations and checking correctness.
+
+    NOTE: Only uses canonical_beacon_elaborated_attestation for efficiency and consistency.
+    Other attestation sources (libp2p_gossipsub_beacon_attestation, beacon_api_eth_v1_events_attestation)
+    have been removed to improve query performance.
+    """
     return """
     attested_unique AS (
       -- Get attestations and check correctness in one step
       -- Only count attestations from validators who were assigned to attest in this slot
-      SELECT 
-        a.slot AS slot, 
+      SELECT
+        a.slot AS slot,
         a.validator_index AS validator_index,
         maxIf(1, a.beacon_block_root = e.block_root) AS correct_vote
       FROM (
@@ -100,22 +103,6 @@ def _get_attested_unique_cte() -> str:
         WHERE meta_network_name = %(network)s
           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot GLOBAL IN %(eligible_slots)s
-        {validator_filter}
-        UNION ALL
-        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-        FROM libp2p_gossipsub_beacon_attestation
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-          AND attesting_validator_index IS NOT NULL
-        {validator_filter}
-        UNION ALL
-        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-        FROM beacon_api_eth_v1_events_attestation
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-          AND attesting_validator_index IS NOT NULL
         {validator_filter}
       ) a
       LEFT JOIN eligible_slots e ON a.slot = e.slot
@@ -253,16 +240,10 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       {{proposer_map_union_selects}}
     ),
     -- Committee members for filtering to valid slots only
+    -- NOTE: Only uses canonical_beacon_committee to avoid duplicate/corrupt data issues
     committee_members AS (
       SELECT slot, arrayJoin(validators) AS validator_index
       FROM canonical_beacon_committee
-      WHERE meta_network_name = %(network)s
-        AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-        AND slot GLOBAL IN %(eligible_slots)s
-      {{validator_filter}}
-      UNION DISTINCT
-      SELECT slot, arrayJoin(validators) AS validator_index
-      FROM beacon_api_eth_v1_beacon_committee
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s
@@ -289,8 +270,9 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     attested_unique AS (
       -- Get attestations and check correctness in one step
       -- Only count attestations from validators who were assigned to attest in this slot
-      SELECT 
-        a.slot AS slot, 
+      -- NOTE: Only uses canonical_beacon_elaborated_attestation for efficiency
+      SELECT
+        a.slot AS slot,
         a.validator_index AS validator_index,
         maxIf(1, a.beacon_block_root = e.block_root) AS correct_vote
       FROM (
@@ -299,22 +281,6 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
         WHERE meta_network_name = %(network)s
           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot GLOBAL IN %(eligible_slots)s
-        {{validator_filter}}
-        UNION ALL
-        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-        FROM libp2p_gossipsub_beacon_attestation
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-          AND attesting_validator_index IS NOT NULL
-        {{validator_filter}}
-        UNION ALL
-        SELECT slot, attesting_validator_index AS validator_index, beacon_block_root
-        FROM beacon_api_eth_v1_events_attestation
-        WHERE meta_network_name = %(network)s
-          AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-          AND slot GLOBAL IN %(eligible_slots)s
-          AND attesting_validator_index IS NOT NULL
         {{validator_filter}}
       ) a
       LEFT JOIN eligible_slots e ON a.slot = e.slot
@@ -546,8 +512,8 @@ def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
     This groups validators by their node characteristics and calculates
     head correctness for each group across all slots.
     
-    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'cl_el_combined'
-    
+    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'cl_el_combined' | 'cl_node_type' | 'el_node_type'
+
     Requires inline attester mapping injected as {attester_map_union_selects}, e.g.,
       SELECT 12345 AS validator_index, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client
       UNION ALL  
@@ -563,7 +529,8 @@ def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
             'cl_client': "am.cl_client",
             'el_client': "am.el_client",
             'cl_el_combined': "concat(am.cl_client, '-', am.el_client)",
-            'cl_node_type': "concat(am.cl_client, '-', am.node_type)"
+            'cl_node_type': "concat(am.cl_client, '-', am.node_type)",
+            'el_node_type': "concat(am.el_client, '-', am.node_type)"
         }.get(group_by, "am.node_type")
     
     # Build CTEs properly - need to handle the placeholder replacements

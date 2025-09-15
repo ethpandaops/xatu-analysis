@@ -820,15 +820,11 @@ def load_head_correctness_data(
     
     # Check if committee data exists FIRST - REQUIRED for accurate head correctness
     committee_check_sql = """
-    SELECT 
-        (SELECT COUNT(*) FROM canonical_beacon_committee 
-         WHERE meta_network_name = %(network)s 
+    SELECT
+        (SELECT COUNT(*) FROM canonical_beacon_committee
+         WHERE meta_network_name = %(network)s
            AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-         LIMIT 1) as canonical_count,
-        (SELECT COUNT(*) FROM beacon_api_eth_v1_beacon_committee
-         WHERE meta_network_name = %(network)s 
-           AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
-         LIMIT 1) as beacon_api_count
+         LIMIT 1) as canonical_count
     """
     committee_params = {
         'network': network,
@@ -836,22 +832,20 @@ def load_head_correctness_data(
         'end_date': end_date,
     }
     committee_check = pd.read_sql(committee_check_sql, conn, params=committee_params)
-    if committee_check.iloc[0]['canonical_count'] == 0 and committee_check.iloc[0]['beacon_api_count'] == 0:
+    if committee_check.iloc[0]['canonical_count'] == 0:
         st.error(f"""
         ❌ **No committee data available for {network} in the selected time range**
-        
-        Head correctness calculation requires committee data to identify which validators 
-        were scheduled to attest in each slot. Without this data, we cannot distinguish 
+
+        Head correctness calculation requires committee data to identify which validators
+        were scheduled to attest in each slot. Without this data, we cannot distinguish
         between:
         - Validators attesting in their assigned slot (correct)
         - Validators from slot N+1 voting for slot N's block (incorrect, inflates metrics)
-        
-        Committee data is missing from both:
-        - `canonical_beacon_committee` 
-        - `beacon_api_eth_v1_beacon_committee`
-        
+
+        Committee data is missing from `canonical_beacon_committee` table.
+
         For the time range: {start_date} to {end_date}
-        
+
         **Try selecting a different time range or check data collection for {network}.**
         """)
         return pd.DataFrame()
@@ -1114,9 +1108,27 @@ def load_head_correctness_data(
                 attester_sql = get_head_correctness_per_slot_attester_grouped_query(group_by=attester_grouping_dimension)
                 attester_sql = attester_sql.replace('%(eligible_slots)s', slots_str)
                 attester_sql = attester_sql.replace('{attester_map_union_selects}', attester_map_sql)
-                # Remove the validator_filter placeholder lines entirely to avoid SQL formatting issues
-                attester_sql = attester_sql.replace('\n      {validator_filter}', '')
-                attester_sql = attester_sql.replace('{validator_filter}', '')
+
+                # Apply validator filter for attester filtering - SAME AS PROPOSER QUERY
+                # Build validator filter from the attester-filtered validator ranges
+                filter_result = build_validator_filter_ranges(validator_ranges)
+                if filter_result:
+                    parts = filter_result.split('|||')
+                    validator_cte = parts[0] if len(parts) > 0 else ""
+                    validator_where = parts[1] if len(parts) > 1 else ""
+
+                    # Add the CTE to the query
+                    if validator_cte:
+                        # Find the WITH clause and add our CTE
+                        if "WITH" in attester_sql:
+                            attester_sql = attester_sql.replace("WITH", f"WITH {validator_cte},", 1)
+                        else:
+                            attester_sql = f"WITH {validator_cte}\n{attester_sql}"
+
+                    logger.info(f"Attester query: Applying attester filter using {len(validator_ranges)} ranges")
+                    attester_sql = attester_sql.replace('{validator_filter}', f"\n      {validator_where}" if validator_where else '')
+                else:
+                    attester_sql = attester_sql.replace('{validator_filter}', '')
                 
                 # Debug: Log first part of query to check formatting
                 logger.debug(f"First 500 chars of attester SQL: {attester_sql[:500]}")
@@ -1142,7 +1154,7 @@ def load_head_correctness_data(
                     attester_df['group_key'] = attester_df['group_key'].astype(str)
                     if attester_grouping_dimension == 'node_type':
                         attester_df['group_label'] = attester_df['group_key'].map({
-                            'supernode': 'Supernode', 
+                            'supernode': 'Supernode',
                             'regular': 'Regular Node'
                         }).fillna(attester_df['group_key'])
                     elif attester_grouping_dimension == 'cl_client':
@@ -1163,6 +1175,16 @@ def load_head_correctness_data(
                                     return f"{cl.title()} + {node_type_label}"
                             return s
                         attester_df['group_label'] = attester_df['group_key'].apply(format_cl_node_type)
+                    elif attester_grouping_dimension == 'el_node_type':
+                        def format_el_node_type(s):
+                            if isinstance(s, str) and '-' in s:
+                                parts = s.split('-')
+                                if len(parts) == 2:
+                                    el, node_type = parts
+                                    node_type_label = 'Supernode' if node_type == 'supernode' else 'Regular'
+                                    return f"{el.title()} + {node_type_label}"
+                            return s
+                        attester_df['group_label'] = attester_df['group_key'].apply(format_el_node_type)
                     else:
                         attester_df['group_label'] = attester_df['group_key']
                     
