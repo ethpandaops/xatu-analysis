@@ -1,506 +1,1481 @@
 version: '1.0'
 nodes:
   bootnode-1:
-    groups: [bootnode, tx_fuzz_txs]
-    tags: [supernode]
-    attributes: {ansible_host: 178.62.239.100, ipv6: '2a03:b0c0:2:f0::ca97:1001',
-      cloud: digitalocean, cloud_region: ams3, supernode: true}
+    groups:
+    - bootnode
+    - tx_fuzz_txs
+    tags:
+    - supernode
+    attributes:
+      ansible_host: 178.62.239.100
+      ipv6: 2a03:b0c0:2:f0::ca97:1001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: true
     validator_range: null
   grandine-besu-1:
-    groups: [grandine_besu, stopped_nodes]
-    tags: [supernode, 'cl:grandine', 'el:besu']
-    attributes: {ansible_host: 134.199.163.129, ipv6: '2400:6180:10:200::664c:d000',
-      cloud: digitalocean, cloud_region: syd1, supernode: true}
-    validator_range: {start: 496, end: 504, count: 8}
+    groups:
+    - grandine_besu
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:grandine
+    - el:besu
+    attributes:
+      ansible_host: 134.199.163.129
+      ipv6: 2400:6180:10:200::664c:d000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: true
+    validator_range:
+      start: 496
+      end: 504
+      count: 8
   grandine-besu-2:
-    groups: [grandine_besu]
-    tags: ['cl:grandine', 'el:besu']
-    attributes: {ansible_host: 170.64.150.17, ipv6: '2400:6180:10:200::664c:e000',
-      cloud: digitalocean, cloud_region: syd1, supernode: false}
-    validator_range: {start: 504, end: 512, count: 8}
+    groups:
+    - grandine_besu
+    tags:
+    - cl:grandine
+    - el:besu
+    attributes:
+      ansible_host: 170.64.150.17
+      ipv6: 2400:6180:10:200::664c:e000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: false
+    validator_range:
+      start: 504
+      end: 512
+      count: 8
   grandine-erigon-1:
-    groups: [grandine_erigon, stopped_nodes]
-    tags: [supernode, 'cl:grandine', 'el:erigon']
-    attributes: {ansible_host: 137.184.77.88, ipv6: '2604:a880:400:d1:0:2:8407:8001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 544, end: 552, count: 8}
+    groups:
+    - grandine_erigon
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:grandine
+    - el:erigon
+    attributes:
+      ansible_host: 137.184.77.88
+      ipv6: 2604:a880:400:d1:0:2:8407:8001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 544
+      end: 552
+      count: 8
   grandine-erigon-2:
-    groups: [grandine_erigon]
-    tags: ['cl:grandine', 'el:erigon']
-    attributes: {ansible_host: 128.199.243.149, ipv6: '2400:6180:0:d2:0:2:24d9:d000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 552, end: 560, count: 8}
+    groups:
+    - grandine_erigon
+    tags:
+    - cl:grandine
+    - el:erigon
+    attributes:
+      ansible_host: 128.199.243.149
+      ipv6: 2400:6180:0:d2:0:2:24d9:d000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 552
+      end: 560
+      count: 8
   grandine-geth-1:
-    groups: [grandine_geth]
-    tags: [supernode, 'cl:grandine', 'el:geth']
-    attributes: {ansible_host: 46.101.214.222, ipv6: '2a03:b0c0:3:f0:0:1:1b11:a000',
-      cloud: digitalocean, cloud_region: fra1, supernode: true}
-    validator_range: {start: 480, end: 488, count: 8}
+    groups:
+    - grandine_geth
+    tags:
+    - supernode
+    - cl:grandine
+    - el:geth
+    attributes:
+      ansible_host: 46.101.214.222
+      ipv6: 2a03:b0c0:3:f0:0:1:1b11:a000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: true
+    validator_range:
+      start: 480
+      end: 488
+      count: 8
   grandine-geth-2:
-    groups: [grandine_geth]
-    tags: ['cl:grandine', 'el:geth']
-    attributes: {ansible_host: 209.38.198.0, ipv6: '2a03:b0c0:3:f0:0:1:1b11:d000',
-      cloud: digitalocean, cloud_region: fra1, supernode: false}
-    validator_range: {start: 488, end: 496, count: 8}
+    groups:
+    - grandine_geth
+    tags:
+    - cl:grandine
+    - el:geth
+    attributes:
+      ansible_host: 209.38.198.0
+      ipv6: 2a03:b0c0:3:f0:0:1:1b11:d000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: false
+    validator_range:
+      start: 488
+      end: 496
+      count: 8
   grandine-nethermind-1:
-    groups: [grandine_nethermind]
-    tags: [supernode, 'cl:grandine', 'el:nethermind']
-    attributes: {ansible_host: 137.184.107.165, ipv6: '2604:a880:400:d1:0:2:8407:e001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 512, end: 520, count: 8}
+    groups:
+    - grandine_nethermind
+    tags:
+    - supernode
+    - cl:grandine
+    - el:nethermind
+    attributes:
+      ansible_host: 137.184.107.165
+      ipv6: 2604:a880:400:d1:0:2:8407:e001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 512
+      end: 520
+      count: 8
   grandine-nethermind-2:
-    groups: [grandine_nethermind]
-    tags: ['cl:grandine', 'el:nethermind']
-    attributes: {ansible_host: 24.199.84.132, ipv6: '2604:a880:400:d1:0:2:8409:f001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: false}
-    validator_range: {start: 520, end: 528, count: 8}
+    groups:
+    - grandine_nethermind
+    tags:
+    - cl:grandine
+    - el:nethermind
+    attributes:
+      ansible_host: 24.199.84.132
+      ipv6: 2604:a880:400:d1:0:2:8409:f001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: false
+    validator_range:
+      start: 520
+      end: 528
+      count: 8
   grandine-nimbusel-1:
-    groups: [grandine_nimbusel, stopped_nodes]
-    tags: [supernode, 'cl:grandine', 'cl:nimbus', 'el:nimbusel']
-    attributes: {ansible_host: 167.99.224.233, ipv6: '2604:a880:400:d1:0:2:8408:1001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 528, end: 544, count: 16}
+    groups:
+    - grandine_nimbusel
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:grandine
+    - el:nimbusel
+    attributes:
+      ansible_host: 167.99.224.233
+      ipv6: 2604:a880:400:d1:0:2:8408:1001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 528
+      end: 544
+      count: 16
   grandine-reth-1:
-    groups: [grandine_reth]
-    tags: [supernode, 'cl:grandine', 'el:reth']
-    attributes: {ansible_host: 134.209.148.242, ipv6: '2400:6180:100:d0::9de5:2001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 560, end: 568, count: 8}
+    groups:
+    - grandine_reth
+    tags:
+    - supernode
+    - cl:grandine
+    - el:reth
+    attributes:
+      ansible_host: 134.209.148.242
+      ipv6: 2400:6180:100:d0::9de5:2001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 560
+      end: 568
+      count: 8
   grandine-reth-2:
-    groups: [grandine_reth]
-    tags: ['cl:grandine', 'el:reth']
-    attributes: {ansible_host: 139.59.76.222, ipv6: '2400:6180:100:d0::9de4:c001',
-      cloud: digitalocean, cloud_region: blr1, supernode: false}
-    validator_range: {start: 568, end: 576, count: 8}
+    groups:
+    - grandine_reth
+    tags:
+    - cl:grandine
+    - el:reth
+    attributes:
+      ansible_host: 139.59.76.222
+      ipv6: 2400:6180:100:d0::9de4:c001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 568
+      end: 576
+      count: 8
   lighthouse-besu-1:
-    groups: [lighthouse_besu]
-    tags: [supernode, 'cl:lighthouse', 'el:besu']
-    attributes: {ansible_host: 142.93.131.83, ipv6: '2a03:b0c0:2:f0::ca96:b001', cloud: digitalocean,
-      cloud_region: ams3, supernode: true}
-    validator_range: {start: 16, end: 24, count: 8}
+    groups:
+    - lighthouse_besu
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:besu
+    attributes:
+      ansible_host: 142.93.131.83
+      ipv6: 2a03:b0c0:2:f0::ca96:b001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: true
+    validator_range:
+      start: 16
+      end: 24
+      count: 8
   lighthouse-besu-2:
-    groups: [lighthouse_besu]
-    tags: ['cl:lighthouse', 'el:besu']
-    attributes: {ansible_host: 146.190.24.90, ipv6: '2a03:b0c0:2:f0::ca96:f001', cloud: digitalocean,
-      cloud_region: ams3, supernode: false}
-    validator_range: {start: 24, end: 32, count: 8}
+    groups:
+    - lighthouse_besu
+    tags:
+    - cl:lighthouse
+    - el:besu
+    attributes:
+      ansible_host: 146.190.24.90
+      ipv6: 2a03:b0c0:2:f0::ca96:f001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: false
+    validator_range:
+      start: 24
+      end: 32
+      count: 8
   lighthouse-erigon-1:
-    groups: [lighthouse_erigon]
-    tags: [supernode, 'cl:lighthouse', 'el:erigon']
-    attributes: {ansible_host: 68.183.119.118, ipv6: '2604:a880:400:d1:0:2:8407:7001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 64, end: 72, count: 8}
+    groups:
+    - lighthouse_erigon
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:erigon
+    attributes:
+      ansible_host: 68.183.119.118
+      ipv6: 2604:a880:400:d1:0:2:8407:7001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 64
+      end: 72
+      count: 8
   lighthouse-erigon-2:
-    groups: [lighthouse_erigon]
-    tags: ['cl:lighthouse', 'el:erigon']
-    attributes: {ansible_host: 152.42.195.58, ipv6: '2400:6180:0:d2:0:2:24da:3000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 72, end: 80, count: 8}
+    groups:
+    - lighthouse_erigon
+    tags:
+    - cl:lighthouse
+    - el:erigon
+    attributes:
+      ansible_host: 152.42.195.58
+      ipv6: 2400:6180:0:d2:0:2:24da:3000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 72
+      end: 80
+      count: 8
   lighthouse-geth-1:
-    groups: [lighthouse_geth, stopped_nodes]
-    tags: [supernode, 'cl:lighthouse', 'el:geth']
-    attributes: {ansible_host: 142.93.244.202, ipv6: '2604:a880:400:d1:0:2:8407:b001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 0, end: 8, count: 8}
+    groups:
+    - lighthouse_geth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:geth
+    attributes:
+      ansible_host: 142.93.244.202
+      ipv6: 2604:a880:400:d1:0:2:8407:b001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 0
+      end: 8
+      count: 8
   lighthouse-geth-2:
-    groups: [lighthouse_geth, blobber]
-    tags: ['cl:lighthouse', 'el:geth']
-    attributes: {ansible_host: 134.122.22.50, ipv6: '2604:a880:400:d1:0:2:8407:d001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: false}
-    validator_range: {start: 8, end: 16, count: 8}
+    groups:
+    - lighthouse_geth
+    - blobber
+    tags:
+    - cl:lighthouse
+    - el:geth
+    attributes:
+      ansible_host: 134.122.22.50
+      ipv6: 2604:a880:400:d1:0:2:8407:d001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: false
+    validator_range:
+      start: 8
+      end: 16
+      count: 8
   lighthouse-nethermind-1:
-    groups: [lighthouse_nethermind, stopped_nodes]
-    tags: [supernode, 'cl:lighthouse', 'el:nethermind']
-    attributes: {ansible_host: 128.199.242.20, ipv6: '2400:6180:0:d2:0:2:24da:2000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: true}
-    validator_range: {start: 32, end: 40, count: 8}
+    groups:
+    - lighthouse_nethermind
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:nethermind
+    attributes:
+      ansible_host: 128.199.242.20
+      ipv6: 2400:6180:0:d2:0:2:24da:2000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: true
+    validator_range:
+      start: 32
+      end: 40
+      count: 8
   lighthouse-nethermind-2:
-    groups: [lighthouse_nethermind]
-    tags: ['cl:lighthouse', 'el:nethermind']
-    attributes: {ansible_host: 139.59.107.234, ipv6: '2400:6180:0:d2:0:2:24da:0',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 40, end: 48, count: 8}
+    groups:
+    - lighthouse_nethermind
+    tags:
+    - cl:lighthouse
+    - el:nethermind
+    attributes:
+      ansible_host: 139.59.107.234
+      ipv6: 2400:6180:0:d2:0:2:24da:0
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 40
+      end: 48
+      count: 8
   lighthouse-nimbusel-1:
-    groups: [lighthouse_nimbusel, stopped_nodes]
-    tags: [supernode, 'cl:lighthouse', 'cl:nimbus', 'el:nimbusel']
-    attributes: {ansible_host: 147.182.211.241, ipv6: '2604:a880:400:d1:0:2:8408:5001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 48, end: 64, count: 16}
+    groups:
+    - lighthouse_nimbusel
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:nimbusel
+    attributes:
+      ansible_host: 147.182.211.241
+      ipv6: 2604:a880:400:d1:0:2:8408:5001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 48
+      end: 64
+      count: 16
   lighthouse-reth-1:
-    groups: [lighthouse_reth, stopped_nodes]
-    tags: [supernode, 'cl:lighthouse', 'el:reth']
-    attributes: {ansible_host: 138.68.130.19, ipv6: '2a03:b0c0:1:e0::963d:e001', cloud: digitalocean,
-      cloud_region: lon1, supernode: true}
-    validator_range: {start: 80, end: 88, count: 8}
+    groups:
+    - lighthouse_reth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:reth
+    attributes:
+      ansible_host: 138.68.130.19
+      ipv6: 2a03:b0c0:1:e0::963d:e001
+      cloud: digitalocean
+      cloud_region: lon1
+      supernode: true
+    validator_range:
+      start: 80
+      end: 88
+      count: 8
   lighthouse-reth-2:
-    groups: [lighthouse_reth]
-    tags: ['cl:lighthouse', 'el:reth']
-    attributes: {ansible_host: 159.65.60.119, ipv6: '2a03:b0c0:1:e0::963d:d001', cloud: digitalocean,
-      cloud_region: lon1, supernode: false}
-    validator_range: {start: 88, end: 96, count: 8}
+    groups:
+    - lighthouse_reth
+    tags:
+    - cl:lighthouse
+    - el:reth
+    attributes:
+      ansible_host: 159.65.60.119
+      ipv6: 2a03:b0c0:1:e0::963d:d001
+      cloud: digitalocean
+      cloud_region: lon1
+      supernode: false
+    validator_range:
+      start: 88
+      end: 96
+      count: 8
   mev-relay-1:
-    groups: [lighthouse_reth, mev_relay]
-    tags: [supernode, 'cl:lighthouse', 'el:reth']
-    attributes: {ansible_host: 206.81.6.4, ipv6: '2604:a880:400:d1:0:2:8408:4001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
+    groups:
+    - lighthouse_reth
+    - mev_relay
+    tags:
+    - supernode
+    - cl:lighthouse
+    - el:reth
+    attributes:
+      ansible_host: 206.81.6.4
+      ipv6: 2604:a880:400:d1:0:2:8408:4001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
     validator_range: null
   lodestar-besu-1:
-    groups: [lodestar_besu, stopped_nodes]
-    tags: [supernode, 'cl:lodestar', 'el:besu']
-    attributes: {ansible_host: 143.244.141.15, ipv6: '2400:6180:100:d0::9de4:e001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 224, end: 232, count: 8}
+    groups:
+    - lodestar_besu
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:besu
+    attributes:
+      ansible_host: 143.244.141.15
+      ipv6: 2400:6180:100:d0::9de4:e001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 224
+      end: 232
+      count: 8
   lodestar-besu-2:
-    groups: [lodestar_besu]
-    tags: ['cl:lodestar', 'el:besu']
-    attributes: {ansible_host: 64.227.131.250, ipv6: '2400:6180:100:d0::9de5:1', cloud: digitalocean,
-      cloud_region: blr1, supernode: false}
-    validator_range: {start: 232, end: 240, count: 8}
+    groups:
+    - lodestar_besu
+    tags:
+    - cl:lodestar
+    - el:besu
+    attributes:
+      ansible_host: 64.227.131.250
+      ipv6: 2400:6180:100:d0::9de5:1
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 232
+      end: 240
+      count: 8
   lodestar-erigon-1:
-    groups: [lodestar_erigon, stopped_nodes]
-    tags: [supernode, 'cl:lodestar', 'el:erigon']
-    attributes: {ansible_host: 104.248.122.2, ipv6: '2604:a880:400:d1:0:2:840a:3001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 256, end: 264, count: 8}
+    groups:
+    - lodestar_erigon
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:erigon
+    attributes:
+      ansible_host: 104.248.122.2
+      ipv6: 2604:a880:400:d1:0:2:840a:3001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 256
+      end: 264
+      count: 8
   lodestar-erigon-2:
-    groups: [lodestar_erigon]
-    tags: ['cl:lodestar', 'el:erigon']
-    attributes: {ansible_host: 128.199.121.72, ipv6: '2400:6180:0:d2:0:2:24da:6000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 264, end: 272, count: 8}
+    groups:
+    - lodestar_erigon
+    tags:
+    - cl:lodestar
+    - el:erigon
+    attributes:
+      ansible_host: 128.199.121.72
+      ipv6: 2400:6180:0:d2:0:2:24da:6000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 264
+      end: 272
+      count: 8
   lodestar-geth-1:
-    groups: [lodestar_geth]
-    tags: [supernode, 'cl:lodestar', 'el:geth']
-    attributes: {ansible_host: 137.184.169.82, ipv6: '2604:a880:cad:d0::dfc7:7001',
-      cloud: digitalocean, cloud_region: tor1, supernode: true}
-    validator_range: {start: 192, end: 200, count: 8}
+    groups:
+    - lodestar_geth
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:geth
+    attributes:
+      ansible_host: 137.184.169.82
+      ipv6: 2604:a880:cad:d0::dfc7:7001
+      cloud: digitalocean
+      cloud_region: tor1
+      supernode: true
+    validator_range:
+      start: 192
+      end: 200
+      count: 8
   lodestar-geth-2:
-    groups: [lodestar_geth, stopped_nodes]
-    tags: ['cl:lodestar', 'el:geth']
-    attributes: {ansible_host: 68.183.200.53, ipv6: '2604:a880:cad:d0::dfc7:8001',
-      cloud: digitalocean, cloud_region: tor1, supernode: false}
-    validator_range: {start: 200, end: 208, count: 8}
+    groups:
+    - lodestar_geth
+    - stopped_nodes
+    tags:
+    - cl:lodestar
+    - el:geth
+    attributes:
+      ansible_host: 68.183.200.53
+      ipv6: 2604:a880:cad:d0::dfc7:8001
+      cloud: digitalocean
+      cloud_region: tor1
+      supernode: false
+    validator_range:
+      start: 200
+      end: 208
+      count: 8
   lodestar-nethermind-1:
-    groups: [lodestar_nethermind]
-    tags: [supernode, 'cl:lodestar', 'el:nethermind']
-    attributes: {ansible_host: 64.227.166.21, ipv6: '2400:6180:100:d0::9de5:4001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 208, end: 216, count: 8}
+    groups:
+    - lodestar_nethermind
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:nethermind
+    attributes:
+      ansible_host: 64.227.166.21
+      ipv6: 2400:6180:100:d0::9de5:4001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 208
+      end: 216
+      count: 8
   lodestar-nethermind-2:
-    groups: [lodestar_nethermind, stopped_nodes]
-    tags: ['cl:lodestar', 'el:nethermind']
-    attributes: {ansible_host: 206.189.132.33, ipv6: '2400:6180:100:d0::9de4:f001',
-      cloud: digitalocean, cloud_region: blr1, supernode: false}
-    validator_range: {start: 216, end: 224, count: 8}
+    groups:
+    - lodestar_nethermind
+    - stopped_nodes
+    tags:
+    - cl:lodestar
+    - el:nethermind
+    attributes:
+      ansible_host: 206.189.132.33
+      ipv6: 2400:6180:100:d0::9de4:f001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 216
+      end: 224
+      count: 8
   lodestar-nimbusel-1:
-    groups: [lodestar_nimbusel, stopped_nodes]
-    tags: [supernode, 'cl:lodestar', 'cl:nimbus', 'el:nimbusel']
-    attributes: {ansible_host: 159.89.51.192, ipv6: '2604:a880:400:d1:0:2:840a:1001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 240, end: 256, count: 16}
+    groups:
+    - lodestar_nimbusel
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:nimbusel
+    attributes:
+      ansible_host: 159.89.51.192
+      ipv6: 2604:a880:400:d1:0:2:840a:1001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 240
+      end: 256
+      count: 16
   lodestar-reth-1:
-    groups: [lodestar_reth]
-    tags: [supernode, 'cl:lodestar', 'el:reth']
-    attributes: {ansible_host: 64.227.150.112, ipv6: '2400:6180:100:d0::9de4:9001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 272, end: 280, count: 8}
+    groups:
+    - lodestar_reth
+    tags:
+    - supernode
+    - cl:lodestar
+    - el:reth
+    attributes:
+      ansible_host: 64.227.150.112
+      ipv6: 2400:6180:100:d0::9de4:9001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 272
+      end: 280
+      count: 8
   lodestar-reth-2:
-    groups: [lodestar_reth]
-    tags: ['cl:lodestar', 'el:reth']
-    attributes: {ansible_host: 157.245.107.106, ipv6: '2400:6180:100:d0::9de4:b001',
-      cloud: digitalocean, cloud_region: blr1, supernode: false}
-    validator_range: {start: 280, end: 288, count: 8}
+    groups:
+    - lodestar_reth
+    tags:
+    - cl:lodestar
+    - el:reth
+    attributes:
+      ansible_host: 157.245.107.106
+      ipv6: 2400:6180:100:d0::9de4:b001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 280
+      end: 288
+      count: 8
   nimbus-besu-1:
-    groups: [nimbus_besu]
-    tags: [supernode, 'cl:nimbus', 'el:besu']
-    attributes: {ansible_host: 134.199.164.239, ipv6: '2400:6180:10:200::664c:b000',
-      cloud: digitalocean, cloud_region: syd1, supernode: true}
-    validator_range: {start: 304, end: 312, count: 8}
+    groups:
+    - nimbus_besu
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:besu
+    attributes:
+      ansible_host: 134.199.164.239
+      ipv6: 2400:6180:10:200::664c:b000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: true
+    validator_range:
+      start: 304
+      end: 312
+      count: 8
   nimbus-besu-2:
-    groups: [nimbus_besu]
-    tags: ['cl:nimbus', 'el:besu']
-    attributes: {ansible_host: 209.38.90.97, ipv6: '2400:6180:10:200::664c:9000',
-      cloud: digitalocean, cloud_region: syd1, supernode: false}
-    validator_range: {start: 312, end: 320, count: 8}
+    groups:
+    - nimbus_besu
+    tags:
+    - cl:nimbus
+    - el:besu
+    attributes:
+      ansible_host: 209.38.90.97
+      ipv6: 2400:6180:10:200::664c:9000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: false
+    validator_range:
+      start: 312
+      end: 320
+      count: 8
   nimbus-erigon-1:
-    groups: [nimbus_erigon]
-    tags: [supernode, 'cl:nimbus', 'el:erigon']
-    attributes: {ansible_host: 159.223.115.94, ipv6: '2604:a880:400:d1:0:2:8408:2001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 352, end: 360, count: 8}
+    groups:
+    - nimbus_erigon
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:erigon
+    attributes:
+      ansible_host: 159.223.115.94
+      ipv6: 2604:a880:400:d1:0:2:8408:2001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 352
+      end: 360
+      count: 8
   nimbus-erigon-2:
-    groups: [nimbus_erigon]
-    tags: ['cl:nimbus', 'el:erigon']
-    attributes: {ansible_host: 159.223.80.76, ipv6: '2400:6180:0:d2:0:2:24d9:f000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 360, end: 368, count: 8}
+    groups:
+    - nimbus_erigon
+    tags:
+    - cl:nimbus
+    - el:erigon
+    attributes:
+      ansible_host: 159.223.80.76
+      ipv6: 2400:6180:0:d2:0:2:24d9:f000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 360
+      end: 368
+      count: 8
   nimbus-geth-1:
-    groups: [nimbus_geth, stopped_nodes]
-    tags: [supernode, 'cl:nimbus', 'el:geth']
-    attributes: {ansible_host: 137.184.188.24, ipv6: '2604:a880:4:1d0::dd30:3000',
-      cloud: digitalocean, cloud_region: sfo3, supernode: true}
-    validator_range: {start: 288, end: 296, count: 8}
+    groups:
+    - nimbus_geth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:geth
+    attributes:
+      ansible_host: 137.184.188.24
+      ipv6: 2604:a880:4:1d0::dd30:3000
+      cloud: digitalocean
+      cloud_region: sfo3
+      supernode: true
+    validator_range:
+      start: 288
+      end: 296
+      count: 8
   nimbus-geth-2:
-    groups: [nimbus_geth, stopped_nodes]
-    tags: ['cl:nimbus', 'el:geth']
-    attributes: {ansible_host: 137.184.180.24, ipv6: '2604:a880:4:1d0::dd30:4000',
-      cloud: digitalocean, cloud_region: sfo3, supernode: false}
-    validator_range: {start: 296, end: 304, count: 8}
+    groups:
+    - nimbus_geth
+    - stopped_nodes
+    tags:
+    - cl:nimbus
+    - el:geth
+    attributes:
+      ansible_host: 137.184.180.24
+      ipv6: 2604:a880:4:1d0::dd30:4000
+      cloud: digitalocean
+      cloud_region: sfo3
+      supernode: false
+    validator_range:
+      start: 296
+      end: 304
+      count: 8
   nimbus-nethermind-1:
-    groups: [nimbus_nethermind, stopped_nodes]
-    tags: [supernode, 'cl:nimbus', 'el:nethermind']
-    attributes: {ansible_host: 134.199.145.230, ipv6: '2400:6180:10:200::664d:0',
-      cloud: digitalocean, cloud_region: syd1, supernode: true}
-    validator_range: {start: 320, end: 328, count: 8}
+    groups:
+    - nimbus_nethermind
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:nethermind
+    attributes:
+      ansible_host: 134.199.145.230
+      ipv6: 2400:6180:10:200::664d:0
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: true
+    validator_range:
+      start: 320
+      end: 328
+      count: 8
   nimbus-nethermind-2:
-    groups: [nimbus_nethermind]
-    tags: ['cl:nimbus', 'el:nethermind']
-    attributes: {ansible_host: 134.199.152.249, ipv6: '2400:6180:10:200::664c:f000',
-      cloud: digitalocean, cloud_region: syd1, supernode: false}
-    validator_range: {start: 328, end: 336, count: 8}
+    groups:
+    - nimbus_nethermind
+    tags:
+    - cl:nimbus
+    - el:nethermind
+    attributes:
+      ansible_host: 134.199.152.249
+      ipv6: 2400:6180:10:200::664c:f000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: false
+    validator_range:
+      start: 328
+      end: 336
+      count: 8
   nimbus-nimbusel-1:
-    groups: [nimbus_nimbusel, stopped_nodes]
-    tags: [supernode, 'cl:nimbus', 'el:nimbusel']
-    attributes: {ansible_host: 137.184.211.135, ipv6: '2604:a880:400:d1:0:2:8407:6001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 336, end: 352, count: 16}
+    groups:
+    - nimbus_nimbusel
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:nimbusel
+    attributes:
+      ansible_host: 137.184.211.135
+      ipv6: 2604:a880:400:d1:0:2:8407:6001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 336
+      end: 352
+      count: 16
   nimbus-reth-1:
-    groups: [nimbus_reth, stopped_nodes]
-    tags: [supernode, 'cl:nimbus', 'el:reth']
-    attributes: {ansible_host: 167.71.230.19, ipv6: '2400:6180:100:d0::9de4:a001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 368, end: 376, count: 8}
+    groups:
+    - nimbus_reth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:nimbus
+    - el:reth
+    attributes:
+      ansible_host: 167.71.230.19
+      ipv6: 2400:6180:100:d0::9de4:a001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 368
+      end: 376
+      count: 8
   nimbus-reth-2:
-    groups: [nimbus_reth]
-    tags: ['cl:nimbus', 'el:reth']
-    attributes: {ansible_host: 143.110.250.33, ipv6: '2400:6180:100:d0::9de5:3001',
-      cloud: digitalocean, cloud_region: blr1, supernode: false}
-    validator_range: {start: 376, end: 384, count: 8}
+    groups:
+    - nimbus_reth
+    tags:
+    - cl:nimbus
+    - el:reth
+    attributes:
+      ansible_host: 143.110.250.33
+      ipv6: 2400:6180:100:d0::9de5:3001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 376
+      end: 384
+      count: 8
   prysm-besu-1:
-    groups: [prysm_besu, stopped_nodes]
-    tags: [supernode, 'cl:prysm', 'el:besu']
-    attributes: {ansible_host: 206.189.10.188, ipv6: '2a03:b0c0:2:f0::ca96:e001',
-      cloud: digitalocean, cloud_region: ams3, supernode: true}
-    validator_range: {start: 112, end: 120, count: 8}
+    groups:
+    - prysm_besu
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:prysm
+    - el:besu
+    attributes:
+      ansible_host: 206.189.10.188
+      ipv6: 2a03:b0c0:2:f0::ca96:e001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: true
+    validator_range:
+      start: 112
+      end: 120
+      count: 8
   prysm-besu-2:
-    groups: [prysm_besu]
-    tags: ['cl:prysm', 'el:besu']
-    attributes: {ansible_host: 209.38.109.31, ipv6: '2a03:b0c0:2:f0::ca96:d001', cloud: digitalocean,
-      cloud_region: ams3, supernode: false}
-    validator_range: {start: 120, end: 128, count: 8}
+    groups:
+    - prysm_besu
+    tags:
+    - cl:prysm
+    - el:besu
+    attributes:
+      ansible_host: 209.38.109.31
+      ipv6: 2a03:b0c0:2:f0::ca96:d001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: false
+    validator_range:
+      start: 120
+      end: 128
+      count: 8
   prysm-erigon-1:
-    groups: [prysm_erigon, stopped_nodes]
-    tags: [supernode, 'cl:prysm', 'el:erigon']
-    attributes: {ansible_host: 159.89.54.130, ipv6: '2604:a880:400:d1:0:2:8407:c001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 160, end: 168, count: 8}
+    groups:
+    - prysm_erigon
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:prysm
+    - el:erigon
+    attributes:
+      ansible_host: 159.89.54.130
+      ipv6: 2604:a880:400:d1:0:2:8407:c001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 160
+      end: 168
+      count: 8
   prysm-erigon-2:
-    groups: [prysm_erigon, stopped_nodes]
-    tags: ['cl:prysm', 'el:erigon']
-    attributes: {ansible_host: 188.166.231.238, ipv6: '2400:6180:0:d2:0:2:24da:1000',
-      cloud: digitalocean, cloud_region: sgp1, supernode: false}
-    validator_range: {start: 168, end: 176, count: 8}
+    groups:
+    - prysm_erigon
+    - stopped_nodes
+    tags:
+    - cl:prysm
+    - el:erigon
+    attributes:
+      ansible_host: 188.166.231.238
+      ipv6: 2400:6180:0:d2:0:2:24da:1000
+      cloud: digitalocean
+      cloud_region: sgp1
+      supernode: false
+    validator_range:
+      start: 168
+      end: 176
+      count: 8
   prysm-geth-1:
-    groups: [prysm_geth]
-    tags: [supernode, 'cl:prysm', 'el:geth']
-    attributes: {ansible_host: 174.138.80.76, ipv6: '2604:a880:800:14:0:1:8239:a000',
-      cloud: digitalocean, cloud_region: nyc3, supernode: true}
-    validator_range: {start: 96, end: 104, count: 8}
+    groups:
+    - prysm_geth
+    tags:
+    - supernode
+    - cl:prysm
+    - el:geth
+    attributes:
+      ansible_host: 174.138.80.76
+      ipv6: 2604:a880:800:14:0:1:8239:a000
+      cloud: digitalocean
+      cloud_region: nyc3
+      supernode: true
+    validator_range:
+      start: 96
+      end: 104
+      count: 8
   prysm-geth-2:
-    groups: [prysm_geth]
-    tags: ['cl:prysm', 'el:geth']
-    attributes: {ansible_host: 165.227.110.16, ipv6: '2604:a880:800:14:0:1:8239:b000',
-      cloud: digitalocean, cloud_region: nyc3, supernode: false}
-    validator_range: {start: 104, end: 112, count: 8}
+    groups:
+    - prysm_geth
+    tags:
+    - cl:prysm
+    - el:geth
+    attributes:
+      ansible_host: 165.227.110.16
+      ipv6: 2604:a880:800:14:0:1:8239:b000
+      cloud: digitalocean
+      cloud_region: nyc3
+      supernode: false
+    validator_range:
+      start: 104
+      end: 112
+      count: 8
   prysm-nethermind-1:
-    groups: [prysm_nethermind]
-    tags: [supernode, 'cl:prysm', 'el:nethermind']
-    attributes: {ansible_host: 152.42.133.145, ipv6: '2a03:b0c0:2:f0::ca97:2001',
-      cloud: digitalocean, cloud_region: ams3, supernode: true}
-    validator_range: {start: 128, end: 136, count: 8}
+    groups:
+    - prysm_nethermind
+    tags:
+    - supernode
+    - cl:prysm
+    - el:nethermind
+    attributes:
+      ansible_host: 152.42.133.145
+      ipv6: 2a03:b0c0:2:f0::ca97:2001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: true
+    validator_range:
+      start: 128
+      end: 136
+      count: 8
   prysm-nethermind-2:
-    groups: [prysm_nethermind]
-    tags: ['cl:prysm', 'el:nethermind']
-    attributes: {ansible_host: 128.199.46.153, ipv6: '2a03:b0c0:2:f0::ca96:8001',
-      cloud: digitalocean, cloud_region: ams3, supernode: false}
-    validator_range: {start: 136, end: 144, count: 8}
+    groups:
+    - prysm_nethermind
+    tags:
+    - cl:prysm
+    - el:nethermind
+    attributes:
+      ansible_host: 128.199.46.153
+      ipv6: 2a03:b0c0:2:f0::ca96:8001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: false
+    validator_range:
+      start: 136
+      end: 144
+      count: 8
   prysm-nimbusel-1:
-    groups: [prysm_nimbusel, stopped_nodes]
-    tags: [supernode, 'cl:nimbus', 'cl:prysm', 'el:nimbusel']
-    attributes: {ansible_host: 147.182.169.114, ipv6: '2604:a880:400:d1:0:2:8408:1',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 144, end: 160, count: 16}
+    groups:
+    - prysm_nimbusel
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:prysm
+    - el:nimbusel
+    attributes:
+      ansible_host: 147.182.169.114
+      ipv6: 2604:a880:400:d1:0:2:8408:1
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 144
+      end: 160
+      count: 16
   prysm-reth-1:
-    groups: [prysm_reth]
-    tags: [supernode, 'cl:prysm', 'el:reth']
-    attributes: {ansible_host: 138.68.102.19, ipv6: '2a03:b0c0:3:f0:0:1:1b11:b000',
-      cloud: digitalocean, cloud_region: fra1, supernode: true}
-    validator_range: {start: 176, end: 184, count: 8}
+    groups:
+    - prysm_reth
+    tags:
+    - supernode
+    - cl:prysm
+    - el:reth
+    attributes:
+      ansible_host: 138.68.102.19
+      ipv6: 2a03:b0c0:3:f0:0:1:1b11:b000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: true
+    validator_range:
+      start: 176
+      end: 184
+      count: 8
   prysm-reth-2:
-    groups: [prysm_reth, stopped_nodes]
-    tags: ['cl:prysm', 'el:reth']
-    attributes: {ansible_host: 46.101.251.214, ipv6: '2a03:b0c0:3:f0:0:1:1b11:7000',
-      cloud: digitalocean, cloud_region: fra1, supernode: false}
-    validator_range: {start: 184, end: 192, count: 8}
+    groups:
+    - prysm_reth
+    - stopped_nodes
+    tags:
+    - cl:prysm
+    - el:reth
+    attributes:
+      ansible_host: 46.101.251.214
+      ipv6: 2a03:b0c0:3:f0:0:1:1b11:7000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: false
+    validator_range:
+      start: 184
+      end: 192
+      count: 8
   teku-besu-1:
-    groups: [teku_besu]
-    tags: [supernode, 'cl:teku', 'el:besu']
-    attributes: {ansible_host: 209.38.88.251, ipv6: '2400:6180:10:200::664d:1000',
-      cloud: digitalocean, cloud_region: syd1, supernode: true}
-    validator_range: {start: 400, end: 408, count: 8}
+    groups:
+    - teku_besu
+    tags:
+    - supernode
+    - cl:teku
+    - el:besu
+    attributes:
+      ansible_host: 209.38.88.251
+      ipv6: 2400:6180:10:200::664d:1000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: true
+    validator_range:
+      start: 400
+      end: 408
+      count: 8
   teku-besu-2:
-    groups: [teku_besu]
-    tags: ['cl:teku', 'el:besu']
-    attributes: {ansible_host: 134.199.151.178, ipv6: '2400:6180:10:200::664c:c000',
-      cloud: digitalocean, cloud_region: syd1, supernode: false}
-    validator_range: {start: 408, end: 416, count: 8}
+    groups:
+    - teku_besu
+    tags:
+    - cl:teku
+    - el:besu
+    attributes:
+      ansible_host: 134.199.151.178
+      ipv6: 2400:6180:10:200::664c:c000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: false
+    validator_range:
+      start: 408
+      end: 416
+      count: 8
   teku-erigon-1:
-    groups: [teku_erigon]
-    tags: [supernode, 'cl:teku', 'el:erigon']
-    attributes: {ansible_host: 139.59.78.193, ipv6: '2400:6180:100:d0::9de5:1001',
-      cloud: digitalocean, cloud_region: blr1, supernode: true}
-    validator_range: {start: 448, end: 456, count: 8}
+    groups:
+    - teku_erigon
+    tags:
+    - supernode
+    - cl:teku
+    - el:erigon
+    attributes:
+      ansible_host: 139.59.78.193
+      ipv6: 2400:6180:100:d0::9de5:1001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: true
+    validator_range:
+      start: 448
+      end: 456
+      count: 8
   teku-erigon-2:
-    groups: [teku_erigon, stopped_nodes]
-    tags: ['cl:teku', 'el:erigon']
-    attributes: {ansible_host: 68.183.94.49, ipv6: '2400:6180:100:d0::9de4:d001',
-      cloud: digitalocean, cloud_region: blr1, supernode: false}
-    validator_range: {start: 456, end: 464, count: 8}
+    groups:
+    - teku_erigon
+    - stopped_nodes
+    tags:
+    - cl:teku
+    - el:erigon
+    attributes:
+      ansible_host: 68.183.94.49
+      ipv6: 2400:6180:100:d0::9de4:d001
+      cloud: digitalocean
+      cloud_region: blr1
+      supernode: false
+    validator_range:
+      start: 456
+      end: 464
+      count: 8
   teku-geth-1:
-    groups: [teku_geth, stopped_nodes]
-    tags: [supernode, 'cl:teku', 'el:geth']
-    attributes: {ansible_host: 46.101.198.197, ipv6: '2a03:b0c0:3:f0:0:1:1b12:3000',
-      cloud: digitalocean, cloud_region: fra1, supernode: true}
-    validator_range: {start: 384, end: 392, count: 8}
+    groups:
+    - teku_geth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:teku
+    - el:geth
+    attributes:
+      ansible_host: 46.101.198.197
+      ipv6: 2a03:b0c0:3:f0:0:1:1b12:3000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: true
+    validator_range:
+      start: 384
+      end: 392
+      count: 8
   teku-geth-2:
-    groups: [teku_geth]
-    tags: ['cl:teku', 'el:geth']
-    attributes: {ansible_host: 209.38.249.244, ipv6: '2a03:b0c0:3:f0:0:1:1b11:9000',
-      cloud: digitalocean, cloud_region: fra1, supernode: false}
-    validator_range: {start: 392, end: 400, count: 8}
+    groups:
+    - teku_geth
+    tags:
+    - cl:teku
+    - el:geth
+    attributes:
+      ansible_host: 209.38.249.244
+      ipv6: 2a03:b0c0:3:f0:0:1:1b11:9000
+      cloud: digitalocean
+      cloud_region: fra1
+      supernode: false
+    validator_range:
+      start: 392
+      end: 400
+      count: 8
   teku-nethermind-1:
-    groups: [teku_nethermind, stopped_nodes]
-    tags: [supernode, 'cl:teku', 'el:nethermind']
-    attributes: {ansible_host: 128.199.52.206, ipv6: '2a03:b0c0:2:f0::ca97:1', cloud: digitalocean,
-      cloud_region: ams3, supernode: true}
-    validator_range: {start: 416, end: 424, count: 8}
+    groups:
+    - teku_nethermind
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:teku
+    - el:nethermind
+    attributes:
+      ansible_host: 128.199.52.206
+      ipv6: 2a03:b0c0:2:f0::ca97:1
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: true
+    validator_range:
+      start: 416
+      end: 424
+      count: 8
   teku-nethermind-2:
-    groups: [teku_nethermind]
-    tags: ['cl:teku', 'el:nethermind']
-    attributes: {ansible_host: 167.99.223.80, ipv6: '2a03:b0c0:2:f0::ca96:9001', cloud: digitalocean,
-      cloud_region: ams3, supernode: false}
-    validator_range: {start: 424, end: 432, count: 8}
+    groups:
+    - teku_nethermind
+    tags:
+    - cl:teku
+    - el:nethermind
+    attributes:
+      ansible_host: 167.99.223.80
+      ipv6: 2a03:b0c0:2:f0::ca96:9001
+      cloud: digitalocean
+      cloud_region: ams3
+      supernode: false
+    validator_range:
+      start: 424
+      end: 432
+      count: 8
   teku-nimbusel-1:
-    groups: [teku_nimbusel]
-    tags: [supernode, 'cl:nimbus', 'cl:teku', 'el:nimbusel']
-    attributes: {ansible_host: 167.71.18.232, ipv6: '2604:a880:400:d1:0:2:8407:9001',
-      cloud: digitalocean, cloud_region: nyc1, supernode: true}
-    validator_range: {start: 432, end: 448, count: 16}
+    groups:
+    - teku_nimbusel
+    tags:
+    - supernode
+    - cl:teku
+    - el:nimbusel
+    attributes:
+      ansible_host: 167.71.18.232
+      ipv6: 2604:a880:400:d1:0:2:8407:9001
+      cloud: digitalocean
+      cloud_region: nyc1
+      supernode: true
+    validator_range:
+      start: 432
+      end: 448
+      count: 16
   teku-reth-1:
-    groups: [teku_reth, stopped_nodes]
-    tags: [supernode, 'cl:teku', 'el:reth']
-    attributes: {ansible_host: 134.199.166.212, ipv6: '2400:6180:10:200::664c:a000',
-      cloud: digitalocean, cloud_region: syd1, supernode: true}
-    validator_range: {start: 464, end: 472, count: 8}
+    groups:
+    - teku_reth
+    - stopped_nodes
+    tags:
+    - supernode
+    - cl:teku
+    - el:reth
+    attributes:
+      ansible_host: 134.199.166.212
+      ipv6: 2400:6180:10:200::664c:a000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: true
+    validator_range:
+      start: 464
+      end: 472
+      count: 8
   teku-reth-2:
-    groups: [teku_reth]
-    tags: ['cl:teku', 'el:reth']
-    attributes: {ansible_host: 134.199.153.170, ipv6: '2400:6180:10:200::664d:2000',
-      cloud: digitalocean, cloud_region: syd1, supernode: false}
-    validator_range: {start: 472, end: 480, count: 8}
-validators: {total_count: 576}
+    groups:
+    - teku_reth
+    tags:
+    - cl:teku
+    - el:reth
+    attributes:
+      ansible_host: 134.199.153.170
+      ipv6: 2400:6180:10:200::664d:2000
+      cloud: digitalocean
+      cloud_region: syd1
+      supernode: false
+    validator_range:
+      start: 472
+      end: 480
+      count: 8
+validators:
+  total_count: 576
 groups:
-  bootnode: [bootnode-1]
-  grandine_besu: [grandine-besu-1, grandine-besu-2]
-  grandine_erigon: [grandine-erigon-1, grandine-erigon-2]
-  grandine_geth: [grandine-geth-1, grandine-geth-2]
-  grandine_nethermind: [grandine-nethermind-1, grandine-nethermind-2]
-  grandine_nimbusel: [grandine-nimbusel-1]
-  grandine_reth: [grandine-reth-1, grandine-reth-2]
-  lighthouse_besu: [lighthouse-besu-1, lighthouse-besu-2]
-  lighthouse_erigon: [lighthouse-erigon-1, lighthouse-erigon-2]
-  lighthouse_geth: [lighthouse-geth-1, lighthouse-geth-2]
-  lighthouse_nethermind: [lighthouse-nethermind-1, lighthouse-nethermind-2]
-  lighthouse_nimbusel: [lighthouse-nimbusel-1]
-  lighthouse_reth: [lighthouse-reth-1, lighthouse-reth-2, mev-relay-1]
-  lodestar_besu: [lodestar-besu-1, lodestar-besu-2]
-  lodestar_erigon: [lodestar-erigon-1, lodestar-erigon-2]
-  lodestar_geth: [lodestar-geth-1, lodestar-geth-2]
-  lodestar_nethermind: [lodestar-nethermind-1, lodestar-nethermind-2]
-  lodestar_nimbusel: [lodestar-nimbusel-1]
-  lodestar_reth: [lodestar-reth-1, lodestar-reth-2]
-  mev_relay: [mev-relay-1]
-  nimbus_besu: [nimbus-besu-1, nimbus-besu-2]
-  nimbus_erigon: [nimbus-erigon-1, nimbus-erigon-2]
-  nimbus_geth: [nimbus-geth-1, nimbus-geth-2]
-  nimbus_nethermind: [nimbus-nethermind-1, nimbus-nethermind-2]
-  nimbus_nimbusel: [nimbus-nimbusel-1]
-  nimbus_reth: [nimbus-reth-1, nimbus-reth-2]
-  prysm_besu: [prysm-besu-1, prysm-besu-2]
-  prysm_erigon: [prysm-erigon-1, prysm-erigon-2]
-  prysm_geth: [prysm-geth-1, prysm-geth-2]
-  prysm_nethermind: [prysm-nethermind-1, prysm-nethermind-2]
-  prysm_nimbusel: [prysm-nimbusel-1]
-  prysm_reth: [prysm-reth-1, prysm-reth-2]
-  teku_besu: [teku-besu-1, teku-besu-2]
-  teku_erigon: [teku-erigon-1, teku-erigon-2]
-  teku_geth: [teku-geth-1, teku-geth-2]
-  teku_nethermind: [teku-nethermind-1, teku-nethermind-2]
-  teku_nimbusel: [teku-nimbusel-1]
-  teku_reth: [teku-reth-1, teku-reth-2]
+  bootnode:
+  - bootnode-1
+  grandine_besu:
+  - grandine-besu-1
+  - grandine-besu-2
+  grandine_erigon:
+  - grandine-erigon-1
+  - grandine-erigon-2
+  grandine_geth:
+  - grandine-geth-1
+  - grandine-geth-2
+  grandine_nethermind:
+  - grandine-nethermind-1
+  - grandine-nethermind-2
+  grandine_nimbusel:
+  - grandine-nimbusel-1
+  grandine_reth:
+  - grandine-reth-1
+  - grandine-reth-2
+  lighthouse_besu:
+  - lighthouse-besu-1
+  - lighthouse-besu-2
+  lighthouse_erigon:
+  - lighthouse-erigon-1
+  - lighthouse-erigon-2
+  lighthouse_geth:
+  - lighthouse-geth-1
+  - lighthouse-geth-2
+  lighthouse_nethermind:
+  - lighthouse-nethermind-1
+  - lighthouse-nethermind-2
+  lighthouse_nimbusel:
+  - lighthouse-nimbusel-1
+  lighthouse_reth:
+  - lighthouse-reth-1
+  - lighthouse-reth-2
+  - mev-relay-1
+  lodestar_besu:
+  - lodestar-besu-1
+  - lodestar-besu-2
+  lodestar_erigon:
+  - lodestar-erigon-1
+  - lodestar-erigon-2
+  lodestar_geth:
+  - lodestar-geth-1
+  - lodestar-geth-2
+  lodestar_nethermind:
+  - lodestar-nethermind-1
+  - lodestar-nethermind-2
+  lodestar_nimbusel:
+  - lodestar-nimbusel-1
+  lodestar_reth:
+  - lodestar-reth-1
+  - lodestar-reth-2
+  mev_relay:
+  - mev-relay-1
+  nimbus_besu:
+  - nimbus-besu-1
+  - nimbus-besu-2
+  nimbus_erigon:
+  - nimbus-erigon-1
+  - nimbus-erigon-2
+  nimbus_geth:
+  - nimbus-geth-1
+  - nimbus-geth-2
+  nimbus_nethermind:
+  - nimbus-nethermind-1
+  - nimbus-nethermind-2
+  nimbus_nimbusel:
+  - nimbus-nimbusel-1
+  nimbus_reth:
+  - nimbus-reth-1
+  - nimbus-reth-2
+  prysm_besu:
+  - prysm-besu-1
+  - prysm-besu-2
+  prysm_erigon:
+  - prysm-erigon-1
+  - prysm-erigon-2
+  prysm_geth:
+  - prysm-geth-1
+  - prysm-geth-2
+  prysm_nethermind:
+  - prysm-nethermind-1
+  - prysm-nethermind-2
+  prysm_nimbusel:
+  - prysm-nimbusel-1
+  prysm_reth:
+  - prysm-reth-1
+  - prysm-reth-2
+  teku_besu:
+  - teku-besu-1
+  - teku-besu-2
+  teku_erigon:
+  - teku-erigon-1
+  - teku-erigon-2
+  teku_geth:
+  - teku-geth-1
+  - teku-geth-2
+  teku_nethermind:
+  - teku-nethermind-1
+  - teku-nethermind-2
+  teku_nimbusel:
+  - teku-nimbusel-1
+  teku_reth:
+  - teku-reth-1
+  - teku-reth-2
   arm: []
-  blobber: [lighthouse-geth-2]
-  stopped_nodes: [grandine-besu-1, grandine-erigon-1, grandine-nimbusel-1, lighthouse-geth-1,
-    lighthouse-nethermind-1, lighthouse-reth-1, lighthouse-nimbusel-1, lodestar-besu-1,
-    lodestar-erigon-1, lodestar-nimbusel-1, nimbus-geth-1, nimbus-nethermind-1, nimbus-reth-1,
-    nimbus-nimbusel-1, prysm-besu-1, prysm-erigon-1, teku-geth-1, teku-nethermind-1,
-    teku-reth-1, prysm-reth-2, prysm-erigon-2, nimbus-geth-2, lodestar-nethermind-2,
-    prysm-nimbusel-1, teku-erigon-2, lodestar-geth-2]
-  tx_fuzz_txs: [bootnode-1]
+  blobber:
+  - lighthouse-geth-2
+  stopped_nodes:
+  - grandine-besu-1
+  - grandine-erigon-1
+  - grandine-nimbusel-1
+  - lighthouse-geth-1
+  - lighthouse-nethermind-1
+  - lighthouse-reth-1
+  - lighthouse-nimbusel-1
+  - lodestar-besu-1
+  - lodestar-erigon-1
+  - lodestar-nimbusel-1
+  - nimbus-geth-1
+  - nimbus-nethermind-1
+  - nimbus-reth-1
+  - nimbus-nimbusel-1
+  - prysm-besu-1
+  - prysm-erigon-1
+  - teku-geth-1
+  - teku-nethermind-1
+  - teku-reth-1
+  - prysm-reth-2
+  - prysm-erigon-2
+  - nimbus-geth-2
+  - lodestar-nethermind-2
+  - prysm-nimbusel-1
+  - teku-erigon-2
+  - lodestar-geth-2
+  tx_fuzz_txs:
+  - bootnode-1
 tags:
-  supernode: [bootnode-1, grandine-besu-1, grandine-erigon-1, grandine-geth-1, grandine-nethermind-1,
-    grandine-nimbusel-1, grandine-reth-1, lighthouse-besu-1, lighthouse-erigon-1,
-    lighthouse-geth-1, lighthouse-nethermind-1, lighthouse-nimbusel-1, lighthouse-reth-1,
-    lodestar-besu-1, lodestar-erigon-1, lodestar-geth-1, lodestar-nethermind-1, lodestar-nimbusel-1,
-    lodestar-reth-1, mev-relay-1, nimbus-besu-1, nimbus-erigon-1, nimbus-geth-1, nimbus-nethermind-1,
-    nimbus-nimbusel-1, nimbus-reth-1, prysm-besu-1, prysm-erigon-1, prysm-geth-1,
-    prysm-nethermind-1, prysm-nimbusel-1, prysm-reth-1, teku-besu-1, teku-erigon-1,
-    teku-geth-1, teku-nethermind-1, teku-nimbusel-1, teku-reth-1]
-  cl:grandine: [grandine-besu-1, grandine-besu-2, grandine-erigon-1, grandine-erigon-2,
-    grandine-geth-1, grandine-geth-2, grandine-nethermind-1, grandine-nethermind-2,
-    grandine-nimbusel-1, grandine-reth-1, grandine-reth-2]
-  el:besu: [grandine-besu-1, grandine-besu-2, lighthouse-besu-1, lighthouse-besu-2,
-    lodestar-besu-1, lodestar-besu-2, nimbus-besu-1, nimbus-besu-2, prysm-besu-1,
-    prysm-besu-2, teku-besu-1, teku-besu-2]
-  el:erigon: [grandine-erigon-1, grandine-erigon-2, lighthouse-erigon-1, lighthouse-erigon-2,
-    lodestar-erigon-1, lodestar-erigon-2, nimbus-erigon-1, nimbus-erigon-2, prysm-erigon-1,
-    prysm-erigon-2, teku-erigon-1, teku-erigon-2]
-  el:geth: [grandine-geth-1, grandine-geth-2, lighthouse-geth-1, lighthouse-geth-2,
-    lodestar-geth-1, lodestar-geth-2, nimbus-geth-1, nimbus-geth-2, prysm-geth-1,
-    prysm-geth-2, teku-geth-1, teku-geth-2]
-  el:nethermind: [grandine-nethermind-1, grandine-nethermind-2, lighthouse-nethermind-1,
-    lighthouse-nethermind-2, lodestar-nethermind-1, lodestar-nethermind-2, nimbus-nethermind-1,
-    nimbus-nethermind-2, prysm-nethermind-1, prysm-nethermind-2, teku-nethermind-1,
-    teku-nethermind-2]
-  cl:nimbus: [grandine-nimbusel-1, lighthouse-nimbusel-1, lodestar-nimbusel-1, nimbus-besu-1,
-    nimbus-besu-2, nimbus-erigon-1, nimbus-erigon-2, nimbus-geth-1, nimbus-geth-2,
-    nimbus-nethermind-1, nimbus-nethermind-2, nimbus-nimbusel-1, nimbus-reth-1, nimbus-reth-2,
-    prysm-nimbusel-1, teku-nimbusel-1]
-  el:nimbusel: [grandine-nimbusel-1, lighthouse-nimbusel-1, lodestar-nimbusel-1, nimbus-nimbusel-1,
-    prysm-nimbusel-1, teku-nimbusel-1]
-  el:reth: [grandine-reth-1, grandine-reth-2, lighthouse-reth-1, lighthouse-reth-2,
-    mev-relay-1, lodestar-reth-1, lodestar-reth-2, nimbus-reth-1, nimbus-reth-2, prysm-reth-1,
-    prysm-reth-2, teku-reth-1, teku-reth-2]
-  cl:lighthouse: [lighthouse-besu-1, lighthouse-besu-2, lighthouse-erigon-1, lighthouse-erigon-2,
-    lighthouse-geth-1, lighthouse-geth-2, lighthouse-nethermind-1, lighthouse-nethermind-2,
-    lighthouse-nimbusel-1, lighthouse-reth-1, lighthouse-reth-2, mev-relay-1]
-  cl:lodestar: [lodestar-besu-1, lodestar-besu-2, lodestar-erigon-1, lodestar-erigon-2,
-    lodestar-geth-1, lodestar-geth-2, lodestar-nethermind-1, lodestar-nethermind-2,
-    lodestar-nimbusel-1, lodestar-reth-1, lodestar-reth-2]
-  cl:prysm: [prysm-besu-1, prysm-besu-2, prysm-erigon-1, prysm-erigon-2, prysm-geth-1,
-    prysm-geth-2, prysm-nethermind-1, prysm-nethermind-2, prysm-nimbusel-1, prysm-reth-1,
-    prysm-reth-2]
-  cl:teku: [teku-besu-1, teku-besu-2, teku-erigon-1, teku-erigon-2, teku-geth-1, teku-geth-2,
-    teku-nethermind-1, teku-nethermind-2, teku-nimbusel-1, teku-reth-1, teku-reth-2]
-metadata: {ethereum_network_name: fusaka-devnet-3, source: 'https://raw.githubusercontent.com/ethpandaops/fusaka-devnets/refs/heads/master/ansible/inventories/devnet-3/inventory.ini',
-  network_name: fusaka-devnet-3}
+  supernode:
+  - bootnode-1
+  - grandine-besu-1
+  - grandine-erigon-1
+  - grandine-geth-1
+  - grandine-nethermind-1
+  - grandine-nimbusel-1
+  - grandine-reth-1
+  - lighthouse-besu-1
+  - lighthouse-erigon-1
+  - lighthouse-geth-1
+  - lighthouse-nethermind-1
+  - lighthouse-nimbusel-1
+  - lighthouse-reth-1
+  - lodestar-besu-1
+  - lodestar-erigon-1
+  - lodestar-geth-1
+  - lodestar-nethermind-1
+  - lodestar-nimbusel-1
+  - lodestar-reth-1
+  - mev-relay-1
+  - nimbus-besu-1
+  - nimbus-erigon-1
+  - nimbus-geth-1
+  - nimbus-nethermind-1
+  - nimbus-nimbusel-1
+  - nimbus-reth-1
+  - prysm-besu-1
+  - prysm-erigon-1
+  - prysm-geth-1
+  - prysm-nethermind-1
+  - prysm-nimbusel-1
+  - prysm-reth-1
+  - teku-besu-1
+  - teku-erigon-1
+  - teku-geth-1
+  - teku-nethermind-1
+  - teku-nimbusel-1
+  - teku-reth-1
+  cl:grandine:
+  - grandine-besu-1
+  - grandine-besu-2
+  - grandine-erigon-1
+  - grandine-erigon-2
+  - grandine-geth-1
+  - grandine-geth-2
+  - grandine-nethermind-1
+  - grandine-nethermind-2
+  - grandine-nimbusel-1
+  - grandine-reth-1
+  - grandine-reth-2
+  el:besu:
+  - grandine-besu-1
+  - grandine-besu-2
+  - lighthouse-besu-1
+  - lighthouse-besu-2
+  - lodestar-besu-1
+  - lodestar-besu-2
+  - nimbus-besu-1
+  - nimbus-besu-2
+  - prysm-besu-1
+  - prysm-besu-2
+  - teku-besu-1
+  - teku-besu-2
+  el:erigon:
+  - grandine-erigon-1
+  - grandine-erigon-2
+  - lighthouse-erigon-1
+  - lighthouse-erigon-2
+  - lodestar-erigon-1
+  - lodestar-erigon-2
+  - nimbus-erigon-1
+  - nimbus-erigon-2
+  - prysm-erigon-1
+  - prysm-erigon-2
+  - teku-erigon-1
+  - teku-erigon-2
+  el:geth:
+  - grandine-geth-1
+  - grandine-geth-2
+  - lighthouse-geth-1
+  - lighthouse-geth-2
+  - lodestar-geth-1
+  - lodestar-geth-2
+  - nimbus-geth-1
+  - nimbus-geth-2
+  - prysm-geth-1
+  - prysm-geth-2
+  - teku-geth-1
+  - teku-geth-2
+  el:nethermind:
+  - grandine-nethermind-1
+  - grandine-nethermind-2
+  - lighthouse-nethermind-1
+  - lighthouse-nethermind-2
+  - lodestar-nethermind-1
+  - lodestar-nethermind-2
+  - nimbus-nethermind-1
+  - nimbus-nethermind-2
+  - prysm-nethermind-1
+  - prysm-nethermind-2
+  - teku-nethermind-1
+  - teku-nethermind-2
+  el:nimbusel:
+  - grandine-nimbusel-1
+  - lighthouse-nimbusel-1
+  - lodestar-nimbusel-1
+  - nimbus-nimbusel-1
+  - prysm-nimbusel-1
+  - teku-nimbusel-1
+  el:reth:
+  - grandine-reth-1
+  - grandine-reth-2
+  - lighthouse-reth-1
+  - lighthouse-reth-2
+  - mev-relay-1
+  - lodestar-reth-1
+  - lodestar-reth-2
+  - nimbus-reth-1
+  - nimbus-reth-2
+  - prysm-reth-1
+  - prysm-reth-2
+  - teku-reth-1
+  - teku-reth-2
+  cl:lighthouse:
+  - lighthouse-besu-1
+  - lighthouse-besu-2
+  - lighthouse-erigon-1
+  - lighthouse-erigon-2
+  - lighthouse-geth-1
+  - lighthouse-geth-2
+  - lighthouse-nethermind-1
+  - lighthouse-nethermind-2
+  - lighthouse-nimbusel-1
+  - lighthouse-reth-1
+  - lighthouse-reth-2
+  - mev-relay-1
+  cl:lodestar:
+  - lodestar-besu-1
+  - lodestar-besu-2
+  - lodestar-erigon-1
+  - lodestar-erigon-2
+  - lodestar-geth-1
+  - lodestar-geth-2
+  - lodestar-nethermind-1
+  - lodestar-nethermind-2
+  - lodestar-nimbusel-1
+  - lodestar-reth-1
+  - lodestar-reth-2
+  cl:nimbus:
+  - nimbus-besu-1
+  - nimbus-besu-2
+  - nimbus-erigon-1
+  - nimbus-erigon-2
+  - nimbus-geth-1
+  - nimbus-geth-2
+  - nimbus-nethermind-1
+  - nimbus-nethermind-2
+  - nimbus-nimbusel-1
+  - nimbus-reth-1
+  - nimbus-reth-2
+  cl:prysm:
+  - prysm-besu-1
+  - prysm-besu-2
+  - prysm-erigon-1
+  - prysm-erigon-2
+  - prysm-geth-1
+  - prysm-geth-2
+  - prysm-nethermind-1
+  - prysm-nethermind-2
+  - prysm-nimbusel-1
+  - prysm-reth-1
+  - prysm-reth-2
+  cl:teku:
+  - teku-besu-1
+  - teku-besu-2
+  - teku-erigon-1
+  - teku-erigon-2
+  - teku-geth-1
+  - teku-geth-2
+  - teku-nethermind-1
+  - teku-nethermind-2
+  - teku-nimbusel-1
+  - teku-reth-1
+  - teku-reth-2
+metadata:
+  ethereum_network_name: fusaka-devnet-3
+  source: https://raw.githubusercontent.com/ethpandaops/fusaka-devnets/refs/heads/master/ansible/inventories/devnet-3/inventory.ini
+  network_name: fusaka-devnet-3

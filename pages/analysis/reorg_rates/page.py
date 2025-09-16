@@ -1,4 +1,4 @@
-# pages/analysis/peerdas_analysis/page.py
+# pages/analysis/reorg_rates/page.py
 import streamlit as st
 import sys
 import os
@@ -20,6 +20,6 @@ except ImportError as e:
     import traceback
     st.code(traceback.format_exc())
 except Exception as e:
-    st.error(f"Error running PeerDAS Analysis dashboard: {e}")
+    st.error(f"Error running Reorg Rates dashboard: {e}")
     import traceback
     st.code(traceback.format_exc())

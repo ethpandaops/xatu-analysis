@@ -1,4 +1,4 @@
-# pages/analysis/peerdas_analysis/page.py
+# pages/analysis/peerdas_analysis_v2/page.py
 import streamlit as st
 import sys
 import os
@@ -12,14 +12,14 @@ if current_dir not in sys.path:
 try:
     # Import with the directory in path
     from interactive_dashboard import main
-
+    
     # Run the dashboard
     main()
-
+    
 except ImportError as e:
     import traceback
     st.code(traceback.format_exc())
 except Exception as e:
-    st.error(f"Error running PeerDAS Analysis dashboard: {e}")
+    st.error(f"Error running Head Correctness dashboard: {e}")
     import traceback
     st.code(traceback.format_exc())

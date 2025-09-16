@@ -45,7 +45,6 @@ from plot_generators import (
 
 def main():
     """Main dashboard function."""
-    
     # Render the global header
     render_global_header()
     

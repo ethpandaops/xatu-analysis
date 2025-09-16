@@ -69,11 +69,23 @@ networks:
     description: "Hoodi development network"
     genesis_timestamp: 1742213400  # January 18, 2025, 11:30:00 AM UTC
     enabled: true
+  fusaka-devnet-3:
+    name: "Fusaka Devnet 3"
+    chain_id: null
+    description: "Fusaka development network"
+    genesis_timestamp: 1753281000
+    enabled: true
   fusaka-devnet-4:
     name: "Fusaka Devnet 4"
     chain_id: null
     description: "Fusaka development network"
     genesis_timestamp: 1754640000  # August 8, 2025, 08:00:00 AM UTC
+    enabled: true
+  fusaka-devnet-5:
+    name: "Fusaka Devnet 5"
+    chain_id: null
+    description: "Fusaka development network"
+    genesis_timestamp: 1757512800
     enabled: true
 
 # API integrations
