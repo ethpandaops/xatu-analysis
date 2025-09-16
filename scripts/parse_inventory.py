@@ -14,6 +14,7 @@ Example (multiple inventories):
 
 import argparse
 import copy
+import json
 import re
 import sys
 import yaml
@@ -265,56 +266,99 @@ def fetch_inventory(source: str) -> str:
             return f.read()
 
 
-def check_validator_overlaps(specs: List[Dict[str, Any]]) -> None:
+def check_validator_overlaps(merged_spec: Dict[str, Any]) -> List[Tuple[int, int]]:
     """
-    Check for overlapping validator ranges across multiple inventory specs.
+    Check for overlapping validator ranges in the merged spec.
 
     Args:
-        specs: List of parsed network specifications
+        merged_spec: Merged network specification
+
+    Returns:
+        List of overlapping ranges as tuples (start, end)
 
     Raises:
         ValueError: If overlapping validator ranges are detected
     """
-    # Collect all validator ranges with their source info
+    # Collect all validator ranges
     validator_ranges = []
 
-    for idx, spec in enumerate(specs):
-        source = spec['metadata'].get('source', f'inventory_{idx}')
-        for node_name, node_data in spec['nodes'].items():
-            if node_data.get('validator_range'):
-                vrange = node_data['validator_range']
-                validator_ranges.append({
-                    'start': vrange['start'],
-                    'end': vrange['end'],
-                    'node': node_name,
-                    'source': source
-                })
+    for node_name, node_data in merged_spec['nodes'].items():
+        if node_data.get('validator_range'):
+            vrange = node_data['validator_range']
+            validator_ranges.append({
+                'start': vrange['start'],
+                'end': vrange['end'],
+                'node': node_name
+            })
 
     # Check for overlaps
+    overlaps = []
     for i, range1 in enumerate(validator_ranges):
         for j, range2 in enumerate(validator_ranges[i+1:], i+1):
             # Check if ranges overlap
-            # Ranges overlap if one starts before the other ends
             if not (range1['end'] <= range2['start'] or range2['end'] <= range1['start']):
                 overlap_start = max(range1['start'], range2['start'])
                 overlap_end = min(range1['end'], range2['end'])
-                raise ValueError(
-                    f"Validator range overlap detected!\n"
-                    f"  Node '{range1['node']}' from {range1['source']}: "
-                    f"[{range1['start']}, {range1['end']})\n"
-                    f"  Node '{range2['node']}' from {range2['source']}: "
-                    f"[{range2['start']}, {range2['end']})\n"
-                    f"  Overlapping range: [{overlap_start}, {overlap_end})"
-                )
+                overlaps.append((overlap_start, overlap_end))
+                print(f"\n⚠️  Validator range overlap detected:")
+                print(f"    Node '{range1['node']}': [{range1['start']:,}, {range1['end']:,})")
+                print(f"    Node '{range2['node']}': [{range2['start']:,}, {range2['end']:,})")
+                print(f"    Overlapping range: [{overlap_start:,}, {overlap_end:,})")
+
+    return overlaps
 
 
-def analyze_validator_ranges(specs: List[Dict[str, Any]], source_list: List[str]) -> List[Dict[str, Any]]:
+def detect_validator_gaps(merged_spec: Dict[str, Any]) -> List[Tuple[int, int]]:
+    """
+    Detect gaps in validator ranges.
+
+    Args:
+        merged_spec: Merged network specification
+
+    Returns:
+        List of gaps as tuples (start, end)
+    """
+    # Collect all validator ranges and sort them
+    ranges = []
+    for node_name, node_data in merged_spec['nodes'].items():
+        if node_data.get('validator_range'):
+            vrange = node_data['validator_range']
+            ranges.append((vrange['start'], vrange['end']))
+
+    if not ranges:
+        return []
+
+    # Sort ranges by start index
+    ranges.sort(key=lambda x: x[0])
+
+    # Find gaps
+    gaps = []
+
+    # Check for gap at the beginning (if first range doesn't start at 0)
+    if ranges[0][0] > 0:
+        gaps.append((0, ranges[0][0]))
+
+    # Check for gaps between consecutive ranges
+    for i in range(len(ranges) - 1):
+        current_end = ranges[i][1]
+        next_start = ranges[i + 1][0]
+        if current_end < next_start:
+            gaps.append((current_end, next_start))
+
+    return gaps
+
+
+def analyze_validator_ranges(specs: List[Dict[str, Any]], source_list: List[str],
+                            merge_strategy: str = 'preserve-indices',
+                            validator_mapping: Optional[Dict[str, Dict[str, int]]] = None) -> List[Dict[str, Any]]:
     """
     Analyze validator ranges across inventories and calculate offsets.
 
     Args:
         specs: List of parsed network specifications
         source_list: List of source paths/URLs
+        merge_strategy: 'auto-offset' or 'preserve-indices'
+        validator_mapping: Optional mapping of inventory to offset
 
     Returns:
         List of inventory info with calculated offsets
@@ -324,6 +368,24 @@ def analyze_validator_ranges(specs: List[Dict[str, Any]], source_list: List[str]
 
     for idx, spec in enumerate(specs):
         source = source_list[idx] if idx < len(source_list) else f'inventory_{idx}'
+
+        # Extract inventory identifier for mapping
+        # Try to extract a meaningful identifier from the source
+        source_identifier = None
+        if '/' in source:
+            # Extract from URL path
+            parts = source.split('/')
+            # Look for patterns like 'testinprod-io' or similar
+            for part in parts:
+                if 'testinprod' in part.lower():
+                    source_identifier = 'testinprod-io'
+                    break
+                elif 'ethpandaops' in part.lower():
+                    source_identifier = 'ethpandaops'
+                    break
+                elif 'hetzner' in part.lower():
+                    source_identifier = 'hetzner'
+                    break
 
         # Find min and max validator indices in this inventory
         min_validator = float('inf')
@@ -340,30 +402,43 @@ def analyze_validator_ranges(specs: List[Dict[str, Any]], source_list: List[str]
                 nodes_with_validators.append(node_name)
 
         if max_validator >= 0:
+            # Determine offset based on strategy
+            if merge_strategy == 'preserve-indices':
+                # Check if there's a custom mapping for this inventory
+                if validator_mapping and source_identifier and source_identifier in validator_mapping:
+                    offset = validator_mapping[source_identifier].get('offset', 0)
+                else:
+                    offset = 0  # No offset in preserve-indices mode
+            else:  # auto-offset
+                offset = current_offset
+
             info = {
                 'index': idx,
                 'source': source,
+                'source_identifier': source_identifier,
                 'original_range': {
                     'start': min_validator,
                     'end': max_validator + 1  # Make it exclusive like the original
                 },
-                'offset': current_offset,
+                'offset': offset,
                 'new_range': {
-                    'start': min_validator + current_offset,
-                    'end': (max_validator + 1) + current_offset
+                    'start': min_validator + offset,
+                    'end': (max_validator + 1) + offset
                 },
                 'validator_count': validator_count,
                 'nodes_with_validators': len(nodes_with_validators)
             }
             inventory_info.append(info)
 
-            # Update offset for next inventory
-            current_offset = info['new_range']['end']
+            # Update offset for next inventory (only in auto-offset mode)
+            if merge_strategy == 'auto-offset':
+                current_offset = info['new_range']['end']
         else:
             # No validators in this inventory
             info = {
                 'index': idx,
                 'source': source,
+                'source_identifier': source_identifier,
                 'original_range': None,
                 'offset': 0,
                 'new_range': None,
@@ -375,44 +450,55 @@ def analyze_validator_ranges(specs: List[Dict[str, Any]], source_list: List[str]
     return inventory_info
 
 
-def confirm_processing_order(inventory_info: List[Dict[str, Any]]) -> bool:
+def confirm_processing_order(inventory_info: List[Dict[str, Any]], merge_strategy: str) -> bool:
     """
     Display processing order and offsets for confirmation.
 
     Args:
         inventory_info: List of inventory information with offsets
+        merge_strategy: The merge strategy being used
 
     Returns:
         True if user confirms, False otherwise
     """
     print("\n" + "="*80)
     print("📋 INVENTORY PROCESSING CONFIRMATION")
+    print(f"   Merge Strategy: {merge_strategy}")
     print("="*80)
 
     print("\nInventories will be processed in the following order:\n")
 
     for info in inventory_info:
         print(f"  [{info['index'] + 1}] {info['source']}")
+        if info.get('source_identifier'):
+            print(f"      Identifier: {info['source_identifier']}")
         if info['original_range']:
             print(f"      Original validator range: [{info['original_range']['start']:,}, {info['original_range']['end']:,})")
             print(f"      Validators: {info['validator_count']:,} across {info['nodes_with_validators']} nodes")
             if info['offset'] > 0:
                 print(f"      ✨ Offset applied: +{info['offset']:,}")
                 print(f"      New validator range: [{info['new_range']['start']:,}, {info['new_range']['end']:,})")
+            elif merge_strategy == 'preserve-indices':
+                print(f"      Final validator range: [{info['new_range']['start']:,}, {info['new_range']['end']:,})")
         else:
             print(f"      No validators in this inventory")
         print()
 
-    # Summary
-    total_validators = sum(info['validator_count'] for info in inventory_info)
+    # Calculate actual validator counts (not using max index)
+    total_assigned_validators = sum(info['validator_count'] for info in inventory_info)
     total_nodes = sum(info['nodes_with_validators'] for info in inventory_info)
-    max_index = max((info['new_range']['end'] - 1 for info in inventory_info if info['new_range']), default=0)
+
+    # Find the actual max index from all ranges
+    max_index = -1
+    for info in inventory_info:
+        if info['new_range']:
+            max_index = max(max_index, info['new_range']['end'] - 1)
 
     print("📊 Summary:")
     print(f"  - Total inventories: {len(inventory_info)}")
-    print(f"  - Total validators: {total_validators:,}")
+    print(f"  - Assigned validators: {total_assigned_validators:,}")
+    print(f"  - Max validator index: {max_index:,}")
     print(f"  - Total nodes with validators: {total_nodes}")
-    print(f"  - Final validator index range: [0, {max_index + 1:,})")
 
     print("\n" + "="*80)
 
@@ -427,13 +513,15 @@ def confirm_processing_order(inventory_info: List[Dict[str, Any]]) -> bool:
             print("Please enter 'yes' or 'no'")
 
 
-def merge_network_specs(specs: List[Dict[str, Any]], inventory_info: List[Dict[str, Any]]) -> Dict[str, Any]:
+def merge_network_specs(specs: List[Dict[str, Any]], inventory_info: List[Dict[str, Any]],
+                       merge_strategy: str = 'preserve-indices') -> Dict[str, Any]:
     """
     Merge multiple network specifications into one with automatic offset application.
 
     Args:
         specs: List of parsed network specifications
         inventory_info: List of inventory information with calculated offsets
+        merge_strategy: The merge strategy being used
 
     Returns:
         Merged network specification
@@ -460,6 +548,9 @@ def merge_network_specs(specs: List[Dict[str, Any]], inventory_info: List[Dict[s
     }
 
     max_validator_index = 0
+
+    # Track merge strategy in metadata
+    merged['metadata']['merge_strategy'] = merge_strategy
 
     # Merge each spec with offset application
     for idx, spec in enumerate(specs):
@@ -540,8 +631,17 @@ def merge_network_specs(specs: List[Dict[str, Any]], inventory_info: List[Dict[s
                 if node not in existing:
                     merged['tags'][tag_name].append(node)
 
-    # Set total validator count
-    merged['validators']['total_count'] = max_validator_index + 1 if max_validator_index > 0 else 0
+    # Calculate actual validator count (sum of all validator counts, not max index)
+    actual_validator_count = 0
+    for node_name, node_data in merged['nodes'].items():
+        if node_data.get('validator_range'):
+            actual_validator_count += node_data['validator_range']['count']
+
+    # Store both counts for clarity
+    merged['validators']['assigned_count'] = actual_validator_count
+    merged['validators']['max_index'] = max_validator_index
+    # Keep total_count for backward compatibility but use assigned count
+    merged['validators']['total_count'] = actual_validator_count
 
     return merged
 
@@ -577,6 +677,22 @@ Examples:
         action='store_true',
         help='Pretty print the YAML output'
     )
+    parser.add_argument(
+        '--merge-strategy',
+        choices=['auto-offset', 'preserve-indices'],
+        default='preserve-indices',
+        help='Merge strategy for validator ranges (default: preserve-indices)'
+    )
+    parser.add_argument(
+        '--validator-mapping',
+        type=str,
+        help='JSON mapping of inventory identifiers to offsets (e.g., \'{"testinprod-io": {"offset": 50912}}\')'
+    )
+    parser.add_argument(
+        '--expected-validators',
+        type=int,
+        help='Expected total number of validators (for validation)'
+    )
 
     args = parser.parse_args()
 
@@ -606,23 +722,49 @@ Examples:
             specs.append(spec)
             print(f"  ✓ Parsed {len(spec['nodes'])} nodes")
 
+        # Parse validator mapping if provided
+        validator_mapping = None
+        if args.validator_mapping:
+            try:
+                validator_mapping = json.loads(args.validator_mapping)
+                print(f"\n📍 Using validator mapping: {validator_mapping}")
+            except json.JSONDecodeError as e:
+                print(f"\n❌ Error parsing validator mapping JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+
         # Merge specifications if multiple
         if len(specs) > 1:
             print(f"\nAnalyzing {len(specs)} inventory files...")
+            print(f"Merge strategy: {args.merge_strategy}")
 
             # Analyze validator ranges and calculate offsets
-            inventory_info = analyze_validator_ranges(specs, source_list)
+            inventory_info = analyze_validator_ranges(specs, source_list,
+                                                     args.merge_strategy,
+                                                     validator_mapping)
 
             # Show confirmation dialog
-            if not confirm_processing_order(inventory_info):
+            if not confirm_processing_order(inventory_info, args.merge_strategy):
                 print("\n❌ Operation cancelled by user")
                 sys.exit(0)
 
-            print(f"\n✅ Proceeding with merge...")
-            network_spec = merge_network_specs(specs, inventory_info)
-            print("  ✓ Merge complete with automatic offset application")
+            print(f"\n✅ Proceeding with merge using {args.merge_strategy} strategy...")
+            network_spec = merge_network_specs(specs, inventory_info, args.merge_strategy)
+
+            # Check for overlaps if using preserve-indices
+            if args.merge_strategy == 'preserve-indices':
+                overlaps = check_validator_overlaps(network_spec)
+                if overlaps:
+                    print("\n❌ Error: Validator range overlaps detected!")
+                    print("   Cannot proceed with preserve-indices strategy when ranges overlap.")
+                    print("   Consider using --merge-strategy auto-offset or fix the inventory files.")
+                    sys.exit(1)
+
+            print("  ✓ Merge complete")
         else:
             network_spec = specs[0]
+            inventory_info = analyze_validator_ranges(specs, source_list,
+                                                     args.merge_strategy,
+                                                     validator_mapping)
 
         # Ensure output directory exists
         output_dir = Path(args.output_dir)
@@ -649,10 +791,39 @@ Examples:
         print(f"  - Nodes: {len(network_spec['nodes'])}")
         print(f"  - Groups: {len(network_spec['groups'])}")
         print(f"  - Tags: {len(network_spec['tags'])}")
-        print(f"  - Total validators: {network_spec['validators']['total_count']}")
+
+        # Print validator counts
+        if 'assigned_count' in network_spec['validators']:
+            print(f"  - Assigned validators: {network_spec['validators']['assigned_count']:,}")
+            print(f"  - Max validator index: {network_spec['validators'].get('max_index', 0):,}")
+        else:
+            print(f"  - Total validators: {network_spec['validators']['total_count']:,}")
+
+        # Check against expected validators if provided
+        if args.expected_validators:
+            actual = network_spec['validators'].get('assigned_count', network_spec['validators']['total_count'])
+            if actual != args.expected_validators:
+                print(f"\n⚠️  WARNING: Validator count mismatch!")
+                print(f"    Expected: {args.expected_validators:,}")
+                print(f"    Actual:   {actual:,}")
+                print(f"    Missing:  {args.expected_validators - actual:,}")
+            else:
+                print(f"  ✅ Validator count matches expected: {args.expected_validators:,}")
+
+        # Detect and report gaps
+        gaps = detect_validator_gaps(network_spec)
+        if gaps:
+            print("\n⚠️  Validator gaps detected:")
+            total_gap_size = 0
+            for gap_start, gap_end in gaps:
+                gap_size = gap_end - gap_start
+                total_gap_size += gap_size
+                print(f"    - Indices {gap_start:,}-{gap_end-1:,} ({gap_size:,} validators) - no nodes assigned")
+            print(f"    Total gap size: {total_gap_size:,} validators")
 
         if len(source_list) > 1:
-            print(f"  - Merged from {len(source_list)} inventory files")
+            print(f"\n  - Merged from {len(source_list)} inventory files")
+            print(f"  - Merge strategy: {args.merge_strategy}")
 
             # Show offset information if any were applied
             if 'validator_offsets' in network_spec['metadata'] and network_spec['metadata']['validator_offsets']:
