@@ -310,19 +310,58 @@ def get_eligible_slots_query() -> str:
 def build_proposer_filter(proposer_indices: list = None) -> str:
     """
     Build SQL filter clause for proposer eligibility.
-    
-    Only works with network spec - filters by proposer indices.
-    
+
+    For large validator sets we compress contiguous indices into BETWEEN
+    ranges to avoid generating enormous IN clauses that exceed ClickHouse's
+    max_query_size setting.
+
     Args:
         proposer_indices: List of specific proposer indices from network spec
-    
+
     Returns:
         SQL WHERE clause fragment
     """
-    if proposer_indices:
-        indices_str = ','.join(str(idx) for idx in proposer_indices)
+    if not proposer_indices:
+        return ""
+
+    sorted_indices = sorted(set(int(idx) for idx in proposer_indices))
+
+    small_set_threshold = 200
+    if len(sorted_indices) <= small_set_threshold:
+        indices_str = ','.join(str(idx) for idx in sorted_indices)
         return f"AND proposer_index IN ({indices_str})"
-    return ""
+
+    ranges = []
+    range_start = sorted_indices[0]
+    prev_idx = range_start
+
+    for idx in sorted_indices[1:]:
+        if idx == prev_idx + 1:
+            prev_idx = idx
+            continue
+
+        ranges.append((range_start, prev_idx))
+        range_start = idx
+        prev_idx = idx
+
+    ranges.append((range_start, prev_idx))
+
+    conditions = []
+    for start, end in ranges:
+        if start == end:
+            conditions.append(f"proposer_index = {start}")
+        else:
+            conditions.append(f"proposer_index BETWEEN {start} AND {end}")
+
+    if not conditions:
+        return ""
+
+    if len(conditions) == 1:
+        clause = conditions[0]
+    else:
+        clause = '(' + ' OR '.join(conditions) + ')'
+
+    return f"AND {clause}"
 
 
 def get_mev_slots_query() -> str:

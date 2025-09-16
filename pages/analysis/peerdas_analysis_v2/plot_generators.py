@@ -369,19 +369,20 @@ def create_head_correctness_chart(
                 )
             )
 
-            # Add sample count annotations below each point
-            for idx, row in agg.iterrows():
-                fig.add_annotation(
-                    x=row[x_col],
-                    y=0,
-                    text=f"({row['sample_count']:,} slots)",
-                    showarrow=False,
-                    font=dict(size=10, color=color),
-                    yshift=-20,
-                    opacity=0.8,
-                    xref='x',
-                    yref='paper'
-                )
+            # Add sample count annotations below each point (skip for attester charts)
+            if 'Attester' not in title_suffix:
+                for idx, row in agg.iterrows():
+                    fig.add_annotation(
+                        x=row[x_col],
+                        y=0,
+                        text=f"({row['sample_count']:,} slots)",
+                        showarrow=False,
+                        font=dict(size=10, color=color),
+                        yshift=-20,
+                        opacity=0.8,
+                        xref='x',
+                        yref='paper'
+                    )
 
     # Skip trend line for multi-group charts as it becomes too cluttered
     # Trend lines only make sense for single-group analysis
@@ -616,30 +617,40 @@ def create_head_correctness_boxplot(
 
         # No longer need to track per-group sample counts
 
+        hover_template = (
+            f"<b>{glabel}</b><br>"
+            "Median: %{median:.1f}%<br>"
+            "IQR: %{q1:.1f}% - %{q3:.1f}%<br>"
+            "Min/Max: %{lowerfence:.1f}% / %{upperfence:.1f}%"
+            "<extra></extra>"
+        )
+
         fig.add_trace(
             go.Box(
                 x=gdf[x_col],
                 y=gdf['head_correctness_pct'],
                 name=glabel,
                 marker_color=color,
-                boxmean='sd',
-                hovertemplate=f'<b>{glabel}</b><br><b>Blob Count</b>: %{{x}}<br>Head Correctness: %{{y:.1f}}%<extra></extra>',
+                boxmean=False,
+                hoveron='boxes',
+                hovertemplate=hover_template,
                 offsetgroup=str(g)
             )
         )
 
-    # Add sample count annotations with true unique slot counts
-    for x_val in x_order:
-        if x_val in unique_slots_per_bucket:
-            fig.add_annotation(
-                x=x_val,
-                y=-0.12,  # Position below the plot area
-                text=f"({unique_slots_per_bucket[x_val]:,} slots)",
-                showarrow=False,
-                font=dict(size=10, color='#333'),
-                xref='x',
-                yref='paper'
-            )
+    # Add sample count annotations with true unique slot counts (skip for attester charts)
+    if 'Attester' not in title_suffix:
+        for x_val in x_order:
+            if x_val in unique_slots_per_bucket:
+                fig.add_annotation(
+                    x=x_val,
+                    y=-0.12,  # Position below the plot area
+                    text=f"({unique_slots_per_bucket[x_val]:,} slots)",
+                    showarrow=False,
+                    font=dict(size=10, color='#333'),
+                    xref='x',
+                    yref='paper'
+                )
 
     group_names = {'node_type': 'Node Type', 'cl_client': 'CL Client', 'el_client': 'EL Client', 'cl_el_combined': 'CL+EL Combination', 'cl_node_type': 'CL+Node Type', 'el_node_type': 'EL+Node Type'}
     metric_label = _get_metric_label(metadata)
@@ -831,18 +842,19 @@ def create_head_correctness_violin(
                     )
                 )
 
-    # Add sample count annotations with true unique slot counts
-    for x_val in x_order:
-        if x_val in unique_slots_per_bucket:
-            fig.add_annotation(
-                x=x_val,
-                y=-0.12,  # Position below the plot area
-                text=f"({unique_slots_per_bucket[x_val]:,} slots)",
-                showarrow=False,
-                font=dict(size=10, color='#333'),
-                xref='x',
-                yref='paper'
-            )
+    # Add sample count annotations with true unique slot counts (skip for attester charts)
+    if 'Attester' not in title_suffix:
+        for x_val in x_order:
+            if x_val in unique_slots_per_bucket:
+                fig.add_annotation(
+                    x=x_val,
+                    y=-0.12,  # Position below the plot area
+                    text=f"({unique_slots_per_bucket[x_val]:,} slots)",
+                    showarrow=False,
+                    font=dict(size=10, color='#333'),
+                    xref='x',
+                    yref='paper'
+                )
     
     # Set title based on grouping
     group_names = {
@@ -2060,25 +2072,21 @@ def create_head_correctness_bar(
             group_label = str(group_label).replace("supernode", "Supernode").replace("regular", "Regular").replace("-", " + ").title()
         
         bucket_means = []
-        bucket_stds = []
         bucket_counts = []
         
         for bucket in bucket_order:
             bucket_df = group_df[group_df[bucket_col] == bucket]
             if not bucket_df.empty:
                 bucket_means.append(bucket_df["head_correctness_pct"].mean())
-                bucket_stds.append(bucket_df["head_correctness_pct"].std())
                 bucket_counts.append(bucket_df['slot'].nunique())  # Count unique slots
             else:
                 bucket_means.append(0)
-                bucket_stds.append(0)
                 bucket_counts.append(0)
-        
+
         bar_data.append({
             "group": group_label,
             "buckets": bucket_order,
             "means": bucket_means,
-            "stds": bucket_stds,
             "counts": bucket_counts
         })
     
@@ -2101,18 +2109,14 @@ def create_head_correctness_bar(
     
     # Add bars for each group
     for group_data in bar_data:
-        # Create custom hover text for each bar
-        hover_texts = []
-        for i, bucket in enumerate(group_data["buckets"]):
-            hover_text = (
-                f"<b>{group_data['group']}</b><br>"
-                f"Blob Bucket: {bucket}<br>"
-                f"Mean: {group_data['means'][i]:.1f}%<br>"
-                f"Std Dev: {group_data['stds'][i]:.1f}%<br>"
-                f"Slots: {group_data['counts'][i]}"
-            )
-            hover_texts.append(hover_text)
-        
+        customdata = [[count] for count in group_data["counts"]]
+        hover_template = (
+            f"<b>{group_data['group']}</b><br>"
+            "Avg Head Correctness: %{y:.1f}%<br>"
+            "Unique Slots: %{customdata[0]:,.0f}"
+            "<extra></extra>"
+        )
+
         # Add main bars
         fig.add_trace(go.Bar(
             name=group_data["group"],
@@ -2123,8 +2127,8 @@ def create_head_correctness_bar(
             text=[f"{mean:.1f}%" for mean in group_data["means"]],
             textposition='outside',
             textfont=dict(size=10),
-            hovertemplate=hover_texts,
-            hovertext=hover_texts
+            customdata=customdata,
+            hovertemplate=hover_template
         ))
 
     # Add sample count annotations
@@ -2136,18 +2140,19 @@ def create_head_correctness_bar(
                 bucket_totals[bucket] = 0
             bucket_totals[bucket] += group_data["counts"][i]
 
-    # Add annotations for each bucket
-    for bucket in bucket_order:
-        if bucket in bucket_totals:
-            fig.add_annotation(
-                x=bucket,
-                y=-0.12,  # Position below the plot area
-                text=f"({bucket_totals[bucket]:,} slots)",
-                showarrow=False,
-                font=dict(size=10, color='#333'),
-                xref='x',
-                yref='paper'
-            )
+    # Add annotations for each bucket (skip for attester charts)
+    if 'Attester' not in title_suffix:
+        for bucket in bucket_order:
+            if bucket in bucket_totals:
+                fig.add_annotation(
+                    x=bucket,
+                    y=-0.12,  # Position below the plot area
+                    text=f"({bucket_totals[bucket]:,} slots)",
+                    showarrow=False,
+                    font=dict(size=10, color='#333'),
+                    xref='x',
+                    yref='paper'
+                )
 
     # Determine if showing correctness or incorrectness
     is_incorrect = metadata and metadata.get('view_mode') == 'incorrect'

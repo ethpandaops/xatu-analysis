@@ -52,79 +52,101 @@ def parse_url_params() -> Dict[str, Any]:
     """Parse URL query parameters and return configuration dict."""
     params = st.query_params
     config = {}
-    
+
+    # Parse period parameter (for quick time selections)
+    if 'period' in params:
+        config['period'] = params['period']
+
     # Parse datetime parameters
     if 'start_date' in params:
         try:
             config['start_datetime'] = datetime.fromisoformat(params['start_date'])
         except:
             pass
-    
+
     if 'end_date' in params:
         try:
             config['end_datetime'] = datetime.fromisoformat(params['end_date'])
         except:
             pass
-    
+
+    # Parse time components for custom selection
+    if 'start_time' in params:
+        config['start_time'] = params['start_time']
+
+    if 'end_time' in params:
+        config['end_time'] = params['end_time']
+
     # Parse integer parameters
     if 'num_buckets' in params:
         try:
             config['num_buckets'] = int(params['num_buckets'])
         except:
             pass
-    
+
     # Parse string parameters
-    for key in ['grouping_dimension', 'mev_filter', 'view_mode', 'chart_type', 
+    for key in ['grouping_dimension', 'mev_filter', 'view_mode', 'chart_type',
                 'proposer_type', 'attester_type', 'scatter_aggregation']:
         if key in params:
             config[key] = params[key]
-    
+
     # Parse list parameters (comma-separated)
     for key in ['proposer_cl', 'proposer_el', 'attester_cl', 'attester_el']:
         if key in params:
             values = params[key].split(',')
             config[key] = [v.strip() for v in values if v.strip()]
-    
+
     # Parse float parameters
     if 'performance_threshold' in params:
         try:
             config['performance_threshold'] = float(params['performance_threshold'])
         except:
             pass
-    
+
     return config
 
 
 def generate_url_params(config: Dict[str, Any]) -> str:
     """Generate URL parameters from configuration."""
     params = {}
-    
+
+    # Add period parameter
+    if 'period' in config and config['period']:
+        params['period'] = config['period']
+
     # Add datetime parameters (use absolute timestamps)
     if 'start_datetime' in config and config['start_datetime']:
         params['start_date'] = config['start_datetime'].isoformat()
-    
+
     if 'end_datetime' in config and config['end_datetime']:
         params['end_date'] = config['end_datetime'].isoformat()
-    
+
+    # Add time components for custom selection
+    if 'start_time' in config and config['start_time']:
+        params['start_time'] = config['start_time']
+
+    if 'end_time' in config and config['end_time']:
+        params['end_time'] = config['end_time']
+
     # Add other parameters
-    simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode', 
-                     'chart_type', 'proposer_type', 'attester_type', 
+    simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode',
+                     'chart_type', 'proposer_type', 'attester_type',
                      'scatter_aggregation', 'performance_threshold']
-    
+
     for key in simple_params:
         if key in config and config[key] is not None:
             params[key] = str(config[key])
-    
+
     # Add list parameters (comma-separated)
     list_params = ['proposer_cl', 'proposer_el', 'attester_cl', 'attester_el']
     for key in list_params:
         if key in config and config[key]:
             params[key] = ','.join(config[key])
-    
+
     # Don't include load_data or show_trend_line in URL
     params.pop('load_data', None)
     params.pop('show_trend_line', None)
-    
+
     return params
 
 
@@ -230,46 +252,121 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     # For backward compatibility, keep grouping_dimension as proposer_grouping
     grouping_dimension = proposer_grouping
-    
-    # Time range selection - Always use absolute timestamps
+
+    # Time range selection
     st.sidebar.subheader("📅 Time Range")
-    
-    # Get defaults from URL or use last 12 hours
-    default_end = url_config.get('end_datetime') or datetime.now(timezone.utc).replace(tzinfo=None)
-    default_start = url_config.get('start_datetime') or (default_end - timedelta(hours=12))
-    
-    # Start Time
-    st.sidebar.subheader("Start Time")
-    start_col1, start_col2 = st.sidebar.columns(2)
-    start_date = start_col1.date_input(
-        "Start Date",
-        value=default_start.date(),
-        key="peerdas_v2_start_date"
-    )
-    start_time = start_col2.time_input(
-        "Start Time (UTC)",
-        value=default_start.time(),
-        key="peerdas_v2_start_time",
-        step=300  # 5 minute steps
+
+    # Quick period selection
+    time_options = {
+        "Last 1 Hour": timedelta(hours=1),
+        "Last 2 Hours": timedelta(hours=2),
+        "Last 6 Hours": timedelta(hours=6),
+        "Last 12 Hours": timedelta(hours=12),
+        "Last 24 Hours": timedelta(hours=24),
+        "Last 3 Days": timedelta(days=3),
+        "Last 7 Days": timedelta(days=7),
+        "Custom": None
+    }
+
+    # Determine default period based on URL parameters
+    saved_period = url_config.get('period', None)
+
+    # Check if we should use Custom mode
+    if (saved_period and saved_period in time_options) and not (
+        'start_datetime' in url_config or 'end_datetime' in url_config
+    ):
+        # Use the saved period
+        default_period_index = list(time_options.keys()).index(saved_period)
+    elif 'start_datetime' in url_config or 'end_datetime' in url_config:
+        # If specific dates are provided, use Custom
+        default_period_index = list(time_options.keys()).index("Custom")
+    else:
+        # Default to "Last 2 Hours"
+        default_period_index = list(time_options.keys()).index("Last 2 Hours")
+
+    selected_period = st.sidebar.selectbox(
+        "Quick Period Selection",
+        options=list(time_options.keys()),
+        index=default_period_index,
+        key="peerdas_v2_period_selector",
+        help="Select a predefined period or choose Custom for manual selection"
     )
 
-    # End Time
-    st.sidebar.subheader("End Time")
-    end_col1, end_col2 = st.sidebar.columns(2)
-    end_date = end_col1.date_input(
-        "End Date",
-        value=default_end.date(),
-        key="peerdas_v2_end_date"
-    )
-    end_time = end_col2.time_input(
-        "End Time (UTC)",
-        value=default_end.time(),
-        key="peerdas_v2_end_time",
-        step=300  # 5 minute steps
-    )
-    
-    start_datetime = datetime.combine(start_date, start_time)
-    end_datetime = datetime.combine(end_date, end_time)
+    # Set dates based on selection
+    if selected_period != "Custom":
+        time_delta = time_options[selected_period]
+        end_datetime = datetime.now(timezone.utc).replace(tzinfo=None)
+        start_datetime = end_datetime - time_delta
+
+        # Show the selected range (read-only)
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            st.date_input(
+                "Start Date",
+                value=start_datetime.date(),
+                disabled=True,
+                key="peerdas_v2_start_date_display"
+            )
+            st.time_input(
+                "Start Time (UTC)",
+                value=start_datetime.time(),
+                disabled=True,
+                key="peerdas_v2_start_time_display",
+                step=300
+            )
+        with col2:
+            st.date_input(
+                "End Date",
+                value=end_datetime.date(),
+                disabled=True,
+                key="peerdas_v2_end_date_display"
+            )
+            st.time_input(
+                "End Time (UTC)",
+                value=end_datetime.time(),
+                disabled=True,
+                key="peerdas_v2_end_time_display",
+                step=300
+            )
+    else:
+        # Custom date selection
+        # Get defaults from URL or use last 2 hours
+        default_end = url_config.get('end_datetime') or datetime.now(timezone.utc).replace(tzinfo=None)
+        default_start = url_config.get('start_datetime') or (default_end - timedelta(hours=2))
+
+        # Custom date and time inputs
+        st.sidebar.subheader("Start Time")
+        start_col1, start_col2 = st.sidebar.columns(2)
+        start_date = start_col1.date_input(
+            "Start Date",
+            value=default_start.date(),
+            max_value=datetime.now().date(),
+            key="peerdas_v2_start_date_custom"
+        )
+        start_time = start_col2.time_input(
+            "Start Time (UTC)",
+            value=default_start.time(),
+            key="peerdas_v2_start_time_custom",
+            step=300  # 5 minute steps
+        )
+
+        st.sidebar.subheader("End Time")
+        end_col1, end_col2 = st.sidebar.columns(2)
+        end_date = end_col1.date_input(
+            "End Date",
+            value=default_end.date(),
+            max_value=datetime.now().date(),
+            key="peerdas_v2_end_date_custom"
+        )
+        end_time = end_col2.time_input(
+            "End Time (UTC)",
+            value=default_end.time(),
+            key="peerdas_v2_end_time_custom",
+            step=300  # 5 minute steps
+        )
+
+        start_datetime = datetime.combine(start_date, start_time)
+        end_datetime = datetime.combine(end_date, end_time)
     
     # Bucketing options for blob count
     st.sidebar.subheader("🗂️ Blob Count Bucketing")
@@ -431,6 +528,10 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'performance_threshold': performance_threshold,
         'load_data': load_data
     }
+
+    # Add period if not custom
+    if selected_period != "Custom":
+        config['period'] = selected_period
     
     # Add filter values from shared utility
     config.update(proposer_filters)
