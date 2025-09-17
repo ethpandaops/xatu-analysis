@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 def get_node_classifications(network: str, cluster_name: Optional[str] = None) -> pd.DataFrame:
     """
     Get node classifications from the network YAML file.
-    
+
     Args:
         network: Network name
         cluster_name: Optional cluster name (for compatibility)
-        
+
     Returns:
         DataFrame with node names and their classifications
     """
@@ -37,44 +37,50 @@ def get_node_classifications(network: str, cluster_name: Optional[str] = None) -
     if not network_spec:
         logger.error(f"No network specification found for network: {network}")
         return pd.DataFrame()
-    
+
     try:
         # Build classifications from network spec
         classifications = []
-        
+
         for node_name in network_spec.get_all_nodes():
             node_info = network_spec.get_node_info(node_name)
             if not node_info:
                 continue
-            
+
             tags = node_info.get('tags', [])
             attributes = node_info.get('attributes', {})
-            
+            groups = node_info.get('groups', [])
+
             # Determine node type
             node_type = 'regular'
             if 'supernode' in tags or attributes.get('supernode', False):
                 node_type = 'supernode'
-            
+
+            # Determine architecture
+            architecture = 'ARM' if 'arm' in groups else 'x86'
+
             # Extract CL and EL from tags
             cl_implementation = None
             el_implementation = None
-            
+
             for tag in tags:
                 if tag.startswith('cl:'):
                     cl_implementation = tag.split(':')[1]
                 elif tag.startswith('el:'):
                     el_implementation = tag.split(':')[1]
-            
+
+            # Operator will come from dim_node table, not from the YAML
             classifications.append({
                 'client_name': node_name,
                 'node_type': node_type,
                 'cl_implementation': cl_implementation,
-                'el_implementation': el_implementation
+                'el_implementation': el_implementation,
+                'architecture': architecture
             })
-        
+
         df = pd.DataFrame(classifications)
         return df
-        
+
     except Exception as e:
         logger.error(f"Error getting node classifications from network spec: {e}")
         return pd.DataFrame()
@@ -84,54 +90,131 @@ def get_node_classifications(network: str, cluster_name: Optional[str] = None) -
 def get_available_clients(network: str) -> Tuple[List[str], List[str]]:
     """
     Get available CL and EL clients for a network.
-    
+
     Args:
         network: Network name
-        
+
     Returns:
         Tuple of (cl_clients, el_clients) lists
     """
     network_spec = get_network_spec(network)
-    
+
     cl_clients = set()
     el_clients = set()
-    
+
     # Handle networks without spec files (like mainnet)
     if not network_spec:
         # Return default clients for networks without specs
         return [], []
-    
+
     for node_name in network_spec.get_all_nodes():
         clients = network_spec.get_node_clients(node_name)
         if clients['cl']:
             cl_clients.add(clients['cl'])
         if clients['el']:
             el_clients.add(clients['el'])
-    
+
     return sorted(list(cl_clients)), sorted(list(el_clients))
 
 
+@st.cache_data(ttl=300, show_spinner=False, persist=False)
+def get_available_architectures(network: str) -> List[str]:
+    """
+    Get available architectures for a network.
+
+    Args:
+        network: Network name
+
+    Returns:
+        List of available architectures
+    """
+    network_spec = get_network_spec(network)
+
+    architectures = set()
+
+    # Handle networks without spec files (like mainnet)
+    if not network_spec:
+        # Return default architectures for networks without specs
+        return ['x86', 'ARM']
+
+    for node_name in network_spec.get_all_nodes():
+        node_info = network_spec.get_node_info(node_name)
+        if not node_info:
+            continue
+
+        groups = node_info.get('groups', [])
+        architecture = 'ARM' if 'arm' in groups else 'x86'
+        architectures.add(architecture)
+
+    return sorted(list(architectures))
+
+
+@st.cache_data(ttl=300, show_spinner=False, persist=False)
+def get_available_operators(network: str, cluster_name: Optional[str] = None) -> List[str]:
+    """
+    Get available operators from dim_node table.
+
+    Args:
+        network: Network name
+        cluster_name: Optional cluster name for database connection
+
+    Returns:
+        List of available operators
+    """
+    from shared.database import get_database_connection
+
+    logger.info(f"Getting operators for network={network}, cluster={cluster_name}")
+
+    conn = get_database_connection(cluster_name)
+    if not conn:
+        logger.error(f"No database connection for cluster {cluster_name}")
+        return []
+
+    query = f"""
+    SELECT DISTINCT source as operator
+    FROM `{network}`.dim_node
+    WHERE source != ''
+    ORDER BY source
+    """
+
+    try:
+        logger.info(f"Running operator query: {query}")
+        df = pd.read_sql(query, conn)
+        if df.empty:
+            logger.info(f"No operators found for {network}")
+            return []
+        operators = df['operator'].unique().tolist()
+        logger.info(f"Found operators: {operators}")
+        return operators
+    except Exception as e:
+        logger.error(f"Failed to fetch operators for {network}: {str(e)}")
+        return []
+
+
 def create_proposer_filters_ui(
-    network: str, 
+    network: str,
+    cluster_name: Optional[str] = None,
     key_prefix: str = "proposer",
     initial_values: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Create Streamlit UI components for proposer filtering.
-    
+
     Args:
         network: Network name
         key_prefix: Prefix for Streamlit widget keys to avoid conflicts
         initial_values: Optional dict with initial values from URL params
-        
+
     Returns:
         Dictionary with filter values
     """
     st.subheader("🎯 Proposer Filters")
-    
-    # Get available clients for this network
+
+    # Get available clients, architectures, and operators for this network
     cl_clients, el_clients = get_available_clients(network)
-    
+    architectures = get_available_architectures(network)
+    operators = get_available_operators(network, cluster_name)
+
     # Determine initial values
     if initial_values:
         initial_type = initial_values.get('proposer_type', 'all')
@@ -143,24 +226,32 @@ def create_proposer_filters_ui(
         initial_el = initial_values.get('proposer_el', [el for el in el_clients if el.lower() != 'nimbusel'])
         if initial_el is None:
             initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+        initial_architecture = initial_values.get('proposer_architecture', architectures)
+        if initial_architecture is None:
+            initial_architecture = architectures
+        initial_operator = initial_values.get('proposer_operator', operators)
+        if initial_operator is None:
+            initial_operator = operators
     else:
         initial_type = 'all'
         initial_cl = cl_clients
         initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
-    
+        initial_architecture = architectures
+        initial_operator = operators
+
     proposer_type = st.selectbox(
         "Proposer Node Type",
         options=["all", "supernode", "regular"],
         index=["all", "supernode", "regular"].index(initial_type) if initial_type in ["all", "supernode", "regular"] else 0,
         format_func=lambda x: {
             "all": "All Node Types",
-            "supernode": "Supernodes Only", 
+            "supernode": "Supernodes Only",
             "regular": "Regular Nodes Only"
         }[x],
         key=f"{key_prefix}_type",
         help="Filter by proposer node type"
     )
-    
+
     proposer_cl = st.multiselect(
         "Proposer CL Clients",
         options=cl_clients,
@@ -168,43 +259,64 @@ def create_proposer_filters_ui(
         key=f"{key_prefix}_cl",
         help="Filter by proposer consensus layer client"
     )
-    
+
     proposer_el = st.multiselect(
-        "Proposer EL Clients", 
+        "Proposer EL Clients",
         options=el_clients,
         default=initial_el,
         key=f"{key_prefix}_el",
         help="Filter by proposer execution layer client"
     )
-    
+
+    proposer_architecture = st.multiselect(
+        "Proposer Architecture",
+        options=architectures,
+        default=initial_architecture,
+        key=f"{key_prefix}_architecture",
+        help="Filter by proposer node architecture (x86 or ARM)"
+    )
+
+    proposer_operator = st.multiselect(
+        "Proposer Operator",
+        options=operators,
+        default=initial_operator,
+        key=f"{key_prefix}_operator",
+        help="Filter by proposer operator"
+    )
+
     return {
         'proposer_type': proposer_type if proposer_type != "all" else None,
         'proposer_cl': proposer_cl if proposer_cl and set(proposer_cl) != set(cl_clients) else None,
-        'proposer_el': proposer_el if proposer_el and set(proposer_el) != set(el_clients) else None
+        'proposer_el': proposer_el if proposer_el and set(proposer_el) != set(el_clients) else None,
+        'proposer_architecture': proposer_architecture if proposer_architecture and set(proposer_architecture) != set(architectures) else None,
+        'proposer_operator': proposer_operator if proposer_operator and set(proposer_operator) != set(operators) else None
     }
 
 
 def create_attester_filters_ui(
-    network: str, 
+    network: str,
+    cluster_name: Optional[str] = None,
     key_prefix: str = "attester",
     initial_values: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Create Streamlit UI components for attester filtering.
-    
+
     Args:
         network: Network name
         key_prefix: Prefix for Streamlit widget keys to avoid conflicts
         initial_values: Optional dict with initial values from URL params
-        
+
     Returns:
         Dictionary with filter values
     """
     st.subheader("👥 Attester Filters")
-    
-    # Get available clients for this network
+
+    # Get available clients, architectures, and operators for this network
     cl_clients, el_clients = get_available_clients(network)
-    
+    architectures = get_available_architectures(network)
+    operators = get_available_operators(network, cluster_name)
+
     # Determine initial values
     if initial_values:
         initial_type = initial_values.get('attester_type', 'all')
@@ -216,32 +328,40 @@ def create_attester_filters_ui(
         initial_el = initial_values.get('attester_el', [el for el in el_clients if el.lower() != 'nimbusel'])
         if initial_el is None:
             initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
+        initial_architecture = initial_values.get('attester_architecture', architectures)
+        if initial_architecture is None:
+            initial_architecture = architectures
+        initial_operator = initial_values.get('attester_operator', operators)
+        if initial_operator is None:
+            initial_operator = operators
     else:
         initial_type = 'all'
         initial_cl = cl_clients
         initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
-    
+        initial_architecture = architectures
+        initial_operator = operators
+
     attester_type = st.selectbox(
         "Attester Node Type",
         options=["all", "supernode", "regular"],
         index=["all", "supernode", "regular"].index(initial_type) if initial_type in ["all", "supernode", "regular"] else 0,
         format_func=lambda x: {
-            "all": "All Node Types", 
+            "all": "All Node Types",
             "supernode": "Supernodes Only",
             "regular": "Regular Nodes Only"
         }[x],
         key=f"{key_prefix}_type",
         help="Filter by attester node type"
     )
-    
+
     attester_cl = st.multiselect(
         "Attester CL Clients",
         options=cl_clients,
         default=initial_cl,
-        key=f"{key_prefix}_cl", 
+        key=f"{key_prefix}_cl",
         help="Filter by attester consensus layer client"
     )
-    
+
     attester_el = st.multiselect(
         "Attester EL Clients",
         options=el_clients,
@@ -249,11 +369,29 @@ def create_attester_filters_ui(
         key=f"{key_prefix}_el",
         help="Filter by attester execution layer client"
     )
-    
+
+    attester_architecture = st.multiselect(
+        "Attester Architecture",
+        options=architectures,
+        default=initial_architecture,
+        key=f"{key_prefix}_architecture",
+        help="Filter by attester node architecture (x86 or ARM)"
+    )
+
+    attester_operator = st.multiselect(
+        "Attester Operator",
+        options=operators,
+        default=initial_operator,
+        key=f"{key_prefix}_operator",
+        help="Filter by attester operator"
+    )
+
     return {
         'attester_type': attester_type if attester_type != "all" else None,
         'attester_cl': attester_cl if attester_cl and set(attester_cl) != set(cl_clients) else None,
-        'attester_el': attester_el if attester_el and set(attester_el) != set(el_clients) else None
+        'attester_el': attester_el if attester_el and set(attester_el) != set(el_clients) else None,
+        'attester_architecture': attester_architecture if attester_architecture and set(attester_architecture) != set(architectures) else None,
+        'attester_operator': attester_operator if attester_operator and set(attester_operator) != set(operators) else None
     }
 
 

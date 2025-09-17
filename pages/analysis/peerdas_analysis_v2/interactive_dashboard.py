@@ -213,8 +213,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Proposer grouping
     proposer_grouping = st.sidebar.selectbox(
         "Proposer Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
+        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
             url_config.get('grouping_dimension', 'node_type')
         ),
         format_func=lambda x: {
@@ -222,20 +222,24 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'node_type': 'Node Type',
             'cl_client': 'CL Client',
             'el_client': 'EL Client',
+            'architecture': 'Architecture',
+            'operator': 'Operator',
             'cl_el_combined': 'CL+EL Combination',
             'cl_node_type': 'CL+Node Type',
+            'cl_architecture': 'CL+Architecture',
+            'cl_operator': 'CL+Operator',
             'block_building': 'Block Building Method',
             'node_type_mev': 'Node Type + Block Building',
             'cl_node_type_mev': 'CL+Node Type + Block Building'
         }[x],
         help="Group slots by proposer characteristics"
     )
-    
+
     # Attester grouping (new)
     attester_grouping = st.sidebar.selectbox(
         "Attester Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'el_node_type'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'cl_el_combined', 'cl_node_type', 'el_node_type'].index(
+        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'].index(
             url_config.get('attester_grouping', 'none')
         ),
         format_func=lambda x: {
@@ -243,9 +247,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'node_type': 'Node Type',
             'cl_client': 'CL Client',
             'el_client': 'EL Client',
+            'architecture': 'Architecture',
+            'operator': 'Operator',
             'cl_el_combined': 'CL+EL Combination',
             'cl_node_type': 'CL+Node Type',
-            'el_node_type': 'EL+Node Type'
+            'el_node_type': 'EL+Node Type',
+            'cl_architecture': 'CL+Architecture',
+            'cl_operator': 'CL+Operator'
         }[x],
         help="Group attestations by attester characteristics"
     )
@@ -415,8 +423,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             if 'attester_el' in url_config:
                 attester_initial['attester_el'] = url_config['attester_el']
         
-        proposer_filters = create_proposer_filters_ui(network, initial_values=proposer_initial)
-        attester_filters = create_attester_filters_ui(network, initial_values=attester_initial)
+        proposer_filters = create_proposer_filters_ui(network, cluster_name=cluster, initial_values=proposer_initial)
+        attester_filters = create_attester_filters_ui(network, cluster_name=cluster, initial_values=attester_initial)
     
     # Load data button
     st.sidebar.markdown("---")
@@ -561,6 +569,8 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     proposer_type=config.get('proposer_type'),
                     cl_filter=config.get('proposer_cl'),
                     el_filter=config.get('proposer_el'),
+                    architecture_filter=config.get('proposer_architecture'),
+                    operator_filter=config.get('proposer_operator'),
                     mev_filter=config.get('mev_filter'),
                     cluster_name=config['cluster']
                 )
@@ -628,6 +638,8 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     attester_type=config.get('attester_type'),
                     cl_filter=config.get('attester_cl'),
                     el_filter=config.get('attester_el'),
+                    architecture_filter=config.get('attester_architecture'),
+                    operator_filter=config.get('attester_operator'),
                     grouping_dimension=config.get('grouping_dimension'),
                     attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
                     cluster_name=config['cluster']
@@ -763,8 +775,35 @@ def main():
                     # Multiple buckets - calculate for each
                     max_blobs = int(count_data['blob_count'].max())
                     min_blobs = int(count_data['blob_count'].min())
-                    edges = np.linspace(min_blobs, max_blobs + 1, config.get('num_buckets') + 1)
-                    edges = np.unique(np.floor(edges).astype(int))
+                    blob_range = max_blobs - min_blobs + 1
+                    num_buckets = config.get('num_buckets')
+
+                    # If we can't divide evenly, reduce number of buckets
+                    if blob_range < num_buckets:
+                        num_buckets = blob_range
+                    elif blob_range % num_buckets != 0:
+                        # Find the largest number of buckets that works well
+                        for actual_buckets in range(num_buckets, 0, -1):
+                            if blob_range % actual_buckets == 0 or actual_buckets == 1:
+                                num_buckets = actual_buckets
+                                break
+                            bucket_size = blob_range // actual_buckets + (1 if blob_range % actual_buckets > 0 else 0)
+                            if bucket_size * actual_buckets >= blob_range:
+                                num_buckets = actual_buckets
+                                break
+
+                    # Create non-overlapping bucket edges
+                    edges = []
+                    current = min_blobs
+                    bucket_size = blob_range // num_buckets
+                    remainder = blob_range % num_buckets
+
+                    for i in range(num_buckets):
+                        edges.append(current)
+                        # Distribute remainder across first buckets
+                        current += bucket_size + (1 if i < remainder else 0)
+                    edges.append(max_blobs + 1)  # Final edge
+
                     data_temp = count_data.copy()
                     data_temp['blob_bucket'] = pd.cut(data_temp['blob_count'], bins=edges, include_lowest=True, right=False)
                     data_temp['blob_bucket_label'] = data_temp['blob_bucket'].apply(
@@ -920,14 +959,13 @@ def main():
                 )
                 st.plotly_chart(proposer_fig, use_container_width=True)
                 
-                # Display attester chart if attester grouping is enabled
-                if config.get('attester_grouping') and config.get('attester_grouping') != 'none':
-                    attester_fig = create_chart_for_data_type(
-                        attester_data,
-                        'attester', 
-                        config.get('attester_grouping')
-                    )
-                    st.plotly_chart(attester_fig, use_container_width=True)
+                # Display attester chart (always show it, even with 'none' grouping)
+                attester_fig = create_chart_for_data_type(
+                    attester_data,
+                    'attester',
+                    config.get('attester_grouping', 'none')  # Default to 'none' if not specified
+                )
+                st.plotly_chart(attester_fig, use_container_width=True)
                 
             elif has_proposer_data:
                 # Only proposer data

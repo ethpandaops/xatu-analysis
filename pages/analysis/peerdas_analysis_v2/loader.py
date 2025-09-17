@@ -117,12 +117,14 @@ def load_eligible_slots(
     proposer_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
+    architecture_filter: Optional[List[str]] = None,
+    operator_filter: Optional[List[str]] = None,
     mev_filter: Optional[str] = None,
     cluster_name: Optional[str] = None
 ) -> Tuple[List[int], Dict[int, str], Dict[int, int], List[int]]:
     """
     Load eligible slots based on proposer filtering and MEV status.
-    
+
     Args:
         network: Network name
         start_date: Start datetime
@@ -130,14 +132,15 @@ def load_eligible_slots(
         proposer_type: Filter by proposer node type
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
+        architecture_filter: Filter by architecture (ARM, x86)
         mev_filter: Filter by MEV status ('yes', 'no', 'both' or None)
         cluster_name: Cluster name
-    
+
     Returns:
         Tuple of (slot_list, slot_to_block_root_mapping, slot_to_proposer_index_mapping, mev_slots_list)
     """
     logger.info(f"Loading eligible slots for network={network}")
-    logger.info(f"Filters: proposer_type={proposer_type}, cl_filter={cl_filter}, el_filter={el_filter}, mev_filter={mev_filter}")
+    logger.info(f"Filters: proposer_type={proposer_type}, cl_filter={cl_filter}, el_filter={el_filter}, architecture_filter={architecture_filter}, operator_filter={operator_filter}, mev_filter={mev_filter}")
     
     conn = get_database_connection(cluster_name)
     if not conn:
@@ -157,7 +160,7 @@ def load_eligible_slots(
     total_validator_count = 0
 
     # Check for filters that require network spec
-    has_filters = proposer_type or cl_filter or el_filter
+    has_filters = proposer_type or cl_filter or el_filter or architecture_filter or operator_filter
 
     # ALWAYS filter to only validators in the spec
     # This prevents "unknown" entries from validators not in our config
@@ -193,6 +196,7 @@ def load_eligible_slots(
 
         # Check if node matches filters
         tags = node_info.get('tags', [])
+        groups = node_info.get('groups', [])
         node_is_supernode = 'supernode' in tags
 
         # Check node type filter
@@ -201,6 +205,14 @@ def load_eligible_slots(
                 continue
             if proposer_type == 'regular' and node_is_supernode:
                 continue
+
+        # Check architecture filter
+        if architecture_filter:
+            node_architecture = 'ARM' if 'arm' in groups else 'x86'
+            if node_architecture not in architecture_filter:
+                continue
+
+        # Operator filter will be applied in SQL via join with dim_node
 
         # Check CL filter
         if cl_filter:
@@ -406,9 +418,9 @@ def load_eligible_slots(
 
 
 @st.cache_data(ttl=300, show_spinner=False, persist=False)
-def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]]) -> str:
+def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str], cl_filter: Optional[List[str]], el_filter: Optional[List[str]], architecture_filter: Optional[List[str]], operator_filter: Optional[List[str]]) -> str:
     """Build UNION ALL SELECT mapping for validator->group using network_spec ranges."""
-    logger.info(f"Building attester map: attester_type={attester_type}, cl_filter={cl_filter}, el_filter={el_filter}")
+    logger.info(f"Building attester map: attester_type={attester_type}, cl_filter={cl_filter}, el_filter={el_filter}, architecture_filter={architecture_filter}, operator_filter={operator_filter}")
 
     if not _network_spec:
         logger.error("No network_spec provided to _build_attester_map_union_selects")
@@ -435,13 +447,24 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
         start, end = v_range
 
         tags = network_spec.get_node_tags(node_name) or []
-        node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
+        groups = node_info.get('groups', [])
+        attributes = node_info.get('attributes', {})
+        node_is_supernode = 'supernode' in tags or attributes.get('supernode', False)
+        node_architecture = 'ARM' if 'arm' in groups else 'x86'
+        # Operator will come from dim_node join, not from YAML
 
         # Apply attester-type filter
         if attester_type == 'supernode' and not node_is_supernode:
             continue
         if attester_type == 'regular' and node_is_supernode:
             continue
+
+        # Apply architecture filter
+        if architecture_filter and node_architecture not in architecture_filter:
+            continue
+
+        # Operator filter will be applied in SQL via join with dim_node
+        # Skip operator filtering in the attester map generation
 
         # Extract clients from tags
         cl = ''
@@ -484,8 +507,8 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
 
         node_type = 'supernode' if node_is_supernode else 'regular'
 
-        # Group by characteristics
-        key = (node_type, cl, el)
+        # Group by characteristics (without operator, which comes from dim_node)
+        key = (node_type, cl, el, node_architecture)
         if key not in grouped_ranges:
             grouped_ranges[key] = []
         grouped_ranges[key].append((int(start), int(end)))
@@ -500,7 +523,7 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
 
     # Build efficient SELECT statements using arrayConcat for each group
     selects = []
-    for (node_type, cl, el), ranges in grouped_ranges.items():
+    for (node_type, cl, el, architecture), ranges in grouped_ranges.items():
         # Build range expressions
         range_parts = [f"range({start}, {end})" for start, end in ranges]
 
@@ -515,7 +538,8 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
       arrayJoin(arrayConcat({','.join(chunk)})) AS validator_index,
       '{node_type}' AS node_type,
       '{cl}' AS cl_client,
-      '{el}' AS el_client"""
+      '{el}' AS el_client,
+      '{architecture}' AS architecture"""
                 selects.append(select_sql)
         else:
             # For smaller sets, use a single arrayConcat
@@ -523,7 +547,8 @@ def _build_attester_map_union_selects(_network_spec, attester_type: Optional[str
       arrayJoin(arrayConcat({','.join(range_parts)})) AS validator_index,
       '{node_type}' AS node_type,
       '{cl}' AS cl_client,
-      '{el}' AS el_client"""
+      '{el}' AS el_client,
+      '{architecture}' AS architecture"""
             selects.append(select_sql)
 
     if not selects:
@@ -589,8 +614,12 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
         if not hasattr(_build_proposer_map_union_selects, cache_key):
             node_info = network_spec.get_node_info(node_name) or {}
             tags = network_spec.get_node_tags(node_name) or []
-            node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
-            
+            groups = node_info.get('groups', [])
+            attributes = node_info.get('attributes', {})
+            node_is_supernode = 'supernode' in tags or attributes.get('supernode', False)
+            node_architecture = 'ARM' if 'arm' in groups else 'x86'
+            # Operator will come from dim_node join, not from YAML
+
             # Extract clients from tags
             cl = ''
             el = ''
@@ -599,14 +628,14 @@ def _build_proposer_map_union_selects(network_spec, eligible_slots: List[int], s
                     cl = tag.split(':')[1]
                 elif tag.startswith('el:') and len(tag.split(':')) == 2:
                     el = tag.split(':')[1]
-            
+
             node_type = 'supernode' if node_is_supernode else 'regular'
-            setattr(_build_proposer_map_union_selects, cache_key, (node_type, cl, el))
-        
-        node_type, cl, el = getattr(_build_proposer_map_union_selects, cache_key)
-        
-        # Build SELECT for this slot
-        select_sql = f"SELECT {slot} AS slot, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client"
+            setattr(_build_proposer_map_union_selects, cache_key, (node_type, cl, el, node_architecture))
+
+        node_type, cl, el, architecture = getattr(_build_proposer_map_union_selects, cache_key)
+
+        # Build SELECT for this slot - operator will be joined from dim_node
+        select_sql = f"SELECT {slot} AS slot, {proposer_index} AS proposer_index, '{node_type}' AS node_type, '{cl}' AS cl_client, '{el}' AS el_client, '{architecture}' AS architecture"
         selects.append(select_sql)
     
     logger.info(f"Built proposer map for {len(selects)} slots out of {len(eligible_slots)} eligible slots")
@@ -627,7 +656,8 @@ def _build_group_index_map(
     grouping_dimension: str,
     attester_type: Optional[str],
     cl_filter: Optional[List[str]],
-    el_filter: Optional[List[str]]
+    el_filter: Optional[List[str]],
+    architecture_filter: Optional[List[str]]
 ) -> Dict[str, List[int]]:
     """Build a mapping of group_key -> validator indices using network_spec."""
     groups: Dict[str, List[int]] = {}
@@ -641,7 +671,9 @@ def _build_group_index_map(
             continue
         start, end = v_range
         tags = network_spec.get_node_tags(node_name) or []
+        groups = node_info.get('groups', [])
         node_is_supernode = 'supernode' in tags or node_info.get('attributes', {}).get('supernode', False)
+        node_architecture = 'ARM' if 'arm' in groups else 'x86'
         clients = network_spec.get_node_clients(node_name)
         cl = clients.get('cl') or ''
         el = clients.get('el') or ''
@@ -650,6 +682,8 @@ def _build_group_index_map(
         if attester_type == 'supernode' and not node_is_supernode:
             continue
         if attester_type == 'regular' and node_is_supernode:
+            continue
+        if architecture_filter and node_architecture not in architecture_filter:
             continue
         if cl_filter and cl not in cl_filter:
             continue
@@ -675,6 +709,12 @@ def _build_group_index_map(
                 continue
             node_type = 'supernode' if node_is_supernode else 'regular'
             key = f"{cl}-{node_type}"
+        elif grouping_dimension == 'cl_architecture':
+            if not cl:
+                continue
+            key = f"{cl}-{node_architecture}"
+        elif grouping_dimension == 'architecture':
+            key = node_architecture
         else:
             key = 'all'
 
@@ -694,18 +734,20 @@ def load_head_correctness_data(
     attester_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
+    architecture_filter: Optional[List[str]] = None,
+    operator_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
     attester_grouping_dimension: Optional[str] = None,  # New parameter
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Load head correctness data by analyzing attestations against proposed blocks.
-    
+
     For each slot:
     1. Get total validators scheduled to attest (from committee assignments)
     2. Get attestations that voted for the proposed block_root (including reorged blocks)
     3. Calculate head correctness percentage
-    
+
     Args:
         network: Network name
         start_date: Start of analysis period
@@ -717,9 +759,11 @@ def load_head_correctness_data(
         attester_type: Filter by attester node type
         cl_filter: Filter by CL implementations
         el_filter: Filter by EL implementations
-        grouping_dimension: Optional grouping dimension
+        architecture_filter: Filter by architecture (ARM, x86)
+        grouping_dimension: Optional grouping dimension for proposers
+        attester_grouping_dimension: Optional grouping dimension for attesters
         cluster_name: Optional cluster name
-        
+
     Returns:
         DataFrame with head correctness data by slot
     """
@@ -894,11 +938,20 @@ def load_head_correctness_data(
 
                     # Use the grouped query
                     sql = get_head_correctness_per_slot_grouped_query(group_by=grouping_dimension)
-                    
+
                     # Create slot string for this chunk
                     chunk_slots_str = '(' + ','.join(str(s) for s in slot_chunk) + ')'
                     sql = sql.replace('%(eligible_slots)s', chunk_slots_str)
                     sql = sql.replace('{proposer_map_union_selects}', proposer_map_sql)
+                    sql = sql.replace('{network}', network)
+
+                    # Add operator filter if provided
+                    if operator_filter:
+                        operator_list = ','.join([f"'{op}'" for op in operator_filter])
+                        operator_where = f"WHERE dn.source IN ({operator_list})"
+                        sql = sql.replace('{operator_filter_proposer}', operator_where)
+                    else:
+                        sql = sql.replace('{operator_filter_proposer}', '')
                     
                     # Apply validator filter for attester filtering even in grouped queries
                     # Build validator filter from the attester-filtered validator ranges
@@ -1088,15 +1141,18 @@ def load_head_correctness_data(
                 df['group_label'] = df['group_key']
             
             # If attester grouping is also requested, load that data too
-            if attester_grouping_dimension and attester_grouping_dimension != 'none':
+            # Note: We load attester data even when grouping is 'none' to show all attesters as a single series
+            if attester_grouping_dimension:
                 logger.info(f"Loading attester-grouped data with dimension: {attester_grouping_dimension}")
                 
                 # Build attester map for grouping
                 attester_map_sql = _build_attester_map_union_selects(
-                    network_spec, 
-                    attester_type, 
-                    cl_filter, 
-                    el_filter
+                    network_spec,
+                    attester_type,
+                    cl_filter,
+                    el_filter,
+                    architecture_filter,
+                    operator_filter
                 )
                 
                 if not attester_map_sql:
@@ -1108,6 +1164,15 @@ def load_head_correctness_data(
                 attester_sql = get_head_correctness_per_slot_attester_grouped_query(group_by=attester_grouping_dimension)
                 attester_sql = attester_sql.replace('%(eligible_slots)s', slots_str)
                 attester_sql = attester_sql.replace('{attester_map_union_selects}', attester_map_sql)
+                attester_sql = attester_sql.replace('{network}', network)
+
+                # Add operator filter if provided
+                if operator_filter:
+                    operator_list = ','.join([f"'{op}'" for op in operator_filter])
+                    operator_where = f"WHERE dn.source IN ({operator_list})"
+                    attester_sql = attester_sql.replace('{operator_filter_attester}', operator_where)
+                else:
+                    attester_sql = attester_sql.replace('{operator_filter_attester}', '')
 
                 # Apply validator filter for attester filtering - SAME AS PROPOSER QUERY
                 # Build validator filter from the attester-filtered validator ranges
@@ -1143,16 +1208,21 @@ def load_head_correctness_data(
                 if not attester_df.empty:
                     # Filter out any rows with null or empty group_key values
                     # This can happen if validators are not in our network spec
+                    # Exception: when grouping is 'none', group_key will be 'all' which is valid
                     initial_count = len(attester_df)
                     attester_df = attester_df[attester_df['group_key'].notna()]
-                    attester_df = attester_df[~attester_df['group_key'].isin(['', 'None', 'nan'])]
+                    if attester_grouping_dimension != 'none':
+                        # Only filter out empty values when not using 'none' grouping
+                        attester_df = attester_df[~attester_df['group_key'].isin(['', 'None', 'nan'])]
                     filtered_count = initial_count - len(attester_df)
                     if filtered_count > 0:
                         logger.info(f"Filtered out {filtered_count} rows with empty/unknown group_key values")
                     
                     # Add labels for attester groups
                     attester_df['group_key'] = attester_df['group_key'].astype(str)
-                    if attester_grouping_dimension == 'node_type':
+                    if attester_grouping_dimension == 'none':
+                        attester_df['group_label'] = 'All Attesters'
+                    elif attester_grouping_dimension == 'node_type':
                         attester_df['group_label'] = attester_df['group_key'].map({
                             'supernode': 'Supernode',
                             'regular': 'Regular Node'

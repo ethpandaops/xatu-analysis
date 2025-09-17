@@ -73,13 +73,13 @@ def _get_smart_colors(group_keys: list, grouping_dimension: str) -> Dict[str, st
     color_map = {}
     
     # Simple groupings - just assign colors directly
-    if grouping_dimension in ['none', 'node_type', 'cl_client', 'el_client', 'block_building']:
+    if grouping_dimension in ['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'block_building']:
         for idx, key in enumerate(sorted(group_keys)):
             color_map[key] = base_colors[idx % len(base_colors)]
         return color_map
-    
+
     # Hierarchical groupings - parse and assign colors intelligently
-    if grouping_dimension in ['cl_el_combined', 'cl_node_type', 'el_node_type', 'node_type_mev', 'cl_node_type_mev']:
+    if grouping_dimension in ['cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator', 'node_type_mev', 'cl_node_type_mev']:
         # Parse keys to find primary components
         primary_components = {}
         
@@ -98,6 +98,20 @@ def _get_smart_colors(group_keys: list, grouping_dimension: str) -> Dict[str, st
             
             elif grouping_dimension == 'cl_node_type':
                 # Format: "lighthouse-supernode"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # CL client
+                    primary_components.setdefault(primary, []).append(key)
+
+            elif grouping_dimension == 'cl_architecture':
+                # Format: "lighthouse-ARM" or "prysm-x86"
+                parts = key.split('-')
+                if len(parts) >= 1:
+                    primary = parts[0]  # CL client
+                    primary_components.setdefault(primary, []).append(key)
+
+            elif grouping_dimension == 'cl_operator':
+                # Format: "lighthouse-digitalocean" or "prysm-hetzner"
                 parts = key.split('-')
                 if len(parts) >= 1:
                     primary = parts[0]  # CL client
@@ -282,14 +296,38 @@ def create_head_correctness_chart(
             x_order = sorted(df['blob_count'].dropna().unique())
             x_title = 'Blob Count'
         else:
-            # Create exactly num_buckets buckets across the blob range
-            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
-            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
-            edges[-1] = max_blobs + 1  # Ensure last edge includes max value
-            
+            # Create non-overlapping integer buckets
+            # Calculate ideal bucket size
+            ideal_bucket_size = blob_range / num_buckets
+
+            # If we can't divide evenly, reduce number of buckets
+            if ideal_bucket_size != int(ideal_bucket_size):
+                # Find the largest number of buckets that divides evenly
+                for actual_buckets in range(num_buckets, 0, -1):
+                    if blob_range % actual_buckets == 0 or actual_buckets == 1:
+                        num_buckets = actual_buckets
+                        break
+                    # Also accept if we can create reasonable buckets
+                    bucket_size = blob_range // actual_buckets + (1 if blob_range % actual_buckets > 0 else 0)
+                    if bucket_size * actual_buckets >= blob_range:
+                        num_buckets = actual_buckets
+                        break
+
+            # Create bucket edges ensuring no overlaps
+            edges = []
+            current = min_blobs
+            bucket_size = blob_range // num_buckets
+            remainder = blob_range % num_buckets
+
+            for i in range(num_buckets):
+                edges.append(current)
+                # Distribute remainder across first buckets
+                current += bucket_size + (1 if i < remainder else 0)
+            edges.append(max_blobs + 1)  # Final edge
+
             df['blob_bucket'] = pd.cut(df['blob_count'], bins=edges, include_lowest=True, right=False)
             df['blob_bucket_label'] = df['blob_bucket'].apply(
-                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)}" if pd.notna(x) else "Unknown"
+                lambda x: f"{int(x.left)}-{int(x.right-1)}" if pd.notna(x) else "Unknown"
             )
             x_col = 'blob_bucket_label'
             x_order = sorted(df['blob_bucket_label'].dropna().unique(), 
@@ -300,12 +338,36 @@ def create_head_correctness_chart(
         x_order = sorted(df['blob_count'].dropna().unique())
         x_title = 'Blob Count'
     
+    # Calculate total unique slots across all buckets to determine threshold
+    total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
+    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Calculate unique slots per bucket across all groups
+    bucket_slot_totals = {}
+    for x_val in x_order:
+        x_df = df[df[x_col] == x_val]
+        if not x_df.empty:
+            bucket_slot_totals[x_val] = x_df['slot'].nunique()
+        else:
+            bucket_slot_totals[x_val] = 0
+
+    # Filter out buckets that have less than 5% of total slots
+    filtered_x_order = [
+        x_val for x_val in x_order
+        if bucket_slot_totals.get(x_val, 0) >= slot_threshold
+    ]
+
+    # If all buckets are filtered out, keep at least the largest one
+    if not filtered_x_order and x_order:
+        max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
+        filtered_x_order = [max_bucket]
+
     fig = go.Figure()
-    
+
     # Get smart color assignments
     unique_groups = df['group_key'].unique()
     color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
-    
+
     # Create traces for each group
     for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
@@ -334,10 +396,11 @@ def create_head_correctness_chart(
             'slot': 'nunique'  # Count unique slots, not rows
         }).reset_index()
         agg.rename(columns={'slot': 'sample_count'}, inplace=True)
-        
-        # Sort by x_order to ensure proper line connection
+
+        # Filter to only include buckets in filtered_x_order and sort
+        agg = agg[agg[x_col].isin(filtered_x_order)]
         agg['sort_key'] = agg[x_col].apply(
-            lambda x: x_order.index(x) if x in x_order else -1
+            lambda x: filtered_x_order.index(x) if x in filtered_x_order else -1
         )
         agg = agg[agg['sort_key'] >= 0].sort_values('sort_key')
         
@@ -463,7 +526,7 @@ def create_head_correctness_chart(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='closest',
         legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
@@ -529,14 +592,38 @@ def create_head_correctness_boxplot(
             x_col = 'blob_count'
             x_order = sorted(df['blob_count'].dropna().unique())
         else:
-            # Create exactly num_buckets buckets across the blob range
-            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
-            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
-            edges[-1] = max_blobs + 1  # Ensure last edge includes max value
-            
+            # Create non-overlapping integer buckets
+            # Calculate ideal bucket size
+            ideal_bucket_size = blob_range / num_buckets
+
+            # If we can't divide evenly, reduce number of buckets
+            if ideal_bucket_size != int(ideal_bucket_size):
+                # Find the largest number of buckets that divides evenly
+                for actual_buckets in range(num_buckets, 0, -1):
+                    if blob_range % actual_buckets == 0 or actual_buckets == 1:
+                        num_buckets = actual_buckets
+                        break
+                    # Also accept if we can create reasonable buckets
+                    bucket_size = blob_range // actual_buckets + (1 if blob_range % actual_buckets > 0 else 0)
+                    if bucket_size * actual_buckets >= blob_range:
+                        num_buckets = actual_buckets
+                        break
+
+            # Create bucket edges ensuring no overlaps
+            edges = []
+            current = min_blobs
+            bucket_size = blob_range // num_buckets
+            remainder = blob_range % num_buckets
+
+            for i in range(num_buckets):
+                edges.append(current)
+                # Distribute remainder across first buckets
+                current += bucket_size + (1 if i < remainder else 0)
+            edges.append(max_blobs + 1)  # Final edge
+
             df['blob_bucket'] = pd.cut(df['blob_count'], bins=edges, include_lowest=True, right=False)
             df['blob_bucket_label'] = df['blob_bucket'].apply(
-                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)}" if pd.notna(x) else "Unknown"
+                lambda x: f"{int(x.left)}-{int(x.right-1)}" if pd.notna(x) else "Unknown"
             )
             x_col = 'blob_bucket_label'
             x_order = sorted(df['blob_bucket_label'].dropna().unique(), 
@@ -545,12 +632,10 @@ def create_head_correctness_boxplot(
         x_col = 'blob_count'
         x_order = sorted(df['blob_count'].dropna().unique())
 
-    fig = go.Figure()
-    
-    # Get smart color assignments
-    unique_groups = df['group_key'].unique()
-    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
-    
+    # Calculate total unique slots across all buckets to determine threshold
+    total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
+    slot_threshold = total_slots * 0.05  # 5% threshold
+
     # Track unique slots per bucket (across all groups)
     # Calculate from actual data to ensure accuracy with grouped data
     unique_slots_per_bucket = {}
@@ -565,6 +650,23 @@ def create_head_correctness_boxplot(
                 # Count unique slots in this bucket (regardless of how many groups we have)
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
+
+    # Filter out buckets that have less than 5% of total slots
+    filtered_x_order = [
+        x_val for x_val in x_order
+        if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
+    ]
+
+    # If all buckets are filtered out, keep at least the largest one
+    if not filtered_x_order and x_order:
+        max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
+        filtered_x_order = [max_bucket]
+
+    fig = go.Figure()
+
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
 
     for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
@@ -625,10 +727,13 @@ def create_head_correctness_boxplot(
             "<extra></extra>"
         )
 
+        # Filter data to only include buckets that meet the threshold
+        filtered_gdf = gdf[gdf[x_col].isin(filtered_x_order)]
+
         fig.add_trace(
             go.Box(
-                x=gdf[x_col],
-                y=gdf['head_correctness_pct'],
+                x=filtered_gdf[x_col],
+                y=filtered_gdf['head_correctness_pct'],
                 name=glabel,
                 marker_color=color,
                 boxmean=False,
@@ -640,11 +745,11 @@ def create_head_correctness_boxplot(
 
     # Add sample count annotations with true unique slot counts (skip for attester charts)
     if 'Attester' not in title_suffix:
-        for x_val in x_order:
+        for x_val in filtered_x_order:  # Use filtered order
             if x_val in unique_slots_per_bucket:
                 fig.add_annotation(
                     x=x_val,
-                    y=-0.12,  # Position below the plot area
+                    y=-0.08,  # Position below the plot area
                     text=f"({unique_slots_per_bucket[x_val]:,} slots)",
                     showarrow=False,
                     font=dict(size=10, color='#333'),
@@ -703,11 +808,11 @@ def create_head_correctness_boxplot(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='closest',
         legend=dict(title=dict(text=legend_title), itemclick='toggle', itemdoubleclick='toggleothers', orientation='v', yanchor='top', y=0.95, xanchor='left', x=1.02, bgcolor='rgba(255,255,255,0.9)', bordercolor='rgba(0,0,0,0.3)', borderwidth=1),
-        xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=dict(text='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'), standoff=25), categoryorder='array', categoryarray=x_order),
+        xaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=dict(text='All Blob Counts' if num_buckets == 1 else ('Blob Count Buckets' if num_buckets and num_buckets > 1 else 'Blob Count'), standoff=25), categoryorder='array', categoryarray=filtered_x_order),
         yaxis=dict(showline=True, linewidth=1, linecolor='black', ticks='outside', title=f'Head {metric_label} (%)', range=[0, 100]),
         margin=dict(r=200, t=120, l=80, b=100),
         boxmode='group'
@@ -772,11 +877,9 @@ def create_head_correctness_violin(
         x_col = 'blob_count'
         x_order = sorted(df['blob_count'].dropna().unique())
     
-    fig = go.Figure()
-
-    # Get smart color assignments
-    unique_groups = df['group_key'].unique()
-    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
+    # Calculate total unique slots across all buckets to determine threshold
+    total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
+    slot_threshold = total_slots * 0.05  # 5% threshold
 
     # Track unique slots per bucket (across all groups)
     # Calculate from actual data to ensure accuracy with grouped data
@@ -792,6 +895,23 @@ def create_head_correctness_violin(
                 # Count unique slots in this bucket (regardless of how many groups we have)
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
+
+    # Filter out buckets that have less than 5% of total slots
+    filtered_x_order = [
+        x_val for x_val in x_order
+        if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
+    ]
+
+    # If all buckets are filtered out, keep at least the largest one
+    if not filtered_x_order and x_order:
+        max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
+        filtered_x_order = [max_bucket]
+
+    fig = go.Figure()
+
+    # Get smart color assignments
+    unique_groups = df['group_key'].unique()
+    color_map = _get_smart_colors(list(unique_groups), grouping_dimension)
 
     for g in sorted(df['group_key'].unique()):
         gdf = df[df['group_key'] == g]
@@ -818,7 +938,7 @@ def create_head_correctness_violin(
                 glabel = str(g).replace('supernode', 'Supernode').replace('regular', 'Regular').replace('-', ' + ').title()
 
         # For each x value (blob count or bucket), create a violin
-        for x_val in x_order:
+        for x_val in filtered_x_order:  # Use filtered order
             subset = gdf[gdf[x_col] == x_val]
             if not subset.empty:
                 # No longer track per-group counts (handled at bucket level)
@@ -829,7 +949,7 @@ def create_head_correctness_violin(
                         y=subset['head_correctness_pct'],
                         name=glabel,
                         legendgroup=glabel,
-                        showlegend=(x_val == x_order[0]),  # Only show legend once per group
+                        showlegend=(x_val == filtered_x_order[0]),  # Only show legend once per group
                         marker_color=color_map.get(g, '#999999'),
                         box_visible=True,
                         meanline_visible=True,
@@ -844,18 +964,18 @@ def create_head_correctness_violin(
 
     # Add sample count annotations with true unique slot counts (skip for attester charts)
     if 'Attester' not in title_suffix:
-        for x_val in x_order:
+        for x_val in filtered_x_order:  # Use filtered order
             if x_val in unique_slots_per_bucket:
                 fig.add_annotation(
                     x=x_val,
-                    y=-0.12,  # Position below the plot area
+                    y=-0.08,  # Position below the plot area
                     text=f"({unique_slots_per_bucket[x_val]:,} slots)",
                     showarrow=False,
                     font=dict(size=10, color='#333'),
                     xref='x',
                     yref='paper'
                 )
-    
+
     # Set title based on grouping
     group_names = {
         'node_type': 'Node Type',
@@ -912,7 +1032,7 @@ def create_head_correctness_violin(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='closest',
         legend=dict(
@@ -938,7 +1058,7 @@ def create_head_correctness_violin(
                 standoff=25
             ),
             categoryorder='array',
-            categoryarray=x_order
+            categoryarray=filtered_x_order
         ),
         yaxis=dict(
             showline=True,
@@ -1319,14 +1439,38 @@ def create_head_correctness_ecdf(
             bucket_col = 'blob_bucket_label'
             bucket_order = sorted(df['blob_bucket_label'].dropna().unique(), key=lambda s: int(s) if s.isdigit() else 0)
         else:
-            # Create exactly num_buckets buckets across the blob range
-            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
-            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
-            edges[-1] = max_blobs + 1  # Ensure last edge includes max value
-            
+            # Create non-overlapping integer buckets
+            # Calculate ideal bucket size
+            ideal_bucket_size = blob_range / num_buckets
+
+            # If we can't divide evenly, reduce number of buckets
+            if ideal_bucket_size != int(ideal_bucket_size):
+                # Find the largest number of buckets that divides evenly
+                for actual_buckets in range(num_buckets, 0, -1):
+                    if blob_range % actual_buckets == 0 or actual_buckets == 1:
+                        num_buckets = actual_buckets
+                        break
+                    # Also accept if we can create reasonable buckets
+                    bucket_size = blob_range // actual_buckets + (1 if blob_range % actual_buckets > 0 else 0)
+                    if bucket_size * actual_buckets >= blob_range:
+                        num_buckets = actual_buckets
+                        break
+
+            # Create bucket edges ensuring no overlaps
+            edges = []
+            current = min_blobs
+            bucket_size = blob_range // num_buckets
+            remainder = blob_range % num_buckets
+
+            for i in range(num_buckets):
+                edges.append(current)
+                # Distribute remainder across first buckets
+                current += bucket_size + (1 if i < remainder else 0)
+            edges.append(max_blobs + 1)  # Final edge
+
             df['blob_bucket'] = pd.cut(df['blob_count'], bins=edges, include_lowest=True, right=False)
             df['blob_bucket_label'] = df['blob_bucket'].apply(
-                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)}" if pd.notna(x) else "Unknown"
+                lambda x: f"{int(x.left)}-{int(x.right-1)}" if pd.notna(x) else "Unknown"
             )
             bucket_col = 'blob_bucket_label'
             bucket_order = sorted(df['blob_bucket_label'].dropna().unique(), 
@@ -1460,7 +1604,7 @@ def create_head_correctness_ecdf(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='closest',
         legend=dict(
@@ -1600,14 +1744,38 @@ def create_head_correctness_inverse_cdf(
             bucket_col = 'blob_bucket_label'
             bucket_order = sorted(df['blob_bucket_label'].dropna().unique(), key=lambda s: int(s) if s.isdigit() else 0)
         else:
-            # Create exactly num_buckets buckets across the blob range
-            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
-            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
-            edges[-1] = max_blobs + 1  # Ensure last edge includes max value
-            
+            # Create non-overlapping integer buckets
+            # Calculate ideal bucket size
+            ideal_bucket_size = blob_range / num_buckets
+
+            # If we can't divide evenly, reduce number of buckets
+            if ideal_bucket_size != int(ideal_bucket_size):
+                # Find the largest number of buckets that divides evenly
+                for actual_buckets in range(num_buckets, 0, -1):
+                    if blob_range % actual_buckets == 0 or actual_buckets == 1:
+                        num_buckets = actual_buckets
+                        break
+                    # Also accept if we can create reasonable buckets
+                    bucket_size = blob_range // actual_buckets + (1 if blob_range % actual_buckets > 0 else 0)
+                    if bucket_size * actual_buckets >= blob_range:
+                        num_buckets = actual_buckets
+                        break
+
+            # Create bucket edges ensuring no overlaps
+            edges = []
+            current = min_blobs
+            bucket_size = blob_range // num_buckets
+            remainder = blob_range % num_buckets
+
+            for i in range(num_buckets):
+                edges.append(current)
+                # Distribute remainder across first buckets
+                current += bucket_size + (1 if i < remainder else 0)
+            edges.append(max_blobs + 1)  # Final edge
+
             df['blob_bucket'] = pd.cut(df['blob_count'], bins=edges, include_lowest=True, right=False)
             df['blob_bucket_label'] = df['blob_bucket'].apply(
-                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)}" if pd.notna(x) else "Unknown"
+                lambda x: f"{int(x.left)}-{int(x.right-1)}" if pd.notna(x) else "Unknown"
             )
             bucket_col = 'blob_bucket_label'
             bucket_order = sorted(df['blob_bucket_label'].dropna().unique(), 
@@ -1716,7 +1884,7 @@ def create_head_correctness_inverse_cdf(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='closest',
         legend=dict(
@@ -1990,7 +2158,7 @@ def create_head_correctness_summary(
             font=dict(size=16, color="gray")
         )
         fig.update_layout(
-            height=400,
+            height=500,
             xaxis=dict(visible=False),
             yaxis=dict(visible=False)
         )
@@ -2061,20 +2229,44 @@ def create_head_correctness_bar(
         bucket_col = "blob_bucket_label"
         bucket_order = sorted(df["blob_bucket_label"].unique(), key=lambda x: int(x) if x.isdigit() else 0)
     
+    # First, calculate total unique slots across all buckets to determine threshold
+    total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
+    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Calculate unique slots per bucket across all groups
+    bucket_slot_totals = {}
+    for bucket in bucket_order:
+        bucket_df = df[df[bucket_col] == bucket]
+        if not bucket_df.empty:
+            bucket_slot_totals[bucket] = bucket_df['slot'].nunique()
+        else:
+            bucket_slot_totals[bucket] = 0
+
+    # Filter out buckets that have less than 5% of total slots
+    filtered_bucket_order = [
+        bucket for bucket in bucket_order
+        if bucket_slot_totals.get(bucket, 0) >= slot_threshold
+    ]
+
+    # If all buckets are filtered out, keep at least the largest one
+    if not filtered_bucket_order and bucket_order:
+        max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
+        filtered_bucket_order = [max_bucket]
+
     # Calculate mean correctness for each group and bucket combination
     bar_data = []
     for group_key in sorted(df["group_key"].unique()):
         group_df = df[df["group_key"] == group_key]
         group_label = group_df["group_label"].iloc[0] if not group_df.empty else str(group_key)
-        
+
         # Format group label
         if group_label:
             group_label = str(group_label).replace("supernode", "Supernode").replace("regular", "Regular").replace("-", " + ").title()
-        
+
         bucket_means = []
         bucket_counts = []
-        
-        for bucket in bucket_order:
+
+        for bucket in filtered_bucket_order:  # Use filtered bucket order
             bucket_df = group_df[group_df[bucket_col] == bucket]
             if not bucket_df.empty:
                 bucket_means.append(bucket_df["head_correctness_pct"].mean())
@@ -2085,7 +2277,7 @@ def create_head_correctness_bar(
 
         bar_data.append({
             "group": group_label,
-            "buckets": bucket_order,
+            "buckets": filtered_bucket_order,  # Use filtered bucket order
             "means": bucket_means,
             "counts": bucket_counts
         })
@@ -2117,7 +2309,9 @@ def create_head_correctness_bar(
             "<extra></extra>"
         )
 
-        # Add main bars
+        # Add main bars with conditional text position
+        # Use 'inside' for values >= 95% to prevent clipping, 'outside' for others
+        text_positions = ['inside' if mean >= 95 else 'outside' for mean in group_data["means"]]
         fig.add_trace(go.Bar(
             name=group_data["group"],
             x=group_data["buckets"],
@@ -2125,7 +2319,7 @@ def create_head_correctness_bar(
             marker_color=color_map.get(label_to_key_map.get(group_data["group"], group_data["group"]), '#999999'),
             opacity=0.9,
             text=[f"{mean:.1f}%" for mean in group_data["means"]],
-            textposition='outside',
+            textposition=text_positions,
             textfont=dict(size=10),
             customdata=customdata,
             hovertemplate=hover_template
@@ -2142,11 +2336,11 @@ def create_head_correctness_bar(
 
     # Add annotations for each bucket (skip for attester charts)
     if 'Attester' not in title_suffix:
-        for bucket in bucket_order:
+        for bucket in filtered_bucket_order:  # Use filtered bucket order
             if bucket in bucket_totals:
                 fig.add_annotation(
                     x=bucket,
-                    y=-0.12,  # Position below the plot area
+                    y=-0.08,  # Position below the plot area
                     text=f"({bucket_totals[bucket]:,} slots)",
                     showarrow=False,
                     font=dict(size=10, color='#333'),
@@ -2211,8 +2405,8 @@ def create_head_correctness_bar(
                 standoff=25
             ),
             tickmode='array',
-            tickvals=bucket_order,
-            ticktext=bucket_order,
+            tickvals=filtered_bucket_order,
+            ticktext=filtered_bucket_order,
             showline=True,
             linewidth=1,
             linecolor='black',
@@ -2220,13 +2414,16 @@ def create_head_correctness_bar(
         ),
         yaxis=dict(
             title=f'Head {metric_label} (%)',
-            range=[0, 100] if not is_incorrect else [0, max(30, max([max(d["means"]) for d in bar_data if d["means"]]) * 1.2 if bar_data else 30)],
+            range=[0, 105] if not is_incorrect else [0, max(30, max([max(d["means"]) for d in bar_data if d["means"]]) * 1.2 if bar_data else 30)],
             showline=True,
             linewidth=1,
             linecolor='black',
-            ticks='outside'
+            ticks='outside',
+            dtick=10,  # Show ticks every 10%
+            tickvals=[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],  # Only show ticks up to 100
+            ticktext=['0%', '10%', '20%', '30%', '40%', '50%', '60%', '70%', '80%', '90%', '100%']
         ),
-        height=600,
+        height=750,
         showlegend=True,
         legend=dict(
             title=dict(text=_get_legend_title(data)),
@@ -2344,7 +2541,7 @@ def create_dual_chart_if_needed(
             xanchor='left',
             font=dict(size=16)
         ),
-        height=600,
+        height=750,
         showlegend=True,
         hovermode='x unified',
         margin=dict(r=150, t=120, l=80, b=80)

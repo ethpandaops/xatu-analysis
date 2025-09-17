@@ -182,13 +182,13 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     """
     Compute head correctness per slot grouped by PROPOSER characteristics.
 
-    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'cl_el_combined' | 'cl_node_type' | 
-                        'node_type_mev' | 'cl_node_type_mev'
+    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'architecture' | 'cl_el_combined' | 'cl_node_type' |
+                        'cl_architecture' | 'node_type_mev' | 'cl_node_type_mev'
 
     Requires inline proposer mapping injected as {proposer_map_union_selects}, e.g.,
-      SELECT 12345 AS slot, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client
-      UNION ALL  
-      SELECT 12346 AS slot, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client
+      SELECT 12345 AS slot, 100 AS proposer_index, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client, 'ARM' AS architecture
+      UNION ALL
+      SELECT 12346 AS slot, 101 AS proposer_index, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client, 'x86' AS architecture
     """
     # For MEV grouping, we need to handle the MEV check differently
     # Check if mev.slot is not null AND > 0 to handle corrupt data
@@ -206,8 +206,12 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
             'node_type': "coalesce(pm.node_type, 'unknown')",
             'cl_client': "coalesce(pm.cl_client, 'unknown')",
             'el_client': "coalesce(pm.el_client, 'unknown')",
+            'architecture': "coalesce(pm.architecture, 'unknown')",
+            'operator': "coalesce(pm.operator, 'unknown')",
             'cl_el_combined': "coalesce(concat(pm.cl_client, '-', pm.el_client), 'unknown')",
-            'cl_node_type': "coalesce(concat(pm.cl_client, '-', pm.node_type), 'unknown')"
+            'cl_node_type': "coalesce(concat(pm.cl_client, '-', pm.node_type), 'unknown')",
+            'cl_architecture': "coalesce(concat(pm.cl_client, '-', pm.architecture), 'unknown')",
+            'cl_operator': "coalesce(concat(pm.cl_client, '-', pm.operator), 'unknown')"
         }.get(group_by, "coalesce(pm.node_type, 'unknown')")
 
     return f"""
@@ -239,6 +243,14 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
     proposer_map AS (
       {{proposer_map_union_selects}}
     ),
+    proposer_map_with_operator AS (
+      SELECT DISTINCT
+        pm.*,
+        coalesce(dn.source, 'unknown') AS operator
+      FROM proposer_map pm
+      LEFT JOIN `{{network}}`.dim_node dn ON pm.proposer_index = dn.validator_index
+      {{operator_filter_proposer}}
+    ),
     -- Committee members for filtering to valid slots only
     -- NOTE: Only uses canonical_beacon_committee to avoid duplicate/corrupt data issues
     committee_members AS (
@@ -258,13 +270,13 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       INNER JOIN committee_slots cs ON es.slot = cs.slot
     ),
     slots_with_proposer_info AS (
-      SELECT 
-        es.slot AS slot, 
-        es.block_root AS block_root, 
-        es.proposer_index AS proposer_index, 
+      SELECT
+        es.slot AS slot,
+        es.block_root AS block_root,
+        es.proposer_index AS proposer_index,
         {group_expr} AS group_key
       FROM eligible_slots_filtered es
-      LEFT JOIN proposer_map pm ON es.slot = pm.slot
+      LEFT JOIN proposer_map_with_operator pm ON es.slot = pm.slot
       LEFT JOIN mev_slots mev ON es.slot = mev.slot
     ),
     attested_unique AS (
@@ -508,16 +520,16 @@ def build_validator_filter_ranges(validator_ranges: list = None) -> str:
 def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
     """
     Compute head correctness grouped by ATTESTER characteristics.
-    
+
     This groups validators by their node characteristics and calculates
     head correctness for each group across all slots.
-    
-    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'cl_el_combined' | 'cl_node_type' | 'el_node_type'
+
+    Supported group_by: 'node_type' | 'cl_client' | 'el_client' | 'architecture' | 'cl_el_combined' | 'cl_node_type' | 'el_node_type' | 'cl_architecture'
 
     Requires inline attester mapping injected as {attester_map_union_selects}, e.g.,
-      SELECT 12345 AS validator_index, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client
-      UNION ALL  
-      SELECT 12346 AS validator_index, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client
+      SELECT 12345 AS validator_index, 'supernode' AS node_type, 'lighthouse' AS cl_client, 'geth' AS el_client, 'ARM' AS architecture
+      UNION ALL
+      SELECT 12346 AS validator_index, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client, 'x86' AS architecture
     """
     # Determine group expression
     # Note: No need for coalesce since we're INNER JOINing with attester_map
@@ -528,15 +540,27 @@ def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
             'node_type': "am.node_type",
             'cl_client': "am.cl_client",
             'el_client': "am.el_client",
+            'architecture': "am.architecture",
+            'operator': "am.operator",
             'cl_el_combined': "concat(am.cl_client, '-', am.el_client)",
             'cl_node_type': "concat(am.cl_client, '-', am.node_type)",
-            'el_node_type': "concat(am.el_client, '-', am.node_type)"
+            'el_node_type': "concat(am.el_client, '-', am.node_type)",
+            'cl_architecture': "concat(am.cl_client, '-', am.architecture)",
+            'cl_operator': "concat(am.cl_client, '-', am.operator)"
         }.get(group_by, "am.node_type")
     
     # Build CTEs properly - need to handle the placeholder replacements
     eligible_slots = _get_eligible_slots_cte().strip()
-    attester_map = """attester_map AS (
+    attester_map = """attester_map_base AS (
       {attester_map_union_selects}
+    ),
+    attester_map AS (
+      SELECT DISTINCT
+        amb.*,
+        coalesce(dn.source, 'unknown') AS operator
+      FROM attester_map_base amb
+      LEFT JOIN `{network}`.dim_node dn ON amb.validator_index = dn.validator_index
+      {operator_filter_attester}
     )"""
     committee_members = _get_committee_members_cte().strip()
     committee_slots = _get_committee_slots_cte().strip()
