@@ -28,17 +28,21 @@ def _get_eligible_slots_cte() -> str:
 
 
 def _get_mev_slots_cte() -> str:
-    """CTE for identifying MEV relay slots."""
+    """CTE for identifying MEV relay slots using int_block_mev_head table."""
     return """
-    mev_slots AS (
+    mev_slots_list AS (
       -- Get slots that were delivered via MEV relay
-      -- IMPORTANT: Filter out slot = 0 which is invalid/corrupt data
+      -- Using int_block_mev_head table which indicates MEV blocks
       SELECT DISTINCT slot
-      FROM mev_relay_proposer_payload_delivered
+      FROM int_block_mev_head
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s
         AND slot > 0  -- Filter out corrupt entries with slot = 0
+    ),
+    mev_slots AS (
+      -- Materialize as array to avoid distributed join issues
+      SELECT groupArray(slot) as slots FROM mev_slots_list
     )"""
 
 
@@ -190,17 +194,16 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       UNION ALL
       SELECT 12346 AS slot, 101 AS proposer_index, 'regular' AS node_type, 'prysm' AS cl_client, 'nethermind' AS el_client, 'x86' AS architecture
     """
-    # For MEV grouping, we need to handle the MEV check differently
-    # Check if mev.slot is not null AND > 0 to handle corrupt data
+    # For MEV grouping, check if slot is in the MEV array to avoid distributed join issues
     if group_by == 'none':
         # Special case: no grouping, show all proposers together
         group_expr = "'all'"
     elif group_by == 'block_building':
-        group_expr = "if(isNotNull(mev.slot) AND mev.slot > 0, 'mev', 'non-mev')"
+        group_expr = "if(has((SELECT slots FROM mev_slots), es.slot), 'mev', 'non-mev')"
     elif group_by == 'node_type_mev':
-        group_expr = "coalesce(concat(pm.node_type, '-', if(isNotNull(mev.slot) AND mev.slot > 0, 'mev', 'non-mev')), 'unknown')"
+        group_expr = "coalesce(concat(pm.node_type, '-', if(has((SELECT slots FROM mev_slots), es.slot), 'mev', 'non-mev')), 'unknown')"
     elif group_by == 'cl_node_type_mev':
-        group_expr = "coalesce(concat(pm.cl_client, '-', pm.node_type, '-', if(isNotNull(mev.slot) AND mev.slot > 0, 'mev', 'non-mev')), 'unknown')"
+        group_expr = "coalesce(concat(pm.cl_client, '-', pm.node_type, '-', if(has((SELECT slots FROM mev_slots), es.slot), 'mev', 'non-mev')), 'unknown')"
     else:
         group_expr = {
             'node_type': "coalesce(pm.node_type, 'unknown')",
@@ -230,15 +233,19 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
       -- In rare cases of multiple blocks per slot, just take any one (they're all valid proposals)
       LIMIT 1 BY slot
     ),
-    mev_slots AS (
+    mev_slots_list AS (
       -- Get slots that were delivered via MEV relay
-      -- IMPORTANT: Filter out slot = 0 which is invalid/corrupt data
+      -- Using int_block_mev_head table which indicates MEV blocks
       SELECT DISTINCT slot
-      FROM mev_relay_proposer_payload_delivered
+      FROM int_block_mev_head
       WHERE meta_network_name = %(network)s
         AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         AND slot GLOBAL IN %(eligible_slots)s
         AND slot > 0  -- Filter out corrupt entries with slot = 0
+    ),
+    mev_slots AS (
+      -- Materialize as array to avoid distributed join issues
+      SELECT groupArray(slot) as slots FROM mev_slots_list
     ),
     proposer_map AS (
       {{proposer_map_union_selects}}
@@ -277,7 +284,7 @@ def get_head_correctness_per_slot_grouped_query(group_by: str) -> str:
         {group_expr} AS group_key
       FROM eligible_slots_filtered es
       LEFT JOIN proposer_map_with_operator pm ON es.slot = pm.slot
-      LEFT JOIN mev_slots mev ON es.slot = mev.slot
+      CROSS JOIN mev_slots
     ),
     attested_unique AS (
       -- Get attestations and check correctness in one step
@@ -623,14 +630,15 @@ def get_head_correctness_per_slot_attester_grouped_query(group_by: str) -> str:
 def get_mev_slots_query() -> str:
     """
     Get slots that were delivered via MEV relay.
-    
-    Returns slots with MEV payloads from mev_relay_proposer_payload_delivered table.
+
+    Returns slots with MEV payloads from int_block_mev_head table.
+    If a slot exists in this table, it's an MEV block.
     Filters out slot = 0 which is invalid/corrupt data.
     """
     return """
     SELECT DISTINCT
         slot
-    FROM mev_relay_proposer_payload_delivered
+    FROM int_block_mev_head
     WHERE meta_network_name = %(network)s
       AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
       AND slot > 0  -- Filter out corrupt entries with slot = 0

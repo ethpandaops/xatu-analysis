@@ -66,21 +66,21 @@ def load_mev_slots(
     cluster_name: Optional[str] = None
 ) -> List[int]:
     """
-    Load slots that were delivered via MEV relay.
-    
+    Load slots that were delivered via MEV relay using int_block_mev_head table.
+
     Returns:
         List of slot numbers that had MEV payloads
     """
     logger.info(f"Loading MEV slots for network={network}")
-    
+
     conn = get_database_connection(cluster_name)
     if not conn:
         logger.error(f"Failed to get database connection for cluster: {cluster_name}")
         return []
-    
+
     sql = f"""
         SELECT DISTINCT slot
-        FROM `{network}`.mev_relay_proposer_payload_delivered
+        FROM `{network}`.int_block_mev_head
         WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
           AND slot > 0
         ORDER BY slot
@@ -96,7 +96,7 @@ def load_mev_slots(
         if df.empty:
             logger.info(f"No MEV slots found for network {network}")
             return []
-        
+
         mev_slots = df['slot'].tolist()
         logger.info(f"Found {len(mev_slots)} MEV slots for {network} between {start_date} and {end_date}")
         logger.info(f"MEV slot range: {min(mev_slots)} to {max(mev_slots)}")
@@ -119,19 +119,23 @@ def load_eligible_slots(
     el_filter: Optional[List[str]] = None,
     architecture_filter: Optional[List[str]] = None,
     operator_filter: Optional[List[str]] = None,
+    region_filter: Optional[List[str]] = None,
+    datacenter_filter: Optional[List[str]] = None,
     mev_filter: Optional[str] = None,
     cluster_name: Optional[str] = None
 ) -> Tuple[List[int], Dict[int, str], Dict[int, int], List[int]]:
     """Load proposer-filtered slots using dim_node metadata."""
 
     logger.info(
-        "Loading eligible slots (dim_node) for %s | proposer_type=%s cl=%s el=%s arch=%s operator=%s mev=%s",
+        "Loading eligible slots (dim_node) for %s | proposer_type=%s cl=%s el=%s arch=%s operator=%s region=%s datacenter=%s mev=%s",
         network,
         proposer_type,
         cl_filter,
         el_filter,
         architecture_filter,
         operator_filter,
+        region_filter,
+        datacenter_filter,
         mev_filter
     )
 
@@ -151,6 +155,10 @@ def load_eligible_slots(
         proposer_filters_sql += f"\n      AND coalesce(vm.architecture, 'unknown'){_format_in_clause(architecture_filter)}"
     if operator_filter:
         proposer_filters_sql += f"\n      AND coalesce(vm.operator, 'unknown'){_format_in_clause(operator_filter)}"
+    if region_filter:
+        proposer_filters_sql += f"\n      AND coalesce(vm.region, 'unknown'){_format_in_clause(region_filter)}"
+    if datacenter_filter:
+        proposer_filters_sql += f"\n      AND coalesce(vm.datacenter, 'unknown'){_format_in_clause(datacenter_filter)}"
 
     mev_filter_sql = _build_mev_filter_clause(mev_filter, alias='ps')
 
@@ -201,7 +209,9 @@ SELECT
   coalesce(arrayElement(splitByChar(':', arrayFilter(x -> startsWith(x, 'el:'), tags)[1]), 2), 'unknown') AS el_client,
   IF(attributes['isClSupernode'] = 'true', 'supernode', 'regular') AS node_type,
   IF(arrayExists(x -> x = 'arch:arm', tags) OR lower(name) LIKE '%%arm%%', 'ARM', 'x86') AS architecture,
-  coalesce(source, 'unknown') AS operator
+  coalesce(source, 'unknown') AS operator,
+  coalesce(attributes['cloudRegion'], 'unknown') AS region,
+  coalesce(attributes['cloud'], 'unknown') AS datacenter
 FROM `{network}`.dim_node FINAL
 """.replace('{network}', network).strip()
 
@@ -214,12 +224,14 @@ SELECT
   base.slot AS slot,
   base.block_root AS block_root,
   base.proposer_validator_index AS proposer_validator_index,
-  if(ms.slot IS NOT NULL, 'mev', 'non-mev') AS mev_status,
+  if(ms.slot > 0, 'mev', 'non-mev') AS mev_status,
   vm.cl_client      AS proposer_cl_client,
   vm.el_client      AS proposer_el_client,
   vm.node_type      AS proposer_node_type,
   vm.architecture   AS proposer_architecture,
-  vm.operator       AS proposer_operator
+  vm.operator       AS proposer_operator,
+  vm.region         AS proposer_region,
+  vm.datacenter     AS proposer_datacenter
 FROM (
   SELECT slot, block_root, proposer_validator_index, slot_start_date_time
   FROM `{network}`.int_block_proposer_head FINAL
@@ -227,7 +239,7 @@ FROM (
 ) AS base
 LEFT JOIN (
   SELECT DISTINCT slot
-  FROM `{network}`.mev_relay_proposer_payload_delivered
+  FROM `{network}`.int_block_mev_head
   WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
 ) ms ON base.slot = ms.slot
 LEFT JOIN (
@@ -250,7 +262,9 @@ SELECT
   vm.el_client      AS attester_el_client,
   vm.node_type      AS attester_node_type,
   vm.architecture   AS attester_architecture,
-  vm.operator       AS attester_operator
+  vm.operator       AS attester_operator,
+  vm.region         AS attester_region,
+  vm.datacenter     AS attester_datacenter
 FROM (
   SELECT slot, attesting_validator_index, status, slot_distance, slot_start_date_time
   FROM `{network}`.fct_attestation_correctness_by_validator_canonical FINAL
@@ -279,7 +293,9 @@ def _build_attester_filter_clause(
     cl_filter: Optional[List[str]],
     el_filter: Optional[List[str]],
     architecture_filter: Optional[List[str]],
-    operator_filter: Optional[List[str]]
+    operator_filter: Optional[List[str]],
+    region_filter: Optional[List[str]] = None,
+    datacenter_filter: Optional[List[str]] = None
 ) -> str:
     clause = ""
     if attester_type:
@@ -292,6 +308,10 @@ def _build_attester_filter_clause(
         clause += f"\n      AND coalesce(vm.architecture, 'unknown'){_format_in_clause(architecture_filter)}"
     if operator_filter:
         clause += f"\n      AND coalesce(vm.operator, 'unknown'){_format_in_clause(operator_filter)}"
+    if region_filter:
+        clause += f"\n      AND coalesce(vm.region, 'unknown'){_format_in_clause(region_filter)}"
+    if datacenter_filter:
+        clause += f"\n      AND coalesce(vm.datacenter, 'unknown'){_format_in_clause(datacenter_filter)}"
     return clause
 
 
@@ -300,7 +320,9 @@ def _build_proposer_filter_clause(
     cl_filter: Optional[List[str]],
     el_filter: Optional[List[str]],
     architecture_filter: Optional[List[str]],
-    operator_filter: Optional[List[str]]
+    operator_filter: Optional[List[str]],
+    region_filter: Optional[List[str]] = None,
+    datacenter_filter: Optional[List[str]] = None
 ) -> str:
     clause = ""
     if proposer_type:
@@ -313,6 +335,10 @@ def _build_proposer_filter_clause(
         clause += f"\n      AND coalesce(vm.architecture, 'unknown'){_format_in_clause(architecture_filter)}"
     if operator_filter:
         clause += f"\n      AND coalesce(vm.operator, 'unknown'){_format_in_clause(operator_filter)}"
+    if region_filter:
+        clause += f"\n      AND coalesce(vm.region, 'unknown'){_format_in_clause(region_filter)}"
+    if datacenter_filter:
+        clause += f"\n      AND coalesce(vm.datacenter, 'unknown'){_format_in_clause(datacenter_filter)}"
     return clause
 
 
@@ -331,6 +357,8 @@ PROPOSER_GROUP_EXPRESSIONS = {
     'el_client': "coalesce(ps.proposer_el_client, 'unknown')",
     'architecture': "coalesce(ps.proposer_architecture, 'unknown')",
     'operator': "coalesce(ps.proposer_operator, 'unknown')",
+    'region': "coalesce(ps.proposer_region, 'unknown')",
+    'datacenter': "coalesce(ps.proposer_datacenter, 'unknown')",
     'cl_el_combined': "coalesce(concat(ps.proposer_cl_client, '-', ps.proposer_el_client), 'unknown')",
     'cl_node_type': "coalesce(concat(ps.proposer_cl_client, '-', ps.proposer_node_type), 'unknown')",
     'cl_architecture': "coalesce(concat(ps.proposer_cl_client, '-', ps.proposer_architecture), 'unknown')",
@@ -348,6 +376,8 @@ ATTESTER_GROUP_EXPRESSIONS = {
     'el_client': "coalesce(ae.attester_el_client, 'unknown')",
     'architecture': "coalesce(ae.attester_architecture, 'unknown')",
     'operator': "coalesce(ae.attester_operator, 'unknown')",
+    'region': "coalesce(ae.attester_region, 'unknown')",
+    'datacenter': "coalesce(ae.attester_datacenter, 'unknown')",
     'cl_el_combined': "coalesce(concat(ae.attester_cl_client, '-', ae.attester_el_client), 'unknown')",
     'cl_node_type': "coalesce(concat(ae.attester_cl_client, '-', ae.attester_node_type), 'unknown')",
     'el_node_type': "coalesce(concat(ae.attester_el_client, '-', ae.attester_node_type), 'unknown')",
@@ -467,11 +497,15 @@ def load_head_correctness_data(
     proposer_el_filter: Optional[List[str]] = None,
     proposer_architecture_filter: Optional[List[str]] = None,
     proposer_operator_filter: Optional[List[str]] = None,
+    proposer_region_filter: Optional[List[str]] = None,
+    proposer_datacenter_filter: Optional[List[str]] = None,
     attester_type: Optional[str] = None,
     cl_filter: Optional[List[str]] = None,
     el_filter: Optional[List[str]] = None,
     architecture_filter: Optional[List[str]] = None,
     operator_filter: Optional[List[str]] = None,
+    region_filter: Optional[List[str]] = None,
+    datacenter_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
     attester_grouping_dimension: Optional[str] = None,
     cluster_name: Optional[str] = None
@@ -501,6 +535,8 @@ def load_head_correctness_data(
         proposer_el_filter,
         proposer_architecture_filter,
         proposer_operator_filter,
+        proposer_region_filter,
+        proposer_datacenter_filter
     )
 
     attester_filter_sql = _build_attester_filter_clause(
@@ -509,6 +545,8 @@ def load_head_correctness_data(
         el_filter,
         architecture_filter,
         operator_filter,
+        region_filter,
+        datacenter_filter
     )
 
     mev_filter_sql = _build_mev_filter_clause(mev_filter)

@@ -337,10 +337,25 @@ def create_head_correctness_chart(
         x_col = 'blob_count'
         x_order = sorted(df['blob_count'].dropna().unique())
         x_title = 'Blob Count'
-    
+
     # Calculate total unique slots across all buckets to determine threshold
     total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
-    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Adaptive threshold that scales with number of buckets
+    # For few buckets (e.g., 6), use 2% threshold
+    # For many buckets, scale down proportionally to avoid filtering out too many
+    actual_bucket_count = len(x_order)
+    if actual_bucket_count <= 1:
+        slot_threshold = 0  # No filtering for single bucket
+    else:
+        # Base threshold of 2% for 6 buckets, scales down for more buckets
+        base_percentage = 0.02
+        # Scale factor: if we have 12 buckets, use half the percentage (1%)
+        # if we have 20 buckets, use 0.6% etc.
+        scaled_percentage = base_percentage * min(1.0, 6.0 / actual_bucket_count)
+        # Ensure at least 0.5% threshold to filter out truly insignificant buckets
+        threshold_percentage = max(0.005, scaled_percentage)
+        slot_threshold = max(1, total_slots * threshold_percentage)
 
     # Calculate unique slots per bucket across all groups
     bucket_slot_totals = {}
@@ -351,7 +366,7 @@ def create_head_correctness_chart(
         else:
             bucket_slot_totals[x_val] = 0
 
-    # Filter out buckets that have less than 5% of total slots
+    # Filter out buckets that have less than the adaptive threshold
     filtered_x_order = [
         x_val for x_val in x_order
         if bucket_slot_totals.get(x_val, 0) >= slot_threshold
@@ -634,7 +649,18 @@ def create_head_correctness_boxplot(
 
     # Calculate total unique slots across all buckets to determine threshold
     total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
-    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Adaptive threshold that scales with number of buckets
+    actual_bucket_count = len(x_order)
+    if actual_bucket_count <= 1:
+        slot_threshold = 0  # No filtering for single bucket
+    else:
+        # Base threshold of 2% for 6 buckets, scales down for more buckets
+        base_percentage = 0.02
+        scaled_percentage = base_percentage * min(1.0, 6.0 / actual_bucket_count)
+        # Ensure at least 0.5% threshold to filter out truly insignificant buckets
+        threshold_percentage = max(0.005, scaled_percentage)
+        slot_threshold = max(1, total_slots * threshold_percentage)
 
     # Track unique slots per bucket (across all groups)
     # Calculate from actual data to ensure accuracy with grouped data
@@ -651,7 +677,7 @@ def create_head_correctness_boxplot(
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
 
-    # Filter out buckets that have less than 5% of total slots
+    # Filter out buckets that have less than the adaptive threshold
     filtered_x_order = [
         x_val for x_val in x_order
         if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
@@ -876,10 +902,21 @@ def create_head_correctness_violin(
     else:
         x_col = 'blob_count'
         x_order = sorted(df['blob_count'].dropna().unique())
-    
+
     # Calculate total unique slots across all buckets to determine threshold
     total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
-    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Adaptive threshold that scales with number of buckets
+    actual_bucket_count = len(x_order)
+    if actual_bucket_count <= 1:
+        slot_threshold = 0  # No filtering for single bucket
+    else:
+        # Base threshold of 2% for 6 buckets, scales down for more buckets
+        base_percentage = 0.02
+        scaled_percentage = base_percentage * min(1.0, 6.0 / actual_bucket_count)
+        # Ensure at least 0.5% threshold to filter out truly insignificant buckets
+        threshold_percentage = max(0.005, scaled_percentage)
+        slot_threshold = max(1, total_slots * threshold_percentage)
 
     # Track unique slots per bucket (across all groups)
     # Calculate from actual data to ensure accuracy with grouped data
@@ -896,7 +933,7 @@ def create_head_correctness_violin(
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
 
-    # Filter out buckets that have less than 5% of total slots
+    # Filter out buckets that have less than the adaptive threshold
     filtered_x_order = [
         x_val for x_val in x_order
         if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
@@ -2231,7 +2268,18 @@ def create_head_correctness_bar(
     
     # First, calculate total unique slots across all buckets to determine threshold
     total_slots = df['slot'].nunique() if 'slot' in df.columns else 0
-    slot_threshold = total_slots * 0.05  # 5% threshold
+
+    # Adaptive threshold that scales with number of buckets
+    actual_bucket_count = len(bucket_order)
+    if actual_bucket_count <= 1:
+        slot_threshold = 0  # No filtering for single bucket
+    else:
+        # Base threshold of 2% for 6 buckets, scales down for more buckets
+        base_percentage = 0.02
+        scaled_percentage = base_percentage * min(1.0, 6.0 / actual_bucket_count)
+        # Ensure at least 0.5% threshold to filter out truly insignificant buckets
+        threshold_percentage = max(0.005, scaled_percentage)
+        slot_threshold = max(1, total_slots * threshold_percentage)
 
     # Calculate unique slots per bucket across all groups
     bucket_slot_totals = {}
@@ -2242,7 +2290,7 @@ def create_head_correctness_bar(
         else:
             bucket_slot_totals[bucket] = 0
 
-    # Filter out buckets that have less than 5% of total slots
+    # Filter out buckets that have less than the adaptive threshold
     filtered_bucket_order = [
         bucket for bucket in bucket_order
         if bucket_slot_totals.get(bucket, 0) >= slot_threshold

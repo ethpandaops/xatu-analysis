@@ -191,6 +191,90 @@ def get_available_operators(network: str, cluster_name: Optional[str] = None) ->
         return []
 
 
+@st.cache_data(ttl=300, show_spinner=False, persist=False)
+def get_available_regions(network: str, cluster_name: Optional[str] = None) -> List[str]:
+    """
+    Get available regions from dim_node table.
+
+    Args:
+        network: Network name
+        cluster_name: Optional cluster name for database connection
+
+    Returns:
+        List of available regions
+    """
+    from shared.database import get_database_connection
+
+    logger.info(f"Getting regions for network={network}, cluster={cluster_name}")
+
+    conn = get_database_connection(cluster_name)
+    if not conn:
+        logger.error(f"No database connection for cluster {cluster_name}")
+        return []
+
+    query = f"""
+    SELECT DISTINCT attributes['cloudRegion'] as region
+    FROM `{network}`.dim_node
+    WHERE attributes['cloudRegion'] != ''
+    ORDER BY region
+    """
+
+    try:
+        logger.info(f"Running region query: {query}")
+        df = pd.read_sql(query, conn)
+        if df.empty:
+            logger.info(f"No regions found for {network}")
+            return []
+        regions = df['region'].unique().tolist()
+        logger.info(f"Found regions: {regions}")
+        return regions
+    except Exception as e:
+        logger.error(f"Failed to fetch regions for {network}: {str(e)}")
+        return []
+
+
+@st.cache_data(ttl=300, show_spinner=False, persist=False)
+def get_available_datacenters(network: str, cluster_name: Optional[str] = None) -> List[str]:
+    """
+    Get available datacenters (cloud providers) from dim_node table.
+
+    Args:
+        network: Network name
+        cluster_name: Optional cluster name for database connection
+
+    Returns:
+        List of available datacenters
+    """
+    from shared.database import get_database_connection
+
+    logger.info(f"Getting datacenters for network={network}, cluster={cluster_name}")
+
+    conn = get_database_connection(cluster_name)
+    if not conn:
+        logger.error(f"No database connection for cluster {cluster_name}")
+        return []
+
+    query = f"""
+    SELECT DISTINCT attributes['cloud'] as datacenter
+    FROM `{network}`.dim_node
+    WHERE attributes['cloud'] != ''
+    ORDER BY datacenter
+    """
+
+    try:
+        logger.info(f"Running datacenter query: {query}")
+        df = pd.read_sql(query, conn)
+        if df.empty:
+            logger.info(f"No datacenters found for {network}")
+            return []
+        datacenters = df['datacenter'].unique().tolist()
+        logger.info(f"Found datacenters: {datacenters}")
+        return datacenters
+    except Exception as e:
+        logger.error(f"Failed to fetch datacenters for {network}: {str(e)}")
+        return []
+
+
 def create_proposer_filters_ui(
     network: str,
     cluster_name: Optional[str] = None,
@@ -210,10 +294,12 @@ def create_proposer_filters_ui(
     """
     st.subheader("🎯 Proposer Filters")
 
-    # Get available clients, architectures, and operators for this network
+    # Get available clients, architectures, operators, regions, and datacenters for this network
     cl_clients, el_clients = get_available_clients(network)
     architectures = get_available_architectures(network)
     operators = get_available_operators(network, cluster_name)
+    regions = get_available_regions(network, cluster_name)
+    datacenters = get_available_datacenters(network, cluster_name)
 
     # Determine initial values
     if initial_values:
@@ -232,12 +318,20 @@ def create_proposer_filters_ui(
         initial_operator = initial_values.get('proposer_operator', operators)
         if initial_operator is None:
             initial_operator = operators
+        initial_region = initial_values.get('proposer_region', regions)
+        if initial_region is None:
+            initial_region = regions
+        initial_datacenter = initial_values.get('proposer_datacenter', datacenters)
+        if initial_datacenter is None:
+            initial_datacenter = datacenters
     else:
         initial_type = 'all'
         initial_cl = cl_clients
         initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
         initial_architecture = architectures
         initial_operator = operators
+        initial_region = regions
+        initial_datacenter = datacenters
 
     proposer_type = st.selectbox(
         "Proposer Node Type",
@@ -284,12 +378,30 @@ def create_proposer_filters_ui(
         help="Filter by proposer operator"
     )
 
+    proposer_region = st.multiselect(
+        "Proposer Region",
+        options=regions,
+        default=initial_region,
+        key=f"{key_prefix}_region",
+        help="Filter by proposer cloud region"
+    )
+
+    proposer_datacenter = st.multiselect(
+        "Proposer Datacenter",
+        options=datacenters,
+        default=initial_datacenter,
+        key=f"{key_prefix}_datacenter",
+        help="Filter by proposer datacenter/cloud provider"
+    )
+
     return {
         'proposer_type': proposer_type if proposer_type != "all" else None,
         'proposer_cl': proposer_cl if proposer_cl and set(proposer_cl) != set(cl_clients) else None,
         'proposer_el': proposer_el if proposer_el and set(proposer_el) != set(el_clients) else None,
         'proposer_architecture': proposer_architecture if proposer_architecture and set(proposer_architecture) != set(architectures) else None,
-        'proposer_operator': proposer_operator if proposer_operator and set(proposer_operator) != set(operators) else None
+        'proposer_operator': proposer_operator if proposer_operator and set(proposer_operator) != set(operators) else None,
+        'proposer_region': proposer_region if proposer_region and set(proposer_region) != set(regions) else None,
+        'proposer_datacenter': proposer_datacenter if proposer_datacenter and set(proposer_datacenter) != set(datacenters) else None
     }
 
 
@@ -312,10 +424,12 @@ def create_attester_filters_ui(
     """
     st.subheader("👥 Attester Filters")
 
-    # Get available clients, architectures, and operators for this network
+    # Get available clients, architectures, operators, regions, and datacenters for this network
     cl_clients, el_clients = get_available_clients(network)
     architectures = get_available_architectures(network)
     operators = get_available_operators(network, cluster_name)
+    regions = get_available_regions(network, cluster_name)
+    datacenters = get_available_datacenters(network, cluster_name)
 
     # Determine initial values
     if initial_values:
@@ -334,12 +448,20 @@ def create_attester_filters_ui(
         initial_operator = initial_values.get('attester_operator', operators)
         if initial_operator is None:
             initial_operator = operators
+        initial_region = initial_values.get('attester_region', regions)
+        if initial_region is None:
+            initial_region = regions
+        initial_datacenter = initial_values.get('attester_datacenter', datacenters)
+        if initial_datacenter is None:
+            initial_datacenter = datacenters
     else:
         initial_type = 'all'
         initial_cl = cl_clients
         initial_el = [el for el in el_clients if el.lower() != 'nimbusel']
         initial_architecture = architectures
         initial_operator = operators
+        initial_region = regions
+        initial_datacenter = datacenters
 
     attester_type = st.selectbox(
         "Attester Node Type",
@@ -386,12 +508,30 @@ def create_attester_filters_ui(
         help="Filter by attester operator"
     )
 
+    attester_region = st.multiselect(
+        "Attester Region",
+        options=regions,
+        default=initial_region,
+        key=f"{key_prefix}_region",
+        help="Filter by attester cloud region"
+    )
+
+    attester_datacenter = st.multiselect(
+        "Attester Datacenter",
+        options=datacenters,
+        default=initial_datacenter,
+        key=f"{key_prefix}_datacenter",
+        help="Filter by attester datacenter/cloud provider"
+    )
+
     return {
         'attester_type': attester_type if attester_type != "all" else None,
         'attester_cl': attester_cl if attester_cl and set(attester_cl) != set(cl_clients) else None,
         'attester_el': attester_el if attester_el and set(attester_el) != set(el_clients) else None,
         'attester_architecture': attester_architecture if attester_architecture and set(attester_architecture) != set(architectures) else None,
-        'attester_operator': attester_operator if attester_operator and set(attester_operator) != set(operators) else None
+        'attester_operator': attester_operator if attester_operator and set(attester_operator) != set(operators) else None,
+        'attester_region': attester_region if attester_region and set(attester_region) != set(regions) else None,
+        'attester_datacenter': attester_datacenter if attester_datacenter and set(attester_datacenter) != set(datacenters) else None
     }
 
 

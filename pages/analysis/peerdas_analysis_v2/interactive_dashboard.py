@@ -103,6 +103,10 @@ def parse_url_params() -> Dict[str, Any]:
         except:
             pass
 
+    # Parse boolean parameters
+    if 'filter_zero_blobs' in params:
+        config['filter_zero_blobs'] = params['filter_zero_blobs'].lower() == 'true'
+
     return config
 
 
@@ -131,7 +135,7 @@ def generate_url_params(config: Dict[str, Any]) -> str:
     # Add other parameters
     simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode',
                      'chart_type', 'proposer_type', 'attester_type',
-                     'scatter_aggregation', 'performance_threshold']
+                     'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs']
 
     for key in simple_params:
         if key in config and config[key] is not None:
@@ -213,8 +217,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Proposer grouping
     proposer_grouping = st.sidebar.selectbox(
         "Proposer Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
+        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
             url_config.get('grouping_dimension', 'node_type')
         ),
         format_func=lambda x: {
@@ -224,6 +228,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'el_client': 'EL Client',
             'architecture': 'Architecture',
             'operator': 'Operator',
+            'region': 'Region',
+            'datacenter': 'Datacenter',
             'cl_el_combined': 'CL+EL Combination',
             'cl_node_type': 'CL+Node Type',
             'cl_architecture': 'CL+Architecture',
@@ -238,8 +244,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     # Attester grouping (new)
     attester_grouping = st.sidebar.selectbox(
         "Attester Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'].index(
+        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'],
+        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'].index(
             url_config.get('attester_grouping', 'none')
         ),
         format_func=lambda x: {
@@ -249,6 +255,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             'el_client': 'EL Client',
             'architecture': 'Architecture',
             'operator': 'Operator',
+            'region': 'Region',
+            'datacenter': 'Datacenter',
             'cl_el_combined': 'CL+EL Combination',
             'cl_node_type': 'CL+Node Type',
             'el_node_type': 'EL+Node Type',
@@ -378,7 +386,14 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     
     # Bucketing options for blob count
     st.sidebar.subheader("🗂️ Blob Count Bucketing")
-    
+
+    # Add checkbox to filter out 0 blob slots (enabled by default)
+    filter_zero_blobs = st.sidebar.checkbox(
+        "Filter out 0 blob slots",
+        value=url_config.get('filter_zero_blobs', True),
+        help="Exclude slots with 0 blobs from the analysis"
+    )
+
     num_buckets = st.sidebar.slider(
         "Number of Buckets",
         min_value=1,
@@ -526,6 +541,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'start_datetime': start_datetime,
         'end_datetime': end_datetime,
         'num_buckets': num_buckets,
+        'filter_zero_blobs': filter_zero_blobs,  # Add filter for zero blob slots
         'grouping_dimension': grouping_dimension,
         'attester_grouping': attester_grouping,  # Add attester grouping
         'mev_filter': mev_filter,
@@ -571,6 +587,8 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     el_filter=config.get('proposer_el'),
                     architecture_filter=config.get('proposer_architecture'),
                     operator_filter=config.get('proposer_operator'),
+                    region_filter=config.get('proposer_region'),
+                    datacenter_filter=config.get('proposer_datacenter'),
                     mev_filter=config.get('mev_filter'),
                     cluster_name=config['cluster']
                 )
@@ -641,11 +659,15 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     proposer_el_filter=config.get('proposer_el'),
                     proposer_architecture_filter=config.get('proposer_architecture'),
                     proposer_operator_filter=config.get('proposer_operator'),
+                    proposer_region_filter=config.get('proposer_region'),
+                    proposer_datacenter_filter=config.get('proposer_datacenter'),
                     attester_type=config.get('attester_type'),
                     cl_filter=config.get('attester_cl'),
                     el_filter=config.get('attester_el'),
                     architecture_filter=config.get('attester_architecture'),
                     operator_filter=config.get('attester_operator'),
+                    region_filter=config.get('attester_region'),
+                    datacenter_filter=config.get('attester_datacenter'),
                     grouping_dimension=config.get('grouping_dimension'),
                     attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
                     cluster_name=config['cluster']
@@ -674,12 +696,12 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 else:
                     st.warning("""
                     No head correctness data found for the selected filters.
-                    
+
                     **Possible causes:**
                     - No data_column_sidecar data available for the selected time range
                     - No committee data available
                     - No attestation data found for the eligible slots
-                    
+
                     **Note:** PeerDAS analysis requires data_column_sidecar data to determine blob counts.
                     Try selecting a different time range where data_column_sidecar data is available.
                     """)
@@ -688,7 +710,17 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 st.session_state.peerdas_v2_analysis_data = {}
                 st.session_state.peerdas_v2_data_loaded = False
                 return None
-            
+
+            # Apply filter for zero blob slots if enabled
+            if config.get('filter_zero_blobs', True) and 'blob_count' in data.columns:
+                original_count = len(data)
+                data = data[data['blob_count'] > 0].copy()
+                logger.info(f"Filtered out {original_count - len(data)} rows with 0 blob count")
+
+                if data.empty:
+                    st.warning("All slots had 0 blobs. Try disabling the '**Filter out 0 blob slots**' option to see data.")
+                    return None
+
             # Compute slot-level coverage after filtering to only slots with committee data
             slots_in_result = data['slot'].nunique() if 'slot' in data.columns else 0
             eligible_count = len(eligible_slots)
@@ -1132,6 +1164,10 @@ def main():
                 # If some slots were filtered out due to missing committee data, show a notice
                 if metadata.get('filtered_out_slots', 0) > 0:
                     st.info(f"Filtered out {metadata['filtered_out_slots']:,} slot(s) with no committee data.")
+
+                # Show info about zero blob filter
+                if config.get('filter_zero_blobs', True):
+                    st.info("🎯 Zero blob slots are excluded from this analysis (configurable in sidebar)")
 
                 # Show grouping information if applicable
                 if config.get('grouping_dimension'):
