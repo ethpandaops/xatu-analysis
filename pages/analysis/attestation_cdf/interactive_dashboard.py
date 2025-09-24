@@ -701,8 +701,8 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
     
     # Load entity and client mappings
     with st.spinner("Loading validator metadata..."):
-        entities = load_validators_from_ethseer(network)
-        clients = load_blockprint_clients(network)
+        entities = load_validators_from_ethseer(network, cluster)
+        clients = load_blockprint_clients(network, cluster)
     
     # Create entity breakdown
     entity_counts = {}

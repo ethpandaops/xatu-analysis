@@ -10,16 +10,17 @@ import streamlit as st
 
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_blockprint_clients(network):
+def load_blockprint_clients(network, cluster_name=None):
     """Load blockprint client information for validators.
     
     Args:
         network (str): Network name (mainnet, holesky, sepolia)
+        cluster_name (str, optional): ClickHouse cluster name. If None, uses default cluster.
         
     Returns:
         dict: Mapping of proposer_index -> blockprint_client. Returns empty dict if no data available.
     """
-    connection = get_database_connection()
+    connection = get_database_connection(cluster_name)
     if connection is None:
         return {}
         
@@ -87,16 +88,17 @@ def load_blockprint_clients(network):
 
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
-def load_validators_from_ethseer(network):
+def load_validators_from_ethseer(network, cluster_name=None):
     """Load validators from the ethseer_validator_entity table for the specified network.
     
     Args:
         network (str): Network name (mainnet, holesky, sepolia)
+        cluster_name (str, optional): ClickHouse cluster name. If None, uses default cluster.
         
     Returns:
         dict: Mapping of proposer_index -> entity. Returns empty dict if no data available.
     """
-    connection = get_database_connection()
+    connection = get_database_connection(cluster_name)
     if connection is None:
         return {}
         
