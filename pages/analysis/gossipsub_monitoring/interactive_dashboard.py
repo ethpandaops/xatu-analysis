@@ -58,6 +58,20 @@ def main():
         st.session_state.gossipsub_data = None
     if 'gossipsub_metrics' not in st.session_state:
         st.session_state.gossipsub_metrics = None
+    if 'selected_period' not in st.session_state:
+        st.session_state.selected_period = "Last 1 Hour"
+    # Initialize custom date/time defaults if not set
+    current_time = datetime.now(timezone.utc)
+    default_start_time = current_time - timedelta(hours=1)
+    
+    if 'custom_start_date' not in st.session_state:
+        st.session_state.custom_start_date = default_start_time.date()
+    if 'custom_end_date' not in st.session_state:
+        st.session_state.custom_end_date = current_time.date()
+    if 'custom_start_time' not in st.session_state:
+        st.session_state.custom_start_time = default_start_time.time()
+    if 'custom_end_time' not in st.session_state:
+        st.session_state.custom_end_time = current_time.time()
     
     # Header
     st.markdown('<h1 class="main-header">🌐 Gossipsub Monitoring</h1>', unsafe_allow_html=True)
@@ -159,9 +173,22 @@ def main():
         selected_period = st.sidebar.selectbox(
             "Quick Period Selection",
             options=list(time_options.keys()),
-            index=0,  # Default to "Last 1 Hour"
-            help="Select a predefined period or choose Custom for manual selection"
+            index=list(time_options.keys()).index(st.session_state.selected_period),
+            help="Select a predefined period or choose Custom for manual selection",
+            key="period_selector"
         )
+        
+        # Update session state when selection changes
+        if selected_period != st.session_state.selected_period:
+            # Only reset custom values if we're switching FROM Custom to something else
+            if st.session_state.selected_period == "Custom" and selected_period != "Custom":
+                current_time = datetime.now(timezone.utc)
+                default_start_time = current_time - timedelta(hours=1)
+                st.session_state.custom_start_date = default_start_time.date()
+                st.session_state.custom_end_date = current_time.date()
+                st.session_state.custom_start_time = default_start_time.time()
+                st.session_state.custom_end_time = current_time.time()
+            st.session_state.selected_period = selected_period
         
         # Set dates based on selection
         if selected_period != "Custom":
@@ -190,29 +217,32 @@ def main():
             default_end = datetime.now(timezone.utc)
             default_start = default_end - timedelta(hours=1)
             
+            # Use a more conservative max_value to avoid edge cases
+            max_date = datetime.now(timezone.utc).date()
+            
             col1, col2 = st.sidebar.columns(2)
             with col1:
                 start_date = st.date_input(
                     "Start Date",
-                    value=default_start.date(),
-                    max_value=datetime.now().date(),
+                    value=st.session_state.custom_start_date,
+                    max_value=max_date,
                     key='custom_start_date'
                 )
                 start_time_input = st.time_input(
                     "Start Time (UTC)",
-                    value=default_start.time(),
+                    value=st.session_state.custom_start_time,
                     key='custom_start_time'
                 )
             with col2:
                 end_date = st.date_input(
                     "End Date",
-                    value=default_end.date(),
-                    max_value=datetime.now().date(),
+                    value=st.session_state.custom_end_date,
+                    max_value=max_date,
                     key='custom_end_date'
                 )
                 end_time_input = st.time_input(
                     "End Time (UTC)",
-                    value=default_end.time(),
+                    value=st.session_state.custom_end_time,
                     key='custom_end_time'
                 )
             
@@ -514,7 +544,7 @@ def render_analysis_dashboard(data: pd.DataFrame, metrics: Dict[str, Any], slot:
                 display_df = metrics['percentiles'].copy()
                 for col in ['p50', 'p75', 'p90', 'p95', 'p99']:
                     if col in display_df.columns:
-                        display_df[col] = display_df[col].round(0).astype(int)
+                        display_df[col] = display_df[col].replace([float('inf'), float('-inf')], pd.NA).fillna(0).round(0).astype(int)
                 
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
             
@@ -554,11 +584,11 @@ def render_analysis_dashboard(data: pd.DataFrame, metrics: Dict[str, Any], slot:
             
             # Format times
             if 'propagation_delay_ms' in sample_data.columns:
-                sample_data['propagation_delay_ms'] = sample_data['propagation_delay_ms'].round(0).astype(int)
+                sample_data['propagation_delay_ms'] = sample_data['propagation_delay_ms'].replace([float('inf'), float('-inf')], pd.NA).fillna(0).round(0).astype(int)
             if 'ihave_time' in sample_data.columns:
-                sample_data['ihave_time'] = sample_data['ihave_time'].round(0).astype(int)
+                sample_data['ihave_time'] = sample_data['ihave_time'].replace([float('inf'), float('-inf')], pd.NA).fillna(0).round(0).astype(int)
             if 'block_propagation_time' in sample_data.columns:
-                sample_data['block_propagation_time'] = sample_data['block_propagation_time'].round(0).astype(int)
+                sample_data['block_propagation_time'] = sample_data['block_propagation_time'].replace([float('inf'), float('-inf')], pd.NA).fillna(0).round(0).astype(int)
             
             st.dataframe(sample_data, use_container_width=True, hide_index=True)
     else:
