@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from shared.ui_components import add_ethPandaOps_logo
-from config_utils import get_metric_info
+from pages.analysis.attestation_cdf.config_utils import get_metric_info
 
 
 def create_cdf_comparison_plot(aggregated_data, comparison_dimension=None, client_data=None, title=None, **kwargs):

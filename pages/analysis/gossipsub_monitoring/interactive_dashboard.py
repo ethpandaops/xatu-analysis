@@ -18,13 +18,13 @@ from shared.ui_components import apply_ethPandaOps_styling
 from shared.header import render_global_header, get_global_cluster, get_global_network
 
 # Import local modules
-from config_utils import (
+from pages.analysis.gossipsub_monitoring.config_utils import (
     get_default_time_ranges,
     get_supported_networks,
     get_data_source_options,
     get_analysis_config
 )
-from data_loaders_reverse import (
+from pages.analysis.gossipsub_monitoring.data_loaders_reverse import (
     load_gossipsub_data_reverse as load_gossipsub_data,
     get_latest_slot_with_ihave as get_latest_slot,
     get_available_slots_with_ihave as get_available_slots,
@@ -34,7 +34,7 @@ from data_loaders_reverse import (
     calculate_percentiles_by_slot,
     load_comparison_data
 )
-from plot_generators import (
+from pages.analysis.gossipsub_monitoring.plot_generators import (
     create_continent_cdf_plot,
     create_slot_cdf_plot,
     create_percentile_comparison_chart,

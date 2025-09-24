@@ -10,28 +10,28 @@ import pandas as pd
 import numpy as np
 
 # Import components
-from config_utils import (
+from pages.analysis.reorgs.config_utils import (
     get_metric_info, get_default_time_ranges, 
     get_depth_filter_config, get_aggregation_options
 )
-from data_loaders import (
+from pages.analysis.reorgs.data_loaders import (
     load_reorg_data, load_missed_slots_data, 
     load_reorg_episodes, load_client_metadata,
     deduplicate_reorg_events
 )
-from metrics_calculators import (
+from pages.analysis.reorgs.metrics_calculators import (
     calculate_basic_metrics, calculate_client_metrics,
     calculate_implementation_metrics, calculate_episode_metrics, 
     calculate_epoch_boundary_effects, correlate_with_missed_slots, 
     calculate_geographic_distribution
 )
-from plot_generators import (
+from pages.analysis.reorgs.plot_generators import (
     create_reorg_timeline, create_depth_distribution,
     create_client_comparison, create_epoch_boundary_heatmap,
     create_scatter_matrix, create_geographic_distribution
 )
 from shared.ui_components import add_ethPandaOps_logo, get_ethPandaOps_chart_config
-from reorg_normalizer import (
+from pages.analysis.reorgs.reorg_normalizer import (
     normalize_reorg_events, get_reorg_consensus_over_time,
     identify_significant_reorgs
 )

@@ -21,13 +21,13 @@ from shared.database import get_database_connection
 from shared.ethereum.validator_filters import create_proposer_filters_ui
 
 # Import local modules
-from loader import (
+from pages.analysis.reorg_rates.loader import (
     get_canonical_max_slot,
     load_eligible_slots,
     load_reorg_data,
     validate_canonical_data_availability
 )
-from plot_generators import (
+from pages.analysis.reorg_rates.plot_generators import (
     create_reorg_count_bar_chart,
     create_reorg_rate_chart,
     create_reorg_rate_boxplot,

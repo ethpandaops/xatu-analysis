@@ -19,7 +19,7 @@ from shared.metric_utils import (
     calculate_temporal_trends as shared_calculate_temporal_trends,
     calculate_percentile_analysis as shared_calculate_percentile_analysis
 )
-from config_utils import get_analysis_config
+from pages.analysis.multi_metric_analysis.config_utils import get_analysis_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

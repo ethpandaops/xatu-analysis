@@ -4,7 +4,7 @@ Metrics calculation functions for reorg analysis
 import polars as pl
 import numpy as np
 from typing import Dict, Optional, Tuple
-from config_utils import get_severity_weights, get_episode_clustering_config
+from pages.analysis.reorgs.config_utils import get_severity_weights, get_episode_clustering_config
 
 def calculate_basic_metrics(df: pl.DataFrame) -> Dict:
     """

@@ -15,7 +15,7 @@ import warnings
 
 from shared.database import get_database_connection
 from shared.data_utils import memory_efficient_context, normalize_time_range, chunk_time_range
-from config_utils import get_analysis_config
+from pages.analysis.multi_metric_analysis.config_utils import get_analysis_config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -18,22 +18,22 @@ logger = logging.getLogger(__name__)
 from shared.header import render_global_header, get_global_cluster, get_global_network
 
 # Import local modules
-from config_utils import (
+from pages.analysis.peerdas_analysis.config_utils import (
     get_analysis_config,
     get_data_source_options
 )
-from loader import (
+from pages.analysis.peerdas_analysis.loader import (
     load_peerdas_aggregated_data,
     load_node_classification_raw_data,
     validate_data_availability,
     get_max_blob_count,
     get_unique_clients
 )
-from plot_generators import (
+from pages.analysis.peerdas_analysis.plot_generators import (
     create_peerdas_performance_chart,
     create_node_classification_boxplot
 )
-from gap_analysis import create_node_performance_gap_analysis
+from pages.analysis.peerdas_analysis.gap_analysis import create_node_performance_gap_analysis
 
 
 def initialize_session_state():

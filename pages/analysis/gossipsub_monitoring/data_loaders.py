@@ -12,8 +12,8 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from shared.database import get_database_connection
-from queries import get_single_slot_complete_query
-from config_utils import get_continent_from_code
+from pages.analysis.gossipsub_monitoring.queries import get_single_slot_complete_query
+from pages.analysis.gossipsub_monitoring.config_utils import get_continent_from_code
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

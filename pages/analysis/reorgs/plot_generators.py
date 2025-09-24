@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 from typing import Optional
 from shared.ui_components import add_ethPandaOps_logo
-from config_utils import get_metric_info, get_depth_filter_config
+from pages.analysis.reorgs.config_utils import get_metric_info, get_depth_filter_config
 
 def create_reorg_timeline(df: pl.DataFrame, time_bucket: str = "1h") -> go.Figure:
     """Create a time series visualization of reorg events."""

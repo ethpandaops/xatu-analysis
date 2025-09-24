@@ -14,7 +14,7 @@ import logging
 
 from shared.database import get_database_connection
 from shared.config import get_network_genesis_timestamp
-from config_utils import get_data_source_options
+from pages.analysis.attestation_cdf.config_utils import get_data_source_options
 
 # Set up logging
 logger = logging.getLogger(__name__)
