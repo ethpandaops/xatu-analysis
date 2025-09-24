@@ -620,7 +620,7 @@ def load_complete_analysis_data(
         head_df = load_head_time_data(network, start_date, end_date, cluster_name)
         block_df = load_canonical_block_data(network, start_date, end_date, cluster_name)
         blob_df = load_blob_sidecar_counts(network, start_date, end_date, cluster_name)
-        attestation_df = load_attestation_timing_data(network, start_date, end_date)
+        attestation_df = load_attestation_timing_data(network, start_date, end_date, cluster_name)
         
         # Combine all data
         combined_df = combine_performance_data(gossip_df, head_df, block_df, blob_df, attestation_df)
