@@ -23,5 +23,5 @@ Each analysis component follows consistent modular architecture:
 
 ## Key Constraints
 - Pages must be self-contained but leverage shared utilities for consistency
-- Use relative imports with proper path management for analysis subdirectories
+- Use absolute imports with proper path management for analysis subdirectories
 - Follow Streamlit session state management with prefixed keys for conflict prevention
