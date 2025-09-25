@@ -95,9 +95,12 @@ def load_gossipsub_data_reverse(
                 elif not ihave_df.empty:
                     df = ihave_df
                     df['message_type'] = 'IHAVE'
-                else:
+                elif not idontwant_df.empty:
                     df = idontwant_df
                     df['message_type'] = 'IDONTWANT'
+                else:
+                    # Both dataframes are empty
+                    df = pd.DataFrame()
                 
                 if df.empty:
                     st.warning(f"No {message_label} data found for slot {target_slot}")
@@ -138,27 +141,27 @@ def load_gossipsub_data_reverse(
                 st.warning(f"No {message_label} data found for slot {target_slot}")
             else:
                 st.success(f"✅ Found {len(df)} {message_label} records for slot {target_slot}")
-        
-        # Handle latency adjustment
-        if not df.empty:
-            if subtract_latency and 'adjusted_propagation_ms' in df.columns:
-                # Use adjusted propagation times
-                df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
-                df['propagation_delay_ms'] = df['adjusted_propagation_ms']
-                # Keep latency info columns for display
-                if 'rtt_ms' not in df.columns:
-                    df['rtt_ms'] = None
-                if 'one_way_latency_ms' not in df.columns:
-                    df['one_way_latency_ms'] = None
-            else:
-                # Keep raw propagation times
-                if 'adjusted_propagation_ms' in df.columns:
-                    df.drop(columns=['adjusted_propagation_ms'], inplace=True)
-                if 'rtt_ms' in df.columns:
-                    df.drop(columns=['rtt_ms'], inplace=True)
-                if 'one_way_latency_ms' in df.columns:
-                    df.drop(columns=['one_way_latency_ms'], inplace=True)
-                    
+            
+            # Handle latency adjustment for single slot data
+            if not df.empty:
+                if subtract_latency and 'adjusted_propagation_ms' in df.columns:
+                    # Use adjusted propagation times
+                    df['raw_propagation_delay_ms'] = df['propagation_delay_ms'].copy()
+                    df['propagation_delay_ms'] = df['adjusted_propagation_ms']
+                    # Keep latency info columns for display
+                    if 'rtt_ms' not in df.columns:
+                        df['rtt_ms'] = None
+                    if 'one_way_latency_ms' not in df.columns:
+                        df['one_way_latency_ms'] = None
+                else:
+                    # Keep raw propagation times
+                    if 'adjusted_propagation_ms' in df.columns:
+                        df.drop(columns=['adjusted_propagation_ms'], inplace=True)
+                    if 'rtt_ms' in df.columns:
+                        df.drop(columns=['rtt_ms'], inplace=True)
+                    if 'one_way_latency_ms' in df.columns:
+                        df.drop(columns=['one_way_latency_ms'], inplace=True)
+                        
         else:
             # For time range, get data based on message type
             message_label = message_type if message_type != "COMBINED" else "IHAVE+IDONTWANT"

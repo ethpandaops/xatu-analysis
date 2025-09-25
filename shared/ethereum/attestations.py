@@ -11,19 +11,20 @@ from ..parquet_utils import calculate_parquet_urls, download_and_cache_parquet
 from ..filesystem import get_cache_dir
 
 
-def load_attestation_data(time_ranges_str, network):
+def load_attestation_data(time_ranges_str, network, cluster_name=None):
     """Load attestation data for the specified time ranges from ClickHouse.
     
     Args:
         time_ranges_str (str): String representation of time ranges list
         network (str): Network name (mainnet, holesky, sepolia)
+        cluster_name (str, optional): ClickHouse cluster name. If None, uses default cluster.
         
     Returns:
         pd.DataFrame: DataFrame with attestation data
     """
     time_ranges = ast.literal_eval(time_ranges_str)
     
-    connection = get_database_connection()
+    connection = get_database_connection(cluster_name)
     if connection is None:
         return pd.DataFrame()
     

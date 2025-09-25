@@ -193,12 +193,12 @@ def main():
             try:
                 # Load blockprint clients (cached) - still uses ClickHouse for client mapping
                 st.info("Loading blockprint clients...")
-                validators = load_blockprint_clients(network)
+                validators = load_blockprint_clients(network, cluster)
                 st.session_state.block_producer_validators = validators
                 
                 # Load ethseer validator entities (cached) - also uses ClickHouse
                 st.info("Loading ethseer validator entities...")
-                entities = load_validators_from_ethseer(network)
+                entities = load_validators_from_ethseer(network, cluster)
                 st.session_state.block_producer_entities = entities
                 
                 # Load attestation data from parquet files (cached)
