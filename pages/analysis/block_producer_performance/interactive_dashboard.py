@@ -10,18 +10,18 @@ Run with: streamlit run interactive_dashboard.py
 """
 
 # Import all the split components
-from config_utils import *
-from data_loaders import (
+from pages.analysis.block_producer_performance.config_utils import *
+from pages.analysis.block_producer_performance.data_loaders import (
     load_blockprint_clients,
     load_validators_from_ethseer,
     load_attestation_data_parquet, 
     fetch_proposer_indices_parquet
 )
-from metrics_calculators import (
+from pages.analysis.block_producer_performance.metrics_calculators import (
     calculate_first_seen_attestations,
     calculate_slot_metrics
 )
-from plot_generators import (
+from pages.analysis.block_producer_performance.plot_generators import (
     create_before_after_comparison,
     create_distribution_plot,
     create_time_series_plot,

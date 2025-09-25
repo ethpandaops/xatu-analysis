@@ -13,8 +13,8 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from shared.database import get_database_connection
-from queries_fixed import get_time_based_gossipsub_query, get_slots_in_range_simple, get_latest_slot_simple
-from config_utils import get_continent_from_code
+from pages.analysis.gossipsub_monitoring.queries_fixed import get_time_based_gossipsub_query, get_slots_in_range_simple, get_latest_slot_simple
+from pages.analysis.gossipsub_monitoring.config_utils import get_continent_from_code
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

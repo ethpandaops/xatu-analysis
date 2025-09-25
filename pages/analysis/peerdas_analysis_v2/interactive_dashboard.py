@@ -28,14 +28,14 @@ from shared.ethereum.validator_filters import (
 )
 
 # Import local modules
-from loader import (
+from pages.analysis.peerdas_analysis_v2.loader import (
     load_eligible_slots,
     load_head_correctness_data,
     validate_data_availability,
     get_unique_clients,
     load_network_mapping
 )
-from plot_generators import (
+from pages.analysis.peerdas_analysis_v2.plot_generators import (
     create_head_correctness_boxplot,
     create_head_correctness_chart,
     create_head_correctness_violin,

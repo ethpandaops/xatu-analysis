@@ -8,11 +8,11 @@ from shared.database import get_database_connection
 from shared.parquet_utils import calculate_parquet_urls, download_and_cache_parquet  
 from shared.ethereum.validators import load_validators_from_ethseer
 from shared.ethereum.blocks import fetch_proposer_indices
-from config_utils import get_supported_networks, get_data_source_options
-from _table_verification import verify_table_structures, get_verified_query_templates
+from pages.analysis.attestation_cdf.config_utils import get_supported_networks, get_data_source_options
+from pages.analysis.attestation_cdf._table_verification import verify_table_structures, get_verified_query_templates
 
 # Import polars functions - REQUIRED
-from polars_data_loaders import (
+from pages.analysis.attestation_cdf.polars_data_loaders import (
     load_attestation_timing_data_polars,
     load_combined_analysis_data_polars,
     load_raw_attestation_data_for_slow_analysis

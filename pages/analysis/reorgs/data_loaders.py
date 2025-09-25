@@ -6,7 +6,7 @@ import polars as pl
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Tuple
-from config_utils import get_depth_filter_config, get_client_normalization_rules
+from pages.analysis.reorgs.config_utils import get_depth_filter_config, get_client_normalization_rules
 
 # Import existing shared data loading functionality
 from shared.database import get_database_connection

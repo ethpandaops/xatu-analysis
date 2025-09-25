@@ -1,25 +1,5 @@
-# pages/analysis/reorg_rates/page.py
-import streamlit as st
-import sys
-import os
+"""Reorg Rates Analysis Dashboard"""
 
-# Get current directory and add it to sys.path so imports work
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+from pages.analysis.reorg_rates.interactive_dashboard import main as run_dashboard
 
-# Import the dashboard module
-try:
-    # Import with the directory in path
-    from interactive_dashboard import main
-
-    # Run the dashboard
-    main()
-
-except ImportError as e:
-    import traceback
-    st.code(traceback.format_exc())
-except Exception as e:
-    st.error(f"Error running Reorg Rates dashboard: {e}")
-    import traceback
-    st.code(traceback.format_exc())
+run_dashboard()

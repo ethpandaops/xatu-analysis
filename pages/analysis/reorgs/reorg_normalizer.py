@@ -4,7 +4,7 @@ Reorg normalization utilities for identifying common events across nodes
 import polars as pl
 from typing import Tuple, Dict, List
 from datetime import timedelta
-from config_utils import get_client_normalization_rules
+from pages.analysis.reorgs.config_utils import get_client_normalization_rules
 
 def normalize_reorg_events(
     df: pl.DataFrame,

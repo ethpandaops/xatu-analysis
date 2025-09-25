@@ -11,7 +11,7 @@ import logging
 import streamlit as st
 
 from shared.database import get_database_connection
-from queries_reverse import (
+from pages.analysis.gossipsub_monitoring.queries_reverse import (
     get_ihave_based_slots_query, 
     get_ihave_data_for_slot_time,
     get_idontwant_data_for_slot_time,

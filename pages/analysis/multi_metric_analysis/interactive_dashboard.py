@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 from shared.ui_components import apply_ethPandaOps_styling
 from shared.header import render_global_header, get_global_cluster, get_global_network
 from shared.metric_utils import get_metric_info
-from config_utils import (
+from pages.analysis.multi_metric_analysis.config_utils import (
     get_analysis_config, get_default_periods,
     validate_analysis_config
 )
-from data_loaders import load_complete_analysis_data
-from metrics_calculators import (
+from pages.analysis.multi_metric_analysis.data_loaders import load_complete_analysis_data
+from pages.analysis.multi_metric_analysis.metrics_calculators import (
     create_time_buckets,
     create_gas_buckets, 
     calculate_bucket_metrics,
@@ -38,14 +38,14 @@ from metrics_calculators import (
     calculate_gas_binned_analysis,
     calculate_comparative_analysis
 )
-from plot_generators import (
+from pages.analysis.multi_metric_analysis.plot_generators import (
     create_gas_vs_arrival_scatter, create_time_series_comparison, create_consensus_performance_heatmap,
     create_box_plot_comparison, create_correlation_matrix, create_geographic_performance_plot,
     create_gas_binned_performance_plot, create_multi_y_correlation_plot
 )
-from metric_discovery import discover_metrics, DataLineageTracker, format_bucket_size
-from dynamic_bucketing import create_dynamic_buckets
-from analysis_templates import get_template, get_template_names, get_default_template, save_template
+from pages.analysis.multi_metric_analysis.metric_discovery import discover_metrics, DataLineageTracker, format_bucket_size
+from pages.analysis.multi_metric_analysis.dynamic_bucketing import create_dynamic_buckets
+from pages.analysis.multi_metric_analysis.analysis_templates import get_template, get_template_names, get_default_template, save_template
 
 
 # Configure logging

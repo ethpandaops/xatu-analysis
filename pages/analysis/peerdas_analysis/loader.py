@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 import logging
 
 from shared.database import get_database_connection
-from queries import (
+from pages.analysis.peerdas_analysis.queries import (
     get_peerdas_query, 
     get_node_classification_raw_query, 
     get_max_blob_count_query,

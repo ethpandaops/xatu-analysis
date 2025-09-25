@@ -1,25 +1,8 @@
 # pages/analysis/attestation_cdf/page.py
-import streamlit as st
-import sys
-import os
+"""Attestation CDF Analysis Dashboard"""
 
-# Get current directory and add it to sys.path so imports work
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+# Use proper absolute imports from project root
+from pages.analysis.attestation_cdf.interactive_dashboard import main
 
-# Import the dashboard module
-try:
-    # Import with the directory in path
-    from interactive_dashboard import main
-
-    # Run the dashboard
-    main()
-
-except ImportError as e:
-    import traceback
-    st.code(traceback.format_exc())
-except Exception as e:
-    st.error(f"Error running Attestation CDF Analysis dashboard: {e}")
-    import traceback
-    st.code(traceback.format_exc())
+# Run the dashboard
+main()
