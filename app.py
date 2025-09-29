@@ -89,10 +89,24 @@ reorg_rates_page = st.Page(
     url_path="reorg-rates"
 )
 
+blob_mempool_analysis_page = st.Page(
+    "pages/analysis/blob_mempool_analysis/page.py",
+    title="Blob Mempool Analysis",
+    icon="🧊",
+    url_path="blob-mempool-analysis"
+)
+
+blob_propagation_analysis_page = st.Page(
+    "pages/analysis/blob_propagation/page.py",
+    title="Blob Propagation Analysis",
+    icon="🔗",
+    url_path="blob-propagation-analysis"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page, reorg_rates_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page, reorg_rates_page, blob_mempool_analysis_page, blob_propagation_analysis_page]
 })
 
 # Run the selected page
