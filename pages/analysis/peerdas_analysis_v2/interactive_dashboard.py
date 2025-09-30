@@ -106,6 +106,8 @@ def parse_url_params() -> Dict[str, Any]:
     # Parse boolean parameters
     if 'filter_zero_blobs' in params:
         config['filter_zero_blobs'] = params['filter_zero_blobs'].lower() == 'true'
+    if 'filter_low_data_buckets' in params:
+        config['filter_low_data_buckets'] = params['filter_low_data_buckets'].lower() == 'true'
 
     return config
 
@@ -135,7 +137,7 @@ def generate_url_params(config: Dict[str, Any]) -> str:
     # Add other parameters
     simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode',
                      'chart_type', 'proposer_type', 'attester_type',
-                     'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs']
+                     'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs', 'filter_low_data_buckets']
 
     for key in simple_params:
         if key in config and config[key] is not None:
@@ -396,6 +398,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         help="Exclude slots with 0 blobs from the analysis"
     )
 
+    # Add filter option for low-data buckets
+    filter_low_data_buckets = st.sidebar.checkbox(
+        "Filter out low-data buckets",
+        value=url_config.get('filter_low_data_buckets', True),
+        help="Hide buckets with insufficient data points (less than 2% of total slots). Uncheck to show all buckets even if they have no data."
+    )
+
     num_buckets = st.sidebar.slider(
         "Number of Buckets",
         min_value=1,
@@ -522,6 +531,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             }[x],
             help="Choose how to aggregate head correctness values for each blob count bucket"
         )
+    
     st.sidebar.markdown("---")
     
     col1, col2 = st.sidebar.columns([2, 1])
@@ -552,6 +562,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'show_trend_line': show_trend_line,
         'scatter_aggregation': scatter_aggregation,
         'performance_threshold': performance_threshold,
+        'filter_low_data_buckets': filter_low_data_buckets,  # Add filter for low-data buckets
         'load_data': load_data
     }
     
@@ -736,7 +747,8 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                 'total_slots_analyzed': slots_in_result,
                 'filtered_out_slots': filtered_out,
                 'avg_head_correctness': data['head_correctness_pct'].mean() if 'head_correctness_pct' in data.columns else 0,
-                'mev_slots': mev_slots if mev_slots else []
+                'mev_slots': mev_slots if mev_slots else [],
+                'filter_low_data_buckets': config.get('filter_low_data_buckets', True)  # Store filter setting
             }
             logger.info(f"Stored {len(mev_slots) if mev_slots else 0} MEV slots in session state")
             st.session_state.peerdas_v2_data_loaded = True
@@ -861,14 +873,92 @@ def main():
                         bucket_slot_counts[blob_count] = bucket_data['slot'].nunique()
 
             # Prepare metadata
+            # Calculate slot counts based on what's actually being displayed in the chart
+            total_slots = st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0)
+            filter_low_data_buckets = config.get('filter_low_data_buckets', True)
+            
+            # Calculate slots that will be displayed based on bucket filtering
+            # Recalculate bucket slot counts using the same logic as chart functions to ensure consistency
+            if 'slot' in data.columns:
+                # Calculate total unique slots in the actual data (for threshold calculation)
+                actual_total_slots = data['slot'].nunique()
+                
+                # Recalculate bucket slot counts using the same logic as chart functions
+                chart_bucket_slot_counts = {}
+                if config.get('num_buckets', 10) > 0:
+                    # Bucketed data - need to recreate the same bucketing logic as chart functions
+                    if 'blob_count' in data.columns:
+                        min_blobs = data['blob_count'].min()
+                        max_blobs = data['blob_count'].max()
+                        num_buckets = config.get('num_buckets', 10)
+                        
+                        if min_blobs == max_blobs:
+                            # Single blob count, no bucketing needed
+                            chart_bucket_slot_counts[str(int(min_blobs))] = data['slot'].nunique()
+                        else:
+                            # Create buckets using the same logic as bar chart function
+                            bucket_width = (max_blobs - min_blobs + 1) / num_buckets
+                            edges = [min_blobs + i * bucket_width for i in range(num_buckets + 1)]
+                            edges[-1] = max_blobs + 1  # Ensure last edge includes max value
+
+                            data_temp = data.copy()
+                            data_temp['blob_bucket'] = pd.cut(data_temp['blob_count'], bins=edges, include_lowest=True, right=False)
+                            data_temp['blob_bucket_label'] = data_temp['blob_bucket'].apply(
+                                lambda x: f"{int(np.floor(x.left))}-{int(np.ceil(x.right)-1)}" if pd.notna(x) else "Unknown"
+                            )
+                            
+                            for bucket_label in data_temp['blob_bucket_label'].unique():
+                                if pd.notna(bucket_label):
+                                    bucket_data = data_temp[data_temp['blob_bucket_label'] == bucket_label]
+                                    chart_bucket_slot_counts[bucket_label] = bucket_data['slot'].nunique()
+                else:
+                    # Non-bucketed data - count by individual blob counts
+                    for blob_count in sorted(data['blob_count'].dropna().unique()):
+                        bucket_data = data[data['blob_count'] == blob_count]
+                        chart_bucket_slot_counts[blob_count] = bucket_data['slot'].nunique()
+                
+                total_bucket_slots = sum(chart_bucket_slot_counts.values())
+                
+                if filter_low_data_buckets:
+                    # When filtering is enabled, only count slots from buckets that meet the threshold
+                    # This matches the logic in the chart generation functions
+                    total_buckets = len(chart_bucket_slot_counts)
+                    if total_buckets <= 1:
+                        slot_threshold = 0
+                    else:
+                        # Use actual_total_slots for threshold calculation (same as chart functions)
+                        base_percentage = 0.02
+                        scaled_percentage = base_percentage * min(1.0, 6.0 / total_buckets)
+                        threshold_percentage = max(0.005, scaled_percentage)
+                        slot_threshold = max(1, actual_total_slots * threshold_percentage)
+                    
+                    # Count slots only from buckets that meet the threshold
+                    total_slots_analyzed = sum(
+                        count for count in chart_bucket_slot_counts.values() 
+                        if count >= slot_threshold
+                    )
+                    filtered_out_slots = sum(
+                        count for count in chart_bucket_slot_counts.values() 
+                        if count < slot_threshold
+                    )
+                else:
+                    # When filtering is disabled, count all slots from all buckets
+                    total_slots_analyzed = total_bucket_slots
+                    filtered_out_slots = 0
+            else:
+                # Fallback to original values if no slot data
+                total_slots_analyzed = st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0)
+                filtered_out_slots = st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0)
+            
             metadata = {
-                'total_slots': st.session_state.peerdas_v2_analysis_data.get('unique_slots', 0),
-                'total_slots_analyzed': st.session_state.peerdas_v2_analysis_data.get('total_slots_analyzed', 0),
-                'filtered_out_slots': st.session_state.peerdas_v2_analysis_data.get('filtered_out_slots', 0),
+                'total_slots': total_slots,
+                'total_slots_analyzed': total_slots_analyzed,
+                'filtered_out_slots': filtered_out_slots,
                 'view_mode': config.get('view_mode', 'correct'),
                 'view_mode_label': view_mode_label,
                 'unique_slots_in_data': data['slot'].nunique() if 'slot' in data.columns else 0,  # Track actual unique slots
-                'bucket_slot_counts': bucket_slot_counts  # Pre-calculated slot counts per bucket
+                'bucket_slot_counts': bucket_slot_counts,  # Pre-calculated slot counts per bucket
+                'filter_low_data_buckets': filter_low_data_buckets  # Include filter setting in metadata
             }
             
             time_range = f"{config['start_datetime'].strftime('%Y-%m-%d %H:%M')} to {config['end_datetime'].strftime('%Y-%m-%d %H:%M')}"
@@ -904,6 +994,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 elif config['chart_type'] == 'violin':
@@ -916,6 +1007,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 elif config['chart_type'] == 'ridgeline':
@@ -928,6 +1020,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 elif config['chart_type'] == 'ecdf_diff':
@@ -941,6 +1034,7 @@ def main():
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
                         difference_mode=True,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 elif config['chart_type'] == 'cdf':
@@ -953,6 +1047,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 elif config['chart_type'] == 'bar':
@@ -965,6 +1060,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
                 else:  # scatter/line chart
@@ -979,6 +1075,7 @@ def main():
                         grouping_dimension=grouping_dim,
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True),
                         title_suffix=f"({data_type_label.capitalize()} Grouping)"
                     )
             
@@ -1041,7 +1138,8 @@ def main():
                         grouping_dimension=config.get('grouping_dimension') or 'node_type',
                         proposer_filters=proposer_filters,
                         attester_filters=attester_filters,
-                        performance_threshold=config.get('performance_threshold', 95.0)
+                        performance_threshold=config.get('performance_threshold', 95.0),
+                        filter_low_data_buckets=config.get('filter_low_data_buckets', True)
                     )
                 else:
                     fig = create_chart_for_data_type(

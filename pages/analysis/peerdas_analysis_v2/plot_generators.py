@@ -217,6 +217,8 @@ def _format_filter_description(filter_type: str, filters: Dict[str, Any]) -> str
     return f"{filter_type} " + ' '.join(parts)
 
 
+
+
 def calculate_correlation_analysis(data: pd.DataFrame, x_metric: str, y_metric: str) -> Optional[Dict[str, float]]:
     """Calculate correlation statistics between two metrics."""
     try:
@@ -258,7 +260,8 @@ def create_head_correctness_chart(
     aggregation_method: str = 'p95',
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
-    attester_filters: Dict[str, Any] = None
+    attester_filters: Dict[str, Any] = None,
+    filter_low_data_buckets: bool = True
 ) -> go.Figure:
     """Create head correctness chart showing aggregated accuracy percentage by blob count buckets with grouping."""
     if data.empty:
@@ -366,16 +369,22 @@ def create_head_correctness_chart(
         else:
             bucket_slot_totals[x_val] = 0
 
-    # Filter out buckets that have less than the adaptive threshold
-    filtered_x_order = [
-        x_val for x_val in x_order
-        if bucket_slot_totals.get(x_val, 0) >= slot_threshold
-    ]
-
-    # If all buckets are filtered out, keep at least the largest one
-    if not filtered_x_order and x_order:
-        max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
-        filtered_x_order = [max_bucket]
+    # Apply filtering based on user preference
+    if filter_low_data_buckets:
+        # Filter out buckets that have less than the adaptive threshold
+        filtered_x_order = [
+            x_val for x_val in x_order
+            if bucket_slot_totals.get(x_val, 0) >= slot_threshold
+        ]
+        
+        # If all buckets are filtered out, keep at least the largest one
+        if not filtered_x_order and x_order:
+            max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
+            filtered_x_order = [max_bucket]
+    else:
+        # Don't filter out buckets - show all requested buckets even if they have no data
+        # This ensures the user sees exactly the number of buckets they requested
+        filtered_x_order = x_order
 
     fig = go.Figure()
 
@@ -563,6 +572,7 @@ def create_head_correctness_boxplot(
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create grouped box plot using real grouped data (no synthetic expansion)."""
@@ -677,16 +687,22 @@ def create_head_correctness_boxplot(
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
 
-    # Filter out buckets that have less than the adaptive threshold
-    filtered_x_order = [
-        x_val for x_val in x_order
-        if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
-    ]
-
-    # If all buckets are filtered out, keep at least the largest one
-    if not filtered_x_order and x_order:
-        max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
-        filtered_x_order = [max_bucket]
+    # Apply filtering based on user preference
+    if filter_low_data_buckets:
+        # Filter out buckets that have less than the adaptive threshold
+        filtered_x_order = [
+            x_val for x_val in x_order
+            if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
+        ]
+        
+        # If all buckets are filtered out, keep at least the largest one
+        if not filtered_x_order and x_order:
+            max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
+            filtered_x_order = [max_bucket]
+    else:
+        # Don't filter out buckets - show all requested buckets even if they have no data
+        # This ensures the user sees exactly the number of buckets they requested
+        filtered_x_order = x_order
 
     fig = go.Figure()
 
@@ -857,6 +873,7 @@ def create_head_correctness_violin(
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create violin plot showing distribution of head correctness by blob count."""
@@ -933,16 +950,22 @@ def create_head_correctness_violin(
                 unique_count = bucket_data['slot'].nunique()
                 unique_slots_per_bucket[x_val] = unique_count
 
-    # Filter out buckets that have less than the adaptive threshold
-    filtered_x_order = [
-        x_val for x_val in x_order
-        if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
-    ]
-
-    # If all buckets are filtered out, keep at least the largest one
-    if not filtered_x_order and x_order:
-        max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
-        filtered_x_order = [max_bucket]
+    # Apply filtering based on user preference
+    if filter_low_data_buckets:
+        # Filter out buckets that have less than the adaptive threshold
+        filtered_x_order = [
+            x_val for x_val in x_order
+            if unique_slots_per_bucket.get(x_val, 0) >= slot_threshold
+        ]
+        
+        # If all buckets are filtered out, keep at least the largest one
+        if not filtered_x_order and x_order:
+            max_bucket = max(unique_slots_per_bucket.items(), key=lambda x: x[1])[0]
+            filtered_x_order = [max_bucket]
+    else:
+        # Don't filter out buckets - show all requested buckets even if they have no data
+        # This ensures the user sees exactly the number of buckets they requested
+        filtered_x_order = x_order
 
     fig = go.Figure()
 
@@ -1135,6 +1158,7 @@ def create_head_correctness_ridgeline(
     grouping_dimension: str = 'node_type',
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create overlaid ridgeline plot with blob buckets overlaid per group."""
@@ -1439,6 +1463,7 @@ def create_head_correctness_ecdf(
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
     difference_mode: bool = True,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create ECDF (Empirical Cumulative Distribution Function) for head correctness by blob buckets."""
@@ -1704,6 +1729,7 @@ def create_head_correctness_cdf(
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
     inverse: bool = True,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create CDF (or inverse CDF/quantile plot) for head correctness by blob buckets."""
@@ -1984,7 +2010,8 @@ def create_head_correctness_summary(
     grouping_dimension: str = "node_type",
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
-    performance_threshold: float = 95.0
+    performance_threshold: float = 95.0,
+    filter_low_data_buckets: bool = True
 ) -> go.Figure:
     """Create statistical summary table for head correctness data."""
     if data.empty:
@@ -2212,6 +2239,7 @@ def create_head_correctness_bar(
     grouping_dimension: str = "node_type",
     proposer_filters: Dict[str, Any] = None,
     attester_filters: Dict[str, Any] = None,
+    filter_low_data_buckets: bool = True,
     title_suffix: str = ""
 ) -> go.Figure:
     """Create grouped bar chart for head correctness/incorrectness data by blob buckets."""
@@ -2290,16 +2318,22 @@ def create_head_correctness_bar(
         else:
             bucket_slot_totals[bucket] = 0
 
-    # Filter out buckets that have less than the adaptive threshold
-    filtered_bucket_order = [
-        bucket for bucket in bucket_order
-        if bucket_slot_totals.get(bucket, 0) >= slot_threshold
-    ]
-
-    # If all buckets are filtered out, keep at least the largest one
-    if not filtered_bucket_order and bucket_order:
-        max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
-        filtered_bucket_order = [max_bucket]
+    # Apply filtering based on user preference
+    if filter_low_data_buckets:
+        # Filter out buckets that have less than the adaptive threshold
+        filtered_bucket_order = [
+            bucket for bucket in bucket_order
+            if bucket_slot_totals.get(bucket, 0) >= slot_threshold
+        ]
+        
+        # If all buckets are filtered out, keep at least the largest one
+        if not filtered_bucket_order and bucket_order:
+            max_bucket = max(bucket_slot_totals.items(), key=lambda x: x[1])[0]
+            filtered_bucket_order = [max_bucket]
+    else:
+        # Don't filter out buckets - show all requested buckets even if they have no data
+        # This ensures the user sees exactly the number of buckets they requested
+        filtered_bucket_order = bucket_order
 
     # Calculate mean correctness for each group and bucket combination
     bar_data = []
@@ -2374,13 +2408,14 @@ def create_head_correctness_bar(
         ))
 
     # Add sample count annotations
-    # Aggregate counts for each bucket across all groups
+    # Calculate unique slots per bucket across all groups (same as other chart types)
     bucket_totals = {}
-    for group_data in bar_data:
-        for i, bucket in enumerate(group_data["buckets"]):
-            if bucket not in bucket_totals:
-                bucket_totals[bucket] = 0
-            bucket_totals[bucket] += group_data["counts"][i]
+    for bucket in filtered_bucket_order:  # Use filtered bucket order
+        bucket_df = df[df[bucket_col] == bucket]
+        if not bucket_df.empty:
+            bucket_totals[bucket] = bucket_df['slot'].nunique()
+        else:
+            bucket_totals[bucket] = 0
 
     # Add annotations for each bucket (skip for attester charts)
     if 'Attester' not in title_suffix:
