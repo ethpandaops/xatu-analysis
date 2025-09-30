@@ -85,7 +85,7 @@ def parse_url_params() -> Dict[str, Any]:
             pass
 
     # Parse string parameters
-    for key in ['grouping_dimension', 'mev_filter', 'view_mode', 'chart_type',
+    for key in ['grouping_dimension', 'attester_grouping', 'mev_filter', 'view_mode', 'chart_type',
                 'proposer_type', 'attester_type', 'scatter_aggregation']:
         if key in params:
             config[key] = params[key]
@@ -135,7 +135,7 @@ def generate_url_params(config: Dict[str, Any]) -> str:
         params['end_time'] = config['end_time']
 
     # Add other parameters
-    simple_params = ['num_buckets', 'grouping_dimension', 'mev_filter', 'view_mode',
+    simple_params = ['num_buckets', 'grouping_dimension', 'attester_grouping', 'mev_filter', 'view_mode',
                      'chart_type', 'proposer_type', 'attester_type',
                      'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs', 'filter_low_data_buckets']
 
@@ -217,12 +217,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     st.sidebar.subheader("🧩 Grouping")
     
     # Proposer grouping
+    proposer_options = ['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev']
     proposer_grouping = st.sidebar.selectbox(
         "Proposer Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'cl_architecture', 'cl_operator', 'block_building', 'node_type_mev', 'cl_node_type_mev'].index(
-            url_config.get('grouping_dimension', 'node_type')
-        ),
+        options=proposer_options,
+        index=proposer_options.index(url_config.get('grouping_dimension', 'none')),
         format_func=lambda x: {
             'none': 'None (All Proposers)',
             'node_type': 'Node Type',
@@ -244,12 +243,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     )
 
     # Attester grouping (new)
+    attester_options = ['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator']
     attester_grouping = st.sidebar.selectbox(
         "Attester Grouping",
-        options=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'],
-        index=['none', 'node_type', 'cl_client', 'el_client', 'architecture', 'operator', 'region', 'datacenter', 'cl_el_combined', 'cl_node_type', 'el_node_type', 'cl_architecture', 'cl_operator'].index(
-            url_config.get('attester_grouping', 'none')
-        ),
+        options=attester_options,
+        index=attester_options.index(url_config.get('attester_grouping', 'none')),
         format_func=lambda x: {
             'none': 'None (All Attesters)',
             'node_type': 'Node Type',
