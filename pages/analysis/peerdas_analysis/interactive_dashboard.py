@@ -6,7 +6,7 @@ Simplified single-chart dashboard matching multi-metric analysis styling.
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import Dict, Any, Optional
 import logging
 
@@ -137,7 +137,7 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     else:
         # Custom date selection
         # Parse saved dates/times if available
-        from datetime import time as datetime_time
+        # time is now imported at the top of the file
         
         if saved_start:
             try:
@@ -155,34 +155,35 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         else:
             default_end_date = datetime.now().date()
         
-        if saved_start_time:
-            try:
-                default_start_time = datetime.strptime(saved_start_time, "%H:%M:%S").time()
-            except:
-                default_start_time = (datetime.now() - timedelta(hours=6)).time()
-        else:
-            default_start_time = (datetime.now() - timedelta(hours=6)).time()
+        # Initialize session state for time widgets only once
+        if "peerdas_start_time" not in st.session_state:
+            if saved_start_time:
+                try:
+                    st.session_state["peerdas_start_time"] = datetime.strptime(saved_start_time, "%H:%M:%S").time()
+                except:
+                    st.session_state["peerdas_start_time"] = (datetime.now() - timedelta(hours=6)).time()
+            else:
+                st.session_state["peerdas_start_time"] = (datetime.now() - timedelta(hours=6)).time()
         
-        if saved_end_time:
-            try:
-                default_end_time = datetime.strptime(saved_end_time, "%H:%M:%S").time()
-            except:
-                default_end_time = datetime.now().time()
-        else:
-            default_end_time = datetime.now().time()
+        if "peerdas_end_time" not in st.session_state:
+            if saved_end_time:
+                try:
+                    st.session_state["peerdas_end_time"] = datetime.strptime(saved_end_time, "%H:%M:%S").time()
+                except:
+                    st.session_state["peerdas_end_time"] = datetime.now().time()
+            else:
+                st.session_state["peerdas_end_time"] = datetime.now().time()
         
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
                 "Start Date",
                 value=default_start_date,
-                max_value=datetime.now().date(),
-                key="start_date_custom"
+                max_value=datetime.now().date()
             )
             start_time = st.time_input(
                 "Start Time",
-                value=default_start_time,
-                key="start_time_custom",
+                key="peerdas_start_time",  # Use key to get/set value
                 step=300  # 5 minute intervals
             )
         
@@ -190,13 +191,11 @@ def render_sidebar_configuration() -> Dict[str, Any]:
             end_date = st.date_input(
                 "End Date",
                 value=default_end_date,
-                max_value=datetime.now().date(),
-                key="end_date_custom"
+                max_value=datetime.now().date()
             )
             end_time = st.time_input(
                 "End Time",
-                value=default_end_time,
-                key="end_time_custom",
+                key="peerdas_end_time",  # Use key to get/set value
                 step=300  # 5 minute intervals
             )
     

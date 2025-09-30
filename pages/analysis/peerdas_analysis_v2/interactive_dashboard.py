@@ -9,7 +9,7 @@ proposer and attester characteristics.
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from typing import Dict, Any, Optional, List
 import logging
 from urllib.parse import urlencode
@@ -349,6 +349,12 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         # Get defaults from URL or use last 2 hours
         default_end = url_config.get('end_datetime') or datetime.now(timezone.utc).replace(tzinfo=None)
         default_start = url_config.get('start_datetime') or (default_end - timedelta(hours=2))
+        
+        # Initialize session state for time widgets only once
+        if "peerdas_v2_start_time" not in st.session_state:
+            st.session_state["peerdas_v2_start_time"] = default_start.time()
+        if "peerdas_v2_end_time" not in st.session_state:
+            st.session_state["peerdas_v2_end_time"] = default_end.time()
 
         # Custom date and time inputs
         st.sidebar.subheader("Start Time")
@@ -356,13 +362,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         start_date = start_col1.date_input(
             "Start Date",
             value=default_start.date(),
-            max_value=datetime.now().date(),
-            key="peerdas_v2_start_date_custom"
+            max_value=datetime.now().date()
         )
         start_time = start_col2.time_input(
             "Start Time (UTC)",
-            value=default_start.time(),
-            key="peerdas_v2_start_time_custom",
+            key="peerdas_v2_start_time",  # Use key to get/set value
             step=300  # 5 minute steps
         )
 
@@ -371,13 +375,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         end_date = end_col1.date_input(
             "End Date",
             value=default_end.date(),
-            max_value=datetime.now().date(),
-            key="peerdas_v2_end_date_custom"
+            max_value=datetime.now().date()
         )
         end_time = end_col2.time_input(
             "End Time (UTC)",
-            value=default_end.time(),
-            key="peerdas_v2_end_time_custom",
+            key="peerdas_v2_end_time",  # Use key to get/set value
             step=300  # 5 minute steps
         )
 
@@ -552,6 +554,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'performance_threshold': performance_threshold,
         'load_data': load_data
     }
+    
 
     # Add period if not custom
     if selected_period != "Custom":
