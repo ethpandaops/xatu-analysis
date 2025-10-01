@@ -5,7 +5,7 @@ import streamlit as st
 import polars as pl
 import plotly.graph_objects as go
 import plotly.express as px
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 import pandas as pd
 import numpy as np
 
@@ -96,6 +96,12 @@ def main():
         default_end = datetime.now(timezone.utc)
         default_start = default_end - timedelta(days=7)
         
+        # Initialize session state for time widgets only once
+        if "reorgs_start_time" not in st.session_state:
+            st.session_state["reorgs_start_time"] = default_start.time()
+        if "reorgs_end_time" not in st.session_state:
+            st.session_state["reorgs_end_time"] = default_end.time()
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
@@ -104,7 +110,7 @@ def main():
                 min_value=datetime(2020, 12, 1).date(),
                 max_value=datetime.now(timezone.utc).date()
             )
-            start_time_input = st.time_input("Start Time", value=default_start.time())
+            start_time_input = st.time_input("Start Time", key="reorgs_start_time")
         with col2:
             end_date = st.date_input(
                 "End Date",
@@ -112,7 +118,7 @@ def main():
                 min_value=datetime(2020, 12, 1).date(),
                 max_value=datetime.now(timezone.utc).date()
             )
-            end_time_input = st.time_input("End Time", value=default_end.time())
+            end_time_input = st.time_input("End Time", key="reorgs_end_time")
         
         # Combine date and time
         start_time = datetime.combine(start_date, start_time_input).replace(tzinfo=timezone.utc)

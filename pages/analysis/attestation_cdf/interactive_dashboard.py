@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import time
+from datetime import datetime, timedelta, time
 import plotly.graph_objects as go
 import plotly.express as px
 
@@ -86,32 +85,34 @@ def main():
         default_end = datetime.now(timezone.utc)
         default_start = default_end - timedelta(hours=1)
         
+        # Initialize session state for time widgets only once
+        if "attestation_cdf_start_time" not in st.session_state:
+            st.session_state["attestation_cdf_start_time"] = default_start.time()
+        if "attestation_cdf_end_time" not in st.session_state:
+            st.session_state["attestation_cdf_end_time"] = default_end.time()
+        
         col1, col2 = st.sidebar.columns(2)
         with col1:
             start_date = st.date_input(
                 "Start Date", 
-                value=st.session_state.get('custom_start_date', default_start.date()),
+                value=default_start.date(),
                 min_value=datetime(2020, 12, 1).date(),  # Ethereum beacon chain genesis
-                max_value=datetime.now(timezone.utc).date(),
-                key='custom_start_date'
+                max_value=datetime.now(timezone.utc).date()
             )
             start_time_input = st.time_input(
                 "Start Time (UTC)", 
-                value=st.session_state.get('custom_start_time', default_start.time()),
-                key='custom_start_time'
+                key="attestation_cdf_start_time"
             )
         with col2:
             end_date = st.date_input(
                 "End Date", 
-                value=st.session_state.get('custom_end_date', default_end.date()),
+                value=default_end.date(),
                 min_value=datetime(2020, 12, 1).date(),
-                max_value=datetime.now(timezone.utc).date(),
-                key='custom_end_date'
+                max_value=datetime.now(timezone.utc).date()
             )
             end_time_input = st.time_input(
                 "End Time (UTC)", 
-                value=st.session_state.get('custom_end_time', default_end.time()),
-                key='custom_end_time'
+                key="attestation_cdf_end_time"
             )
         
         # Combine and add UTC timezone
