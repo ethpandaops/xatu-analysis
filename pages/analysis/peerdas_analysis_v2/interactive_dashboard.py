@@ -169,7 +169,7 @@ def initialize_session_state():
     if 'peerdas_v2_last_config' not in st.session_state:
         st.session_state.peerdas_v2_last_config = None
     
-    # Load URL parameters on first run
+    # Load URL parameters on first run for initial configuration
     if 'peerdas_v2_url_params_loaded' not in st.session_state:
         st.session_state.peerdas_v2_url_params_loaded = True
         st.session_state.peerdas_v2_url_config = parse_url_params()
@@ -346,22 +346,22 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             )
     else:
         # Custom date selection
-        # Get defaults from URL or use last 2 hours
-        default_end = url_config.get('end_datetime') or datetime.now(timezone.utc).replace(tzinfo=None)
-        default_start = url_config.get('start_datetime') or (default_end - timedelta(hours=2))
+        # Use session state to persist custom values or default to last 2 hours
+        default_end = datetime.now(timezone.utc).replace(tzinfo=None)
+        default_start = default_end - timedelta(hours=2)
 
         # Custom date and time inputs
         st.sidebar.subheader("Start Time")
         start_col1, start_col2 = st.sidebar.columns(2)
         start_date = start_col1.date_input(
             "Start Date",
-            value=default_start.date(),
+            value=st.session_state.get('peerdas_v2_start_date_custom', default_start.date()),
             max_value=datetime.now().date(),
             key="peerdas_v2_start_date_custom"
         )
         start_time = start_col2.time_input(
             "Start Time (UTC)",
-            value=default_start.time(),
+            value=st.session_state.get('peerdas_v2_start_time_custom', default_start.time()),
             key="peerdas_v2_start_time_custom",
             step=300  # 5 minute steps
         )
@@ -370,13 +370,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         end_col1, end_col2 = st.sidebar.columns(2)
         end_date = end_col1.date_input(
             "End Date",
-            value=default_end.date(),
+            value=st.session_state.get('peerdas_v2_end_date_custom', default_end.date()),
             max_value=datetime.now().date(),
             key="peerdas_v2_end_date_custom"
         )
         end_time = end_col2.time_input(
             "End Time (UTC)",
-            value=default_end.time(),
+            value=st.session_state.get('peerdas_v2_end_time_custom', default_end.time()),
             key="peerdas_v2_end_time_custom",
             step=300  # 5 minute steps
         )
