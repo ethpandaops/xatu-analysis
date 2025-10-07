@@ -681,6 +681,7 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
     
     # Get unique validators who had slow attestations
     slow_validator_indices = slow_attestations['attesting_validator_index'].unique()
+    total_slow = len(slow_validator_indices)
     
     # Calculate statistics per validator
     validator_stats = slow_attestations.groupby('attesting_validator_index').agg({
@@ -752,7 +753,6 @@ def render_slow_period_analysis(combined_data, cdf_metrics, network, client_filt
             
             # Show percentage breakdown only if we have real entity data
             if not (len(entity_counts) == 1 and 'unknown' in entity_counts):
-                total_slow = len(slow_validator_indices)
                 with st.expander("Entity Details"):
                     for entity, count in sorted_entities[:10]:
                         pct = (count / total_slow) * 100
