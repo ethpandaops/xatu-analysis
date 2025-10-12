@@ -1,8 +1,8 @@
 """
-Plot generators for Beacon API Events Timing.
+Plot generators for Beacon API Events Counts.
 
-Provides a minimal set of visuals similar to peerdas v2: a time-series
-summary with quantiles and grouped box plots for proposer/attester views.
+Provides visualizations for event count analysis: time-series showing event
+counts over time and grouped bar charts for proposer/receiver views.
 """
 
 import streamlit as st
@@ -133,14 +133,14 @@ def render_data_summary(data: Dict[str, Any], config: Dict[str, Any]):
             st.metric(
                 "Data Source",
                 config.get('data_source', 'unknown').title(),
-                help="Source of timing data: Beacon API events or LibP2P Gossipsub messages"
+                help="Source of event data: Beacon API events or LibP2P Gossipsub messages"
             )
 
         with col2:
             st.metric(
                 "Event Type",
                 config.get('event_type', 'unknown').replace('_', ' ').title(),
-                help="Type of blockchain event being analyzed"
+                help="Type of blockchain event being counted"
             )
 
         with col3:
@@ -156,28 +156,28 @@ def render_data_summary(data: Dict[str, Any], config: Dict[str, Any]):
             st.metric(
                 "Sample Count",
                 f"{sample_count:,}",
-                help="Number of individual event timing measurements"
+                help="Number of aggregated event count records"
             )
 
-        # Second row with timing and filtering info
+        # Second row with count statistics
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-            if not samples_df.empty and 'diff_ms' in samples_df.columns:
-                avg_timing = samples_df['diff_ms'].mean()
+            if not samples_df.empty and 'event_count' in samples_df.columns:
+                total_events = samples_df['event_count'].sum()
                 st.metric(
-                    "Avg Timing",
-                    f"{avg_timing:.1f}ms",
-                    help="Average event timing across all samples"
+                    "Total Events",
+                    f"{total_events:,}",
+                    help="Total number of events counted across all groups"
                 )
 
         with col2:
-            if not samples_df.empty and 'diff_ms' in samples_df.columns:
-                p95_timing = samples_df['diff_ms'].quantile(0.95)
+            if not samples_df.empty and 'event_count' in samples_df.columns:
+                avg_count = samples_df['event_count'].mean()
                 st.metric(
-                    "P95 Timing",
-                    f"{p95_timing:.1f}ms",
-                    help="95th percentile event timing"
+                    "Avg Count",
+                    f"{avg_count:.1f}",
+                    help="Average event count per group/slot"
                 )
 
         with col3:
@@ -305,18 +305,18 @@ def render_time_series_summary(data: dict, config: Dict[str, Any] = None):
         return
 
     fig = go.Figure()
-    colors = {"average": "#1f77b4", "p50": "#ff7f0e", "p95": "#d62728"}
 
-    for col, name in [("average", "avg"), ("p50", "p50"), ("p95", "p95")]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df['time'],
-                y=df[col],
-                mode='lines+markers',
-                name=name,
-                line=dict(color=colors.get(col, "#2ca02c"), width=2),
-                marker=dict(size=4)
-            ))
+    if 'event_count' in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df['time'],
+            y=df['event_count'],
+            mode='lines+markers',
+            name='Event Count',
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=4),
+            fill='tozeroy',
+            fillcolor='rgba(31, 119, 180, 0.2)'
+        ))
 
     # Add data source and configuration annotations
     data_source = config.get('data_source', 'unknown') if config else 'unknown'
@@ -325,10 +325,11 @@ def render_time_series_summary(data: dict, config: Dict[str, Any] = None):
 
     # Calculate some basic stats for annotation
     total_points = len(df)
-    if not df.empty and 'average' in df.columns:
-        avg_value = df['average'].mean()
+    if not df.empty and 'event_count' in df.columns:
+        total_events = df['event_count'].sum()
+        avg_count = df['event_count'].mean()
         annotation_text = f"Data: {data_source.title()} | Event: {event_type.replace('_', ' ').title()}<br>"
-        annotation_text += f"Points: {total_points:,} | Sample Rate: {sample_rate}% | Avg: {avg_value:.1f}ms"
+        annotation_text += f"Points: {total_points:,} | Sample Rate: {sample_rate}% | Total Events: {total_events:,} | Avg: {avg_count:.1f}"
     else:
         annotation_text = f"Data: {data_source.title()} | Event: {event_type.replace('_', ' ').title()}<br>"
         annotation_text += f"Points: {total_points:,} | Sample Rate: {sample_rate}%"
@@ -348,9 +349,9 @@ def render_time_series_summary(data: dict, config: Dict[str, Any] = None):
     )
 
     fig.update_layout(
-        title="Event Timing Over Time",
+        title="Event Count Over Time",
         xaxis_title="Time (UTC)",
-        yaxis_title="Timing (ms)",
+        yaxis_title="Event Count",
         legend=dict(
             orientation="h",
             yanchor="bottom",
@@ -380,9 +381,9 @@ def _build_boxplot(df: pd.DataFrame, group_col: str, title: str, config: Dict[st
     show_outliers = config.get('show_outliers_toggle', False) if config else False
     boxpoints = 'outliers' if show_outliers else False
 
-    # Plotly box needs y values per group - filter out empty strings and unknowns
+    # Plotly box needs y values per group - filter out empty strings (but keep 'unknown')
     groups = df[group_col].dropna().unique().tolist()
-    groups = [g for g in groups if g and str(g).strip() and str(g).strip().lower() not in ['', 'unknown', 'null', 'none']]
+    groups = [g for g in groups if g and str(g).strip()]
 
     if not groups:
         st.info(f"No valid groups found for {title} after filtering empty values.")
@@ -483,9 +484,9 @@ def _build_combined_boxplot(df: pd.DataFrame, group_col: str, sort_col: str, tit
     show_outliers = config.get('show_outliers_toggle', False) if config else False
     boxpoints = 'outliers' if show_outliers else False
 
-    # Get unique groups and filter out empty/unknown values
+    # Get unique groups and filter out empty values (but keep 'unknown')
     groups = df[group_col].dropna().unique().tolist()
-    groups = [g for g in groups if g and str(g).strip() and str(g).strip().lower() not in ['', 'unknown', 'null', 'none']]
+    groups = [g for g in groups if g and str(g).strip()]
 
     if not groups:
         st.info(f"No valid groups found for {title} after filtering empty values.")
@@ -579,28 +580,26 @@ def render_group_boxplots(data: dict, config: Dict[str, Any] = None):
         st.info("No samples available.")
         return
 
-    # Filter out rows with empty/invalid group labels early
+    # Filter out rows with empty/invalid group labels (but keep 'unknown' - it represents valid data without metadata)
     original_count = len(samples)
 
     # Clean proposer_group
     if 'proposer_group' in samples.columns:
         samples = samples[
             samples['proposer_group'].notna() &
-            (samples['proposer_group'].astype(str).str.strip() != '') &
-            (~samples['proposer_group'].astype(str).str.lower().isin(['unknown', 'null', 'none']))
+            (samples['proposer_group'].astype(str).str.strip() != '')
         ].copy()
 
     # Clean receiver_group
     if 'receiver_group' in samples.columns:
         samples = samples[
             samples['receiver_group'].notna() &
-            (samples['receiver_group'].astype(str).str.strip() != '') &
-            (~samples['receiver_group'].astype(str).str.lower().isin(['unknown', 'null', 'none']))
+            (samples['receiver_group'].astype(str).str.strip() != '')
         ].copy()
 
     filtered_count = len(samples)
     if original_count > filtered_count:
-        st.info(f"🧹 Filtered out {original_count - filtered_count:,} records with empty/unknown group labels ({(original_count - filtered_count)/original_count*100:.1f}%)")
+        st.info(f"🧹 Filtered out {original_count - filtered_count:,} records with empty group labels ({(original_count - filtered_count)/original_count*100:.1f}%)")
 
     # Apply blob bucketing if enabled
     samples = apply_blob_bucketing(samples, config)
@@ -722,3 +721,271 @@ def _build_simple_histogram(df: pd.DataFrame, config: Dict[str, Any] = None):
 
 
 
+"""
+Helper function for bar chart generation - to be integrated into plot_generators.py
+"""
+
+import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from typing import Dict, Any
+
+
+def _build_bar_chart(df: pd.DataFrame, group_col: str, title: str, config: Dict[str, Any] = None):
+    """Build bar chart showing average events per slot by group."""
+    if df.empty or group_col not in df.columns or 'event_count' not in df.columns or 'slot' not in df.columns:
+        st.info(f"No data for {title}.")
+        return
+
+    # Aggregate: sum event counts and count unique slots per group
+    group_stats = df.groupby(group_col).agg({
+        'event_count': 'sum',
+        'slot': 'nunique'
+    }).reset_index()
+
+    # Calculate average events per slot
+    group_stats['events_per_slot'] = group_stats['event_count'] / group_stats['slot']
+    group_stats.columns = [group_col, 'total_events', 'num_slots', 'events_per_slot']
+
+    # Filter out empty groups (but keep 'unknown' - it represents valid data without metadata)
+    group_stats = group_stats[
+        group_stats[group_col].notna() &
+        (group_stats[group_col].astype(str).str.strip() != '')
+    ]
+
+    if group_stats.empty:
+        st.info(f"No valid groups found for {title}.")
+        return
+
+    # Sort by events per slot if requested
+    if config and config.get('sort_by_count', True):
+        group_stats = group_stats.sort_values('events_per_slot', ascending=False)
+    else:
+        # Sort by blob bucket if applicable, otherwise alphabetically
+        if group_col == 'blob_bucket_label' and 'blob_bucket_sort_key' in df.columns:
+            # Get sort keys for each label
+            label_to_sort = df.groupby('blob_bucket_label')['blob_bucket_sort_key'].first().to_dict()
+            group_stats['sort_key'] = group_stats[group_col].map(label_to_sort)
+            group_stats = group_stats.sort_values('sort_key')
+            group_stats = group_stats.drop('sort_key', axis=1)
+        else:
+            group_stats = group_stats.sort_values(group_col)
+
+    # Create bar chart
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=group_stats[group_col],
+        y=group_stats['events_per_slot'],
+        text=group_stats['events_per_slot'].apply(lambda x: f"{x:.1f}") if config and config.get('show_values', True) else None,
+        textposition='outside',
+        marker_color='#1f77b4',
+        hovertemplate='<b>%{x}</b><br>Events per Slot: %{y:.2f}<br>Total Events: ' +
+                      group_stats['total_events'].astype(str) + '<br>Slots: ' +
+                      group_stats['num_slots'].astype(str) + '<extra></extra>',
+        customdata=group_stats[['total_events', 'num_slots']].values
+    ))
+
+    # Add data source annotation
+    if config:
+        data_source = config.get('data_source', 'unknown')
+        event_type = config.get('event_type', 'unknown')
+        annotation_text = f"Data: {data_source.title()} | Event: {event_type.replace('_', ' ').title()}"
+
+        fig.add_annotation(
+            x=0.02,
+            y=0.98,
+            xref="paper",
+            yref="paper",
+            text=annotation_text,
+            showarrow=False,
+            font=dict(size=9, color="gray"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="gray",
+            borderwidth=1,
+            align="left"
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=group_col.replace('_', ' ').title(),
+        yaxis_title="Events per Slot",
+        margin=dict(t=60, r=10, b=60, l=50),
+        showlegend=False,
+        hovermode='closest'
+    )
+
+    # Rotate x-axis labels if there are many groups
+    if len(group_stats) > 10:
+        fig.update_xaxes(tickangle=-45)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _build_combined_bar_chart(df: pd.DataFrame, group_col: str, sort_col: str, title: str, config: Dict[str, Any] = None):
+    """Build bar chart for combined groups showing average events per slot."""
+    if df.empty or group_col not in df.columns or 'event_count' not in df.columns or 'slot' not in df.columns:
+        st.info(f"No data for {title}.")
+        return
+
+    # Aggregate: sum event counts and count unique slots per group
+    group_stats = df.groupby(group_col).agg({
+        'event_count': 'sum',
+        'slot': 'nunique'
+    }).reset_index()
+
+    # Calculate average events per slot
+    group_stats['events_per_slot'] = group_stats['event_count'] / group_stats['slot']
+    group_stats.columns = [group_col, 'total_events', 'num_slots', 'events_per_slot']
+
+    # Filter out empty groups (but keep 'unknown' - it represents valid data without metadata)
+    group_stats = group_stats[
+        group_stats[group_col].notna() &
+        (group_stats[group_col].astype(str).str.strip() != '')
+    ]
+
+    if group_stats.empty:
+        st.info(f"No valid groups found for {title}.")
+        return
+
+    # Custom sorting for blob bucket combinations
+    if sort_col in df.columns and 'blob_bucket_sort_key' in df.columns:
+        # Create mapping for sorting
+        group_sort_mapping = {}
+        for group in group_stats[group_col].unique():
+            group_data = df[df[group_col] == group]
+            if not group_data.empty:
+                blob_sort_key = group_data['blob_bucket_sort_key'].iloc[0]
+                secondary_sort = group.split(' blobs: ')[-1] if ' blobs: ' in group else group
+                group_sort_mapping[group] = (blob_sort_key, secondary_sort)
+
+        group_stats['sort_key_1'] = group_stats[group_col].map(lambda x: group_sort_mapping.get(x, (999, x))[0])
+        group_stats['sort_key_2'] = group_stats[group_col].map(lambda x: group_sort_mapping.get(x, (999, x))[1])
+        group_stats = group_stats.sort_values(['sort_key_1', 'sort_key_2'])
+        group_stats = group_stats.drop(['sort_key_1', 'sort_key_2'], axis=1)
+    elif config and config.get('sort_by_count', True):
+        group_stats = group_stats.sort_values('events_per_slot', ascending=False)
+    else:
+        group_stats = group_stats.sort_values(group_col)
+
+    # Create bar chart
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=group_stats[group_col],
+        y=group_stats['events_per_slot'],
+        text=group_stats['events_per_slot'].apply(lambda x: f"{x:.1f}") if config and config.get('show_values', True) else None,
+        textposition='outside',
+        marker_color='#1f77b4',
+        hovertemplate='<b>%{x}</b><br>Events per Slot: %{y:.2f}<br>Total Events: ' +
+                      group_stats['total_events'].astype(str) + '<br>Slots: ' +
+                      group_stats['num_slots'].astype(str) + '<extra></extra>',
+        customdata=group_stats[['total_events', 'num_slots']].values
+    ))
+
+    # Add data source annotation
+    if config:
+        data_source = config.get('data_source', 'unknown')
+        event_type = config.get('event_type', 'unknown')
+        annotation_text = f"Data: {data_source.title()} | Event: {event_type.replace('_', ' ').title()}"
+
+        fig.add_annotation(
+            x=0.02,
+            y=0.98,
+            xref="paper",
+            yref="paper",
+            text=annotation_text,
+            showarrow=False,
+            font=dict(size=9, color="gray"),
+            bgcolor="rgba(255,255,255,0.8)",
+            bordercolor="gray",
+            borderwidth=1,
+            align="left"
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=group_col.replace('_', ' ').title(),
+        yaxis_title="Events per Slot",
+        margin=dict(t=60, r=10, b=100, l=50),  # More bottom margin for labels
+        showlegend=False,
+        hovermode='closest'
+    )
+
+    # Rotate x-axis labels for readability
+    fig.update_xaxes(tickangle=-45)
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_group_bar_charts(data: dict, config: Dict[str, Any] = None):
+    """Main function to render bar charts showing event counts by groups."""
+    samples: pd.DataFrame = data.get('samples', pd.DataFrame())
+    if samples.empty:
+        st.info("No samples available.")
+        return
+
+    # Filter out rows with empty/invalid group labels (but keep 'unknown' - it represents valid data without metadata)
+    original_count = len(samples)
+
+    if 'proposer_group' in samples.columns:
+        samples = samples[
+            samples['proposer_group'].notna() &
+            (samples['proposer_group'].astype(str).str.strip() != '')
+        ].copy()
+
+    if 'receiver_group' in samples.columns:
+        samples = samples[
+            samples['receiver_group'].notna() &
+            (samples['receiver_group'].astype(str).str.strip() != '')
+        ].copy()
+
+    filtered_count = len(samples)
+    if original_count > filtered_count:
+        st.info(f"🧹 Filtered out {original_count - filtered_count:,} records with empty group labels ({(original_count - filtered_count)/original_count*100:.1f}%)")
+
+    # Apply blob bucketing if enabled (from existing function)
+    from pages.analysis.beacon_api_events_counts.plot_generators import apply_blob_bucketing
+    samples = apply_blob_bucketing(samples, config)
+    if samples.empty:
+        st.warning("No data available after applying filters.")
+        return
+
+    # Check if blob bucketing is enabled
+    blob_bucketing_enabled = config.get('enable_blob_bucketing', False) and 'blob_bucket_label' in samples.columns
+
+    if blob_bucketing_enabled:
+        st.subheader("Average Events per Slot by Blob Bucket")
+        _build_bar_chart(samples, 'blob_bucket_label', 'Average Events per Slot by Blob Buckets', config)
+
+        # Show grouped analysis within blob buckets if grouping is enabled
+        if 'proposer_group' in samples.columns or 'receiver_group' in samples.columns:
+            st.subheader("Grouped Analysis within Blob Buckets")
+
+            if 'proposer_group' in samples.columns:
+                st.subheader("Blob Bucket × Proposer Analysis")
+                samples['combined_group'] = samples['blob_bucket_label'].astype(str) + ' blobs: ' + samples['proposer_group'].astype(str)
+                _build_combined_bar_chart(samples, 'combined_group', 'blob_bucket_label', 'Average Events per Slot by Blob Bucket × Proposer Group', config)
+
+            if 'receiver_group' in samples.columns:
+                st.subheader("Blob Bucket × Receiver Analysis")
+                samples['combined_group_receiver'] = samples['blob_bucket_label'].astype(str) + ' blobs: ' + samples['receiver_group'].astype(str)
+                _build_combined_bar_chart(samples, 'combined_group_receiver', 'blob_bucket_label', 'Average Events per Slot by Blob Bucket × Receiver Group', config)
+
+    # Show grouped analysis if grouping columns exist (regular mode)
+    elif 'proposer_group' in samples.columns or 'receiver_group' in samples.columns:
+        st.subheader("Average Events per Slot by Group")
+        col1, col2 = st.columns(2)
+        with col1:
+            if 'proposer_group' in samples.columns:
+                _build_bar_chart(samples, 'proposer_group', 'Average Events per Slot by Proposer Groups', config)
+        with col2:
+            if 'receiver_group' in samples.columns:
+                _build_bar_chart(samples, 'receiver_group', 'Average Events per Slot by Receiver Groups', config)
+    else:
+        # Show basic summary
+        st.subheader("Event Count Summary")
+        if 'event_count' in samples.columns:
+            total_events = samples['event_count'].sum()
+            st.metric("Total Events Counted", f"{total_events:,}")
+            st.dataframe(samples[['slot', 'event_count']].head(20), use_container_width=True)

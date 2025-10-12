@@ -1,9 +1,9 @@
 """
-Interactive dashboard for Beacon API Events Timing analysis.
+Interactive dashboard for Beacon API Events Counts analysis.
 
 Mirrors the configuration and grouping patterns from peerdas_analysis_v2, but
-operates on beacon API event timing metrics, allowing selection of a specific
-event type and aggregating timing by proposer/attester groupings.
+counts all beacon API event occurrences across all nodes for selected event types,
+aggregating counts by proposer/attester groupings.
 """
 
 import streamlit as st
@@ -16,18 +16,19 @@ from shared.ethereum.validator_filters import (
     create_attester_filters_ui,
 )
 
-from pages.analysis.beacon_api_events_timing.loader import (
-    load_event_timing_grouped,
+from pages.analysis.beacon_api_events_counts.loader import (
+    load_event_counts_grouped,
     get_unique_clients,
 )
 
-from pages.analysis.beacon_api_events_timing.plot_generators import (
+from pages.analysis.beacon_api_events_counts.plot_generators import (
     render_time_series_summary,
     render_group_boxplots,
+    render_group_bar_charts,
     render_data_summary,
 )
 
-from pages.analysis.beacon_api_events_timing.chart_functions import (
+from pages.analysis.beacon_api_events_counts.chart_functions import (
     render_histogram_analysis,
     render_statistical_summary,
 )
@@ -114,7 +115,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
                 "sync_committee",
             ],
             index=0,
-            help="Select the event type table to aggregate timing from",
+            help="Select the event type to count across all nodes",
         )
     else:
         event_type = st.sidebar.selectbox(
@@ -126,7 +127,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
                 "blob_sidecar",
             ],
             index=0,
-            help="Select the libp2p gossipsub message type to analyze",
+            help="Select the libp2p gossipsub message type to count",
         )
 
     # Grouping selections (matching peerdas_analysis_v2 format)
@@ -266,61 +267,23 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
             help=f"Suggested: {suggested_max:,} for {hours_selected:.1f} hour range. Max: 5M records."
         )
 
-    # Performance threshold - allow higher values for unlimited mode
-    max_threshold = 600000 if unlimited_mode else 300000
-    default_threshold = 300000 if unlimited_mode else 100000
+    # Placeholder for performance_threshold_ms - kept for compatibility with queries
+    # but not exposed to user since we're counting events, not measuring timing
+    performance_threshold_ms = 300000
 
-    performance_threshold_ms = st.sidebar.number_input(
-        "Outlier cap (ms)",
-        min_value=0,
-        max_value=max_threshold,
-        value=default_threshold,
-        help=f"Ignore diffs above this threshold. Max: {max_threshold:,}ms {'(increased for unlimited mode)' if unlimited_mode else ''}"
+    # Event Count Visualization Options
+    st.sidebar.subheader("📊 Visualization Options")
+
+    show_values = st.sidebar.checkbox(
+        "Show Values on Charts",
+        value=True,
+        help="Display count values on bar charts"
     )
 
-    # Outlier Controls
-    st.sidebar.subheader("📈 Outlier Handling")
-
-    outlier_method = st.sidebar.selectbox(
-        "Outlier Filtering",
-        options=['none', 'iqr', 'percentile', 'zscore'],
-        index=1,  # Default to IQR
-        format_func=lambda x: {
-            'none': 'No Filtering',
-            'iqr': 'IQR Method (1.5×IQR)',
-            'percentile': 'Percentile Capping',
-            'zscore': 'Z-Score Method'
-        }[x],
-        help="Method to handle outliers in visualizations"
-    )
-
-    if outlier_method == 'percentile':
-        outlier_percentile = st.sidebar.slider(
-            "Outlier Percentile",
-            min_value=90,
-            max_value=99,
-            value=95,
-            help="Cap outliers above this percentile"
-        )
-    else:
-        outlier_percentile = 95
-
-    if outlier_method == 'zscore':
-        zscore_threshold = st.sidebar.number_input(
-            "Z-Score Threshold",
-            min_value=1.0,
-            max_value=5.0,
-            value=3.0,
-            step=0.5,
-            help="Remove values beyond this many standard deviations"
-        )
-    else:
-        zscore_threshold = 3.0
-
-    show_outliers_toggle = st.sidebar.checkbox(
-        "Show Outliers in Boxplots",
-        value=False,
-        help="Toggle outlier points display in boxplot visualizations"
+    sort_by_count = st.sidebar.checkbox(
+        "Sort by Count",
+        value=True,
+        help="Sort groups by event count (descending)"
     )
 
     # Blob Count Bucketing
@@ -329,7 +292,7 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     enable_blob_bucketing = st.sidebar.checkbox(
         "Enable Blob Bucketing",
         value=False,
-        help="Group timing analysis by number of blobs in each slot"
+        help="Group event counts by number of blobs in each slot"
     )
 
     if enable_blob_bucketing:
@@ -350,20 +313,19 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         filter_zero_blobs = False
         num_buckets = 1
 
-    # Chart Options (matching peerdas_analysis_v2)
-    st.sidebar.subheader("📊 Chart Options")
+    # Chart Options
+    st.sidebar.subheader("📊 Chart Type")
 
     chart_type = st.sidebar.selectbox(
         "Chart Type",
-        options=['timeseries', 'boxplot', 'histogram', 'summary'],
+        options=['bar', 'timeseries', 'summary'],
         index=0,
         format_func=lambda x: {
-            'timeseries': 'Time Series + Boxplot',
-            'boxplot': 'Boxplot Distribution',
-            'histogram': 'Histogram Distribution',
+            'bar': 'Bar Chart (Grouped)',
+            'timeseries': 'Time Series',
             'summary': 'Statistical Summary'
         }[x],
-        help="Choose the visualization type for event timing analysis"
+        help="Choose the visualization type for event count analysis"
     )
 
     # Action buttons with safety warnings for unlimited mode
@@ -408,10 +370,8 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'period': selected_period if selected_period != "Custom" else None,
         'proposer_filters': proposer_filters,
         'receiver_filters': receiver_filters,
-        'outlier_method': outlier_method,
-        'outlier_percentile': outlier_percentile,
-        'zscore_threshold': zscore_threshold,
-        'show_outliers_toggle': show_outliers_toggle,
+        'show_values': show_values,
+        'sort_by_count': sort_by_count,
         'enable_blob_bucketing': enable_blob_bucketing,
         'filter_zero_blobs': filter_zero_blobs,
         'num_buckets': num_buckets,
@@ -425,7 +385,7 @@ def main():
     cluster = get_global_cluster()
     network = get_global_network()
 
-    st.title("Beacon API Events Timing")
+    st.title("Beacon API Events Counts")
 
     config = render_sidebar_config(cluster=cluster, network=network)
 
@@ -440,13 +400,13 @@ def main():
     if config.get('unlimited_mode'):
         time_range = config['end_date'] - config['start_date']
         hours = time_range.total_seconds() / 3600
-        spinner_text = f"🚀 UNLIMITED MODE: Querying ALL data for {hours:.1f} hours... This may take 5-15 minutes."
+        spinner_text = f"🚀 UNLIMITED MODE: Counting ALL events for {hours:.1f} hours... This may take 5-15 minutes."
         st.warning(f"⚠️ Processing unlimited dataset covering {hours:.1f} hours. Please be patient...")
     else:
-        spinner_text = "Loading data..."
+        spinner_text = "Counting events..."
 
     with st.spinner(spinner_text):
-        data = load_event_timing_grouped(
+        data = load_event_counts_grouped(
             cluster_name=cluster,
             network=network,
             start_date=config['start_date'],
@@ -467,18 +427,14 @@ def main():
     render_data_summary(data, config)
 
     # Render charts based on selected type
-    chart_type = config.get('chart_type', 'timeseries')
+    chart_type = config.get('chart_type', 'bar')
 
-    if chart_type == 'timeseries':
-        # Time series + grouped analysis (default)
+    if chart_type == 'bar':
+        # Bar chart showing grouped event counts (default)
+        render_group_bar_charts(data, config)
+    elif chart_type == 'timeseries':
+        # Time series of event counts over time
         render_time_series_summary(data, config)
-        render_group_boxplots(data, config)
-    elif chart_type == 'boxplot':
-        # Focus on boxplot distribution only
-        render_group_boxplots(data, config)
-    elif chart_type == 'histogram':
-        # Focus on histogram distribution
-        render_histogram_analysis(data, config)
     elif chart_type == 'summary':
         # Statistical summary table
         render_statistical_summary(data, config)
