@@ -9,8 +9,40 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from typing import Dict, Any
+from typing import Dict, Any, List
 import numpy as np
+import plotly.express as px
+
+
+def _get_color_palette(n_colors: int) -> List[str]:
+    """Generate a consistent color palette for node groups using Plotly colors."""
+    if n_colors <= 0:
+        return []
+
+    # Use Plotly's qualitative color sequences for consistent, distinguishable colors
+    if n_colors <= 10:
+        return px.colors.qualitative.Plotly[:n_colors]
+    elif n_colors <= 24:
+        return px.colors.qualitative.Dark24[:n_colors]
+    else:
+        # For very large numbers, cycle through multiple palettes
+        colors = []
+        palettes = [
+            px.colors.qualitative.Plotly,
+            px.colors.qualitative.Dark24,
+            px.colors.qualitative.Light24,
+        ]
+        palette_idx = 0
+        color_idx = 0
+
+        for _ in range(n_colors):
+            colors.append(palettes[palette_idx][color_idx])
+            color_idx += 1
+            if color_idx >= len(palettes[palette_idx]):
+                color_idx = 0
+                palette_idx = (palette_idx + 1) % len(palettes)
+
+        return colors
 
 
 def apply_blob_bucketing(df: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
@@ -823,7 +855,7 @@ def _build_bar_chart(df: pd.DataFrame, group_col: str, title: str, config: Dict[
 
 
 def _build_combined_bar_chart(df: pd.DataFrame, group_col: str, sort_col: str, title: str, config: Dict[str, Any] = None):
-    """Build bar chart for combined groups showing average events per slot."""
+    """Build bar chart with blob buckets grouped together, with visual spacing between bucket groups."""
     if df.empty or group_col not in df.columns or 'event_count' not in df.columns or 'slot' not in df.columns:
         st.info(f"No data for {title}.")
         return
@@ -848,40 +880,129 @@ def _build_combined_bar_chart(df: pd.DataFrame, group_col: str, sort_col: str, t
         st.info(f"No valid groups found for {title}.")
         return
 
-    # Custom sorting for blob bucket combinations
-    if sort_col in df.columns and 'blob_bucket_sort_key' in df.columns:
-        # Create mapping for sorting
-        group_sort_mapping = {}
-        for group in group_stats[group_col].unique():
-            group_data = df[df[group_col] == group]
-            if not group_data.empty:
-                blob_sort_key = group_data['blob_bucket_sort_key'].iloc[0]
-                secondary_sort = group.split(' blobs: ')[-1] if ' blobs: ' in group else group
-                group_sort_mapping[group] = (blob_sort_key, secondary_sort)
+    # Extract blob buckets and node groups from combined labels
+    blob_bucket_to_node_groups = {}
+    blob_bucket_to_sort_key = {}
+    all_node_groups = set()
 
-        group_stats['sort_key_1'] = group_stats[group_col].map(lambda x: group_sort_mapping.get(x, (999, x))[0])
-        group_stats['sort_key_2'] = group_stats[group_col].map(lambda x: group_sort_mapping.get(x, (999, x))[1])
-        group_stats = group_stats.sort_values(['sort_key_1', 'sort_key_2'])
-        group_stats = group_stats.drop(['sort_key_1', 'sort_key_2'], axis=1)
-    elif config and config.get('sort_by_count', True):
-        group_stats = group_stats.sort_values('events_per_slot', ascending=False)
-    else:
-        group_stats = group_stats.sort_values(group_col)
+    for combined_label in group_stats[group_col].unique():
+        if ' blobs: ' in combined_label:
+            parts = combined_label.split(' blobs: ')
+            blob_bucket = parts[0]
+            node_group = parts[1]
 
-    # Create bar chart
+            if blob_bucket not in blob_bucket_to_node_groups:
+                blob_bucket_to_node_groups[blob_bucket] = []
+            blob_bucket_to_node_groups[blob_bucket].append(node_group)
+            all_node_groups.add(node_group)
+
+            # Get sort key for this blob bucket
+            if 'blob_bucket_sort_key' in df.columns:
+                group_data = df[df[group_col] == combined_label]
+                if not group_data.empty:
+                    blob_bucket_to_sort_key[blob_bucket] = group_data['blob_bucket_sort_key'].iloc[0]
+
+    # Sort blob buckets by their sort key
+    blob_buckets = sorted(blob_bucket_to_node_groups.keys(), key=lambda x: blob_bucket_to_sort_key.get(x, 999))
+
+    # Sort node groups within each blob bucket alphabetically
+    for blob_bucket in blob_buckets:
+        blob_bucket_to_node_groups[blob_bucket] = sorted(blob_bucket_to_node_groups[blob_bucket])
+
+    # Create color palette for node groups (consistent across blob buckets)
+    all_node_groups = sorted(list(all_node_groups))
+    color_palette = _get_color_palette(len(all_node_groups))
+    node_group_colors = {node_group: color_palette[i] for i, node_group in enumerate(all_node_groups)}
+
+    # Create x-axis positions with gaps between blob bucket groups
     fig = go.Figure()
+    x_position = 0
+    x_tick_positions = []
+    x_tick_labels = []
+    gap_between_buckets = 1.2  # Gap between different blob bucket groups
+    gap_within_bucket = 0.8    # Gap between node groups within same bucket
+    bar_colors = []
+    bar_x_positions = []
+    bar_y_values = []
+    bar_hover_texts = []
+    bar_custom_data = []
 
+    for blob_bucket_idx, blob_bucket in enumerate(blob_buckets):
+        node_groups = blob_bucket_to_node_groups[blob_bucket]
+
+        for node_group_idx, node_group in enumerate(node_groups):
+            combined_label = f"{blob_bucket} blobs: {node_group}"
+            stats_row = group_stats[group_stats[group_col] == combined_label]
+
+            if not stats_row.empty:
+                stats = stats_row.iloc[0]
+                color = node_group_colors.get(node_group, '#1f77b4')
+
+                bar_x_positions.append(x_position)
+                bar_y_values.append(stats['events_per_slot'])
+                bar_colors.append(color)
+                bar_hover_texts.append(
+                    f"<b>{blob_bucket} blobs<br>{node_group}</b><br>" +
+                    f"Events per Slot: {stats['events_per_slot']:.2f}<br>" +
+                    f"Total Events: {stats['total_events']:,}<br>" +
+                    f"Slots: {stats['num_slots']:,}"
+                )
+                bar_custom_data.append([stats['total_events'], stats['num_slots']])
+
+                x_tick_positions.append(x_position)
+                x_tick_labels.append(f"{blob_bucket}\n{node_group}")
+                x_position += gap_within_bucket
+
+        # Add gap between blob bucket groups
+        x_position += gap_between_buckets
+
+    # Add all bars at once with individual colors
     fig.add_trace(go.Bar(
-        x=group_stats[group_col],
-        y=group_stats['events_per_slot'],
-        text=group_stats['events_per_slot'].apply(lambda x: f"{x:.1f}") if config and config.get('show_values', True) else None,
+        x=bar_x_positions,
+        y=bar_y_values,
+        marker_color=bar_colors,
+        text=[f"{y:.1f}" for y in bar_y_values] if config and config.get('show_values', True) else None,
         textposition='outside',
-        marker_color='#1f77b4',
-        hovertemplate='<b>%{x}</b><br>Events per Slot: %{y:.2f}<br>Total Events: ' +
-                      group_stats['total_events'].astype(str) + '<br>Slots: ' +
-                      group_stats['num_slots'].astype(str) + '<extra></extra>',
-        customdata=group_stats[['total_events', 'num_slots']].values
+        hovertemplate='%{hovertext}<extra></extra>',
+        hovertext=bar_hover_texts,
+        customdata=bar_custom_data,
+        showlegend=False
     ))
+
+    # Add visual separators between blob bucket groups
+    separator_x = 0
+    for blob_bucket_idx, blob_bucket in enumerate(blob_buckets[:-1]):  # Don't add after last group
+        node_count = len(blob_bucket_to_node_groups[blob_bucket])
+        separator_x += (node_count * gap_within_bucket) + (gap_between_buckets / 2)
+
+        fig.add_vline(
+            x=separator_x,
+            line_dash="dash",
+            line_color="lightgray",
+            line_width=1,
+            opacity=0.5
+        )
+
+        separator_x += (gap_between_buckets / 2)
+
+    # Add blob bucket group labels as annotations
+    label_x = 0
+    for blob_bucket in blob_buckets:
+        node_count = len(blob_bucket_to_node_groups[blob_bucket])
+        # Calculate center position for this blob bucket group
+        group_center = label_x + (node_count * gap_within_bucket) / 2 - (gap_within_bucket / 2)
+
+        fig.add_annotation(
+            x=group_center,
+            y=1.05,
+            yref="paper",
+            text=f"<b>{blob_bucket} blobs</b>",
+            showarrow=False,
+            font=dict(size=11, color="darkblue"),
+            xanchor="center"
+        )
+
+        label_x += (node_count * gap_within_bucket) + gap_between_buckets
 
     # Add data source annotation
     if config:
@@ -903,17 +1024,24 @@ def _build_combined_bar_chart(df: pd.DataFrame, group_col: str, sort_col: str, t
             align="left"
         )
 
+    # Interactive usage hint
+    st.info("💡 **Visualization**: Blob buckets are grouped together with visual spacing. Bars within each bucket use consistent colors by node group.")
+
     fig.update_layout(
         title=title,
-        xaxis_title=group_col.replace('_', ' ').title(),
+        xaxis_title="",
         yaxis_title="Events per Slot",
-        margin=dict(t=60, r=10, b=100, l=50),  # More bottom margin for labels
+        margin=dict(t=80, r=10, b=100, l=50),  # More top/bottom margin for labels
         showlegend=False,
-        hovermode='closest'
+        hovermode='closest',
+        xaxis=dict(
+            tickmode='array',
+            tickvals=x_tick_positions,
+            ticktext=x_tick_labels,
+            tickangle=-45,
+            automargin=True
+        )
     )
-
-    # Rotate x-axis labels for readability
-    fig.update_xaxes(tickangle=-45)
 
     st.plotly_chart(fig, use_container_width=True)
 
