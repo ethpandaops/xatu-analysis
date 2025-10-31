@@ -103,11 +103,30 @@ def parse_url_params() -> Dict[str, Any]:
         except:
             pass
 
+    if 'proposer_min_operator_percentage' in params:
+        try:
+            config['proposer_min_operator_percentage'] = float(params['proposer_min_operator_percentage'])
+        except:
+            pass
+
+    if 'attester_min_operator_percentage' in params:
+        try:
+            config['attester_min_operator_percentage'] = float(params['attester_min_operator_percentage'])
+        except:
+            pass
+
+    # Parse string parameters for operator filter modes
+    for key in ['proposer_operator_filter_mode', 'attester_operator_filter_mode']:
+        if key in params:
+            config[key] = params[key]
+
     # Parse boolean parameters
     if 'filter_zero_blobs' in params:
         config['filter_zero_blobs'] = params['filter_zero_blobs'].lower() == 'true'
     if 'filter_low_data_buckets' in params:
         config['filter_low_data_buckets'] = params['filter_low_data_buckets'].lower() == 'true'
+    if 'ignore_offline_validators' in params:
+        config['ignore_offline_validators'] = params['ignore_offline_validators'].lower() == 'true'
 
     return config
 
@@ -137,7 +156,10 @@ def generate_url_params(config: Dict[str, Any]) -> str:
     # Add other parameters
     simple_params = ['num_buckets', 'grouping_dimension', 'attester_grouping', 'mev_filter', 'view_mode',
                      'chart_type', 'proposer_type', 'attester_type',
-                     'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs', 'filter_low_data_buckets']
+                     'scatter_aggregation', 'performance_threshold', 'filter_zero_blobs', 'filter_low_data_buckets',
+                     'ignore_offline_validators',
+                     'proposer_min_operator_percentage', 'attester_min_operator_percentage',
+                     'proposer_operator_filter_mode', 'attester_operator_filter_mode']
 
     for key in simple_params:
         if key in config and config[key] is not None:
@@ -403,6 +425,13 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         help="Hide buckets with insufficient data points (less than 2% of total slots). Uncheck to show all buckets even if they have no data."
     )
 
+    # Add option to ignore offline validators (missed attestations)
+    ignore_offline_validators = st.sidebar.checkbox(
+        "Ignore offline validators",
+        value=url_config.get('ignore_offline_validators', False),
+        help="Exclude validators who didn't vote (status='missed'). When enabled, head correctness is calculated only among validators who actually attested, not all scheduled validators."
+    )
+
     num_buckets = st.sidebar.slider(
         "Number of Buckets",
         min_value=1,
@@ -410,6 +439,58 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         value=url_config.get('num_buckets', 10),
         help="Number of buckets to divide blob counts into (automatically calculates bucket size based on data range)"
     )
+
+    # Proposer operator size filter (always visible)
+    st.sidebar.subheader("🔍 Proposer Operator Filtering")
+    proposer_operator_filter_mode = st.sidebar.radio(
+        "Filter Mode",
+        options=['manual', 'by_size'],
+        index=['manual', 'by_size'].index(url_config.get('proposer_operator_filter_mode', 'by_size')),
+        format_func=lambda x: {
+            'manual': 'Manually selected',
+            'by_size': 'By Minimum Size'
+        }[x],
+        help="Choose how to filter proposer operators",
+        key='proposer_operator_filter_mode'
+    )
+
+    proposer_min_operator_percentage = 0.0
+    if proposer_operator_filter_mode == 'by_size':
+        proposer_min_operator_percentage = st.sidebar.slider(
+            "Minimum Proposer Operator Size (%)",
+            min_value=0.0,
+            max_value=10.0,
+            value=url_config.get('proposer_min_operator_percentage', 2.0),
+            step=0.5,
+            help="Show only proposer operators that control at least this percentage of validators",
+            key='proposer_min_operator_pct'
+        )
+
+    # Attester operator size filter (always visible)
+    st.sidebar.subheader("🔍 Attester Operator Filtering")
+    attester_operator_filter_mode = st.sidebar.radio(
+        "Filter Mode",
+        options=['manual', 'by_size'],
+        index=['manual', 'by_size'].index(url_config.get('attester_operator_filter_mode', 'by_size')),
+        format_func=lambda x: {
+            'manual': 'Manually selected',
+            'by_size': 'By Minimum Size'
+        }[x],
+        help="Choose how to filter attester operators",
+        key='attester_operator_filter_mode'
+    )
+
+    attester_min_operator_percentage = 0.0
+    if attester_operator_filter_mode == 'by_size':
+        attester_min_operator_percentage = st.sidebar.slider(
+            "Minimum Attester Operator Size (%)",
+            min_value=0.0,
+            max_value=10.0,
+            value=url_config.get('attester_min_operator_percentage', 2.0),
+            step=0.5,
+            help="Show only attester operators that control at least this percentage of validators",
+            key='attester_min_operator_pct'
+        )
 
     # MEV filtering
     st.sidebar.subheader("🎰 Block Building Filter")
@@ -426,11 +507,12 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
     )
     
     # Create filter UI components using shared utility with URL parameters
+    # Only show operator list filters when in 'manual' mode
     with st.sidebar:
         # Prepare initial values from URL config
         proposer_initial = {}
         attester_initial = {}
-        
+
         if url_config:
             # Convert URL params to the format expected by the filter functions
             if 'proposer_type' in url_config:
@@ -439,16 +521,48 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
                 proposer_initial['proposer_cl'] = url_config['proposer_cl']
             if 'proposer_el' in url_config:
                 proposer_initial['proposer_el'] = url_config['proposer_el']
-                
+
             if 'attester_type' in url_config:
                 attester_initial['attester_type'] = url_config['attester_type']
             if 'attester_cl' in url_config:
                 attester_initial['attester_cl'] = url_config['attester_cl']
             if 'attester_el' in url_config:
                 attester_initial['attester_el'] = url_config['attester_el']
-        
-        proposer_filters = create_proposer_filters_ui(network, cluster_name=cluster, initial_values=proposer_initial)
-        attester_filters = create_attester_filters_ui(network, cluster_name=cluster, initial_values=attester_initial)
+
+        # Only show proposer operator filters when in manual mode
+        show_proposer_operator_filter = proposer_operator_filter_mode != 'by_size'
+        # Only show attester operator filters when in manual mode
+        show_attester_operator_filter = attester_operator_filter_mode != 'by_size'
+
+        # Create proposer filters conditionally
+        if show_proposer_operator_filter:
+            proposer_filters = create_proposer_filters_ui(network, cluster_name=cluster, initial_values=proposer_initial)
+        else:
+            # Provide empty filters when hidden
+            proposer_filters = {
+                'proposer_type': None,
+                'proposer_cl': None,
+                'proposer_el': None,
+                'proposer_architecture': None,
+                'proposer_operator': None,
+                'proposer_region': None,
+                'proposer_datacenter': None
+            }
+
+        # Create attester filters conditionally
+        if show_attester_operator_filter:
+            attester_filters = create_attester_filters_ui(network, cluster_name=cluster, initial_values=attester_initial)
+        else:
+            # Provide empty filters when hidden
+            attester_filters = {
+                'attester_type': None,
+                'attester_cl': None,
+                'attester_el': None,
+                'attester_architecture': None,
+                'attester_operator': None,
+                'attester_region': None,
+                'attester_datacenter': None
+            }
     
     # Load data button
     st.sidebar.markdown("---")
@@ -561,6 +675,11 @@ def render_sidebar_config(cluster: str, network: str) -> Dict[str, Any]:
         'scatter_aggregation': scatter_aggregation,
         'performance_threshold': performance_threshold,
         'filter_low_data_buckets': filter_low_data_buckets,  # Add filter for low-data buckets
+        'ignore_offline_validators': ignore_offline_validators,  # Ignore offline validators (missed attestations)
+        'proposer_min_operator_percentage': proposer_min_operator_percentage,  # Proposer operator size filter
+        'attester_min_operator_percentage': attester_min_operator_percentage,  # Attester operator size filter
+        'proposer_operator_filter_mode': proposer_operator_filter_mode,  # Proposer filter mode
+        'attester_operator_filter_mode': attester_operator_filter_mode,  # Attester filter mode
         'load_data': load_data
     }
     
@@ -633,7 +752,6 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                         from shared.database import get_database_connection
                         conn = get_database_connection(config['cluster'])
                         if conn:
-                            import pandas as pd
                             test_query = """
                             SELECT COUNT(*) as count, 
                                    MIN(slot_start_date_time) as min_time,
@@ -682,6 +800,7 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
                     datacenter_filter=config.get('attester_datacenter'),
                     grouping_dimension=config.get('grouping_dimension'),
                     attester_grouping_dimension=config.get('attester_grouping'),  # Pass attester grouping
+                    ignore_offline_validators=config.get('ignore_offline_validators', False),  # Ignore offline validators
                     cluster_name=config['cluster']
                 )
             except Exception as e:
@@ -731,6 +850,94 @@ def load_and_process_head_correctness_data(config: Dict[str, Any]) -> Optional[p
 
                 if data.empty:
                     st.warning("All slots had 0 blobs. Try disabling the '**Filter out 0 blob slots**' option to see data.")
+                    return None
+
+            # Apply minimum operator size filters (separate for proposer and attester)
+            proposer_filter_mode = config.get('proposer_operator_filter_mode', 'manual')
+            attester_filter_mode = config.get('attester_operator_filter_mode', 'manual')
+            proposer_min_pct = config.get('proposer_min_operator_percentage', 0.0)
+            attester_min_pct = config.get('attester_min_operator_percentage', 0.0)
+
+            # Check if we need to filter proposer operators (works with any grouping dimension)
+            should_filter_proposer = (
+                proposer_filter_mode == 'by_size' and
+                proposer_min_pct > 0 and
+                'data_type' in data.columns and
+                'proposer' in data['data_type'].values and
+                'group_key' in data.columns
+            )
+
+            # Check if we need to filter attester operators (works with any grouping dimension)
+            should_filter_attester = (
+                attester_filter_mode == 'by_size' and
+                attester_min_pct > 0 and
+                'data_type' in data.columns and
+                'attester' in data['data_type'].values and
+                'group_key' in data.columns
+            )
+
+            if should_filter_proposer or should_filter_attester:
+                filtered_data_parts = []
+
+                # Filter proposer data
+                if should_filter_proposer:
+                    proposer_data = data[data['data_type'] == 'proposer'].copy()
+                    if not proposer_data.empty and 'group_key' in proposer_data.columns and 'slot' in proposer_data.columns:
+                        total_slots = proposer_data['slot'].nunique()
+                        group_slot_counts = proposer_data.groupby('group_key')['slot'].nunique()
+                        group_percentages = (group_slot_counts / total_slots) * 100
+                        valid_groups = group_percentages[group_percentages >= proposer_min_pct].index.tolist()
+
+                        if valid_groups:
+                            original_groups = proposer_data['group_key'].nunique()
+                            proposer_data = proposer_data[proposer_data['group_key'].isin(valid_groups)].copy()
+                            filtered_groups = original_groups - len(valid_groups)
+                            logger.info(f"Filtered out {filtered_groups} proposer operators with <{proposer_min_pct}% of validators")
+                            filtered_data_parts.append(proposer_data)
+                        else:
+                            st.warning(f"No proposer operators meet the {proposer_min_pct}% threshold. Try lowering it.")
+                            return None
+                    else:
+                        filtered_data_parts.append(proposer_data)
+                else:
+                    # Keep all proposer data if not filtering
+                    if 'proposer' in data['data_type'].values:
+                        filtered_data_parts.append(data[data['data_type'] == 'proposer'])
+
+                # Filter attester data
+                if should_filter_attester:
+                    attester_data = data[data['data_type'] == 'attester'].copy()
+                    if not attester_data.empty and 'group_key' in attester_data.columns and 'slot' in attester_data.columns:
+                        total_slots = attester_data['slot'].nunique()
+                        group_slot_counts = attester_data.groupby('group_key')['slot'].nunique()
+                        group_percentages = (group_slot_counts / total_slots) * 100
+                        valid_groups = group_percentages[group_percentages >= attester_min_pct].index.tolist()
+
+                        if valid_groups:
+                            original_groups = attester_data['group_key'].nunique()
+                            attester_data = attester_data[attester_data['group_key'].isin(valid_groups)].copy()
+                            filtered_groups = original_groups - len(valid_groups)
+                            logger.info(f"Filtered out {filtered_groups} attester operators with <{attester_min_pct}% of validators")
+                            filtered_data_parts.append(attester_data)
+                        else:
+                            st.warning(f"No attester operators meet the {attester_min_pct}% threshold. Try lowering it.")
+                            return None
+                    else:
+                        filtered_data_parts.append(attester_data)
+                else:
+                    # Keep all attester data if not filtering
+                    if 'attester' in data['data_type'].values:
+                        filtered_data_parts.append(data[data['data_type'] == 'attester'])
+
+                # Also keep 'overall' data if present
+                if 'overall' in data['data_type'].values:
+                    filtered_data_parts.append(data[data['data_type'] == 'overall'])
+
+                # Combine filtered parts
+                if filtered_data_parts:
+                    data = pd.concat(filtered_data_parts, ignore_index=True)
+                else:
+                    st.warning("No data remaining after operator filtering.")
                     return None
 
             # Compute slot-level coverage after filtering to only slots with committee data
@@ -1268,6 +1475,10 @@ def main():
                 if config.get('filter_zero_blobs', True):
                     st.info("🎯 Zero blob slots are excluded from this analysis (configurable in sidebar)")
 
+                # Show info about offline validator filter
+                if config.get('ignore_offline_validators', False):
+                    st.info("📴 Offline validators (missed attestations) are excluded - head correctness calculated only among active validators")
+
                 # Show grouping information if applicable
                 if config.get('grouping_dimension'):
                     group_labels = {
@@ -1285,6 +1496,32 @@ def main():
                     if config['chart_type'] == 'scatter':
                         grouping_info += " (showing p95 percentile)"
                     st.info(grouping_info)
+
+                # Show operator size filter information
+                proposer_filter_mode = config.get('proposer_operator_filter_mode', 'manual')
+                attester_filter_mode = config.get('attester_operator_filter_mode', 'manual')
+                proposer_min_pct = config.get('proposer_min_operator_percentage', 0.0)
+                attester_min_pct = config.get('attester_min_operator_percentage', 0.0)
+
+                # Show proposer operator filter info
+                if (proposer_filter_mode == 'by_size' and proposer_min_pct > 0 and
+                    'data_type' in data.columns and 'proposer' in data['data_type'].values):
+                    proposer_data = data[data['data_type'] == 'proposer']
+                    if 'group_key' in proposer_data.columns and config.get('grouping_dimension') == 'operator':
+                        num_proposer_operators = proposer_data['group_key'].nunique()
+                        st.info(f"🔍 Proposer Operators: Showing only operators with ≥{proposer_min_pct}% of validators ({num_proposer_operators} operators displayed)")
+                    else:
+                        st.info(f"🔍 Proposer Operators: Filtered to operators with ≥{proposer_min_pct}% of validators")
+
+                # Show attester operator filter info
+                if (attester_filter_mode == 'by_size' and attester_min_pct > 0 and
+                    'data_type' in data.columns and 'attester' in data['data_type'].values):
+                    attester_data = data[data['data_type'] == 'attester']
+                    if 'group_key' in attester_data.columns and config.get('attester_grouping') == 'operator':
+                        num_attester_operators = attester_data['group_key'].nunique()
+                        st.info(f"🔍 Attester Operators: Showing only operators with ≥{attester_min_pct}% of validators ({num_attester_operators} operators displayed)")
+                    else:
+                        st.info(f"🔍 Attester Operators: Filtered to operators with ≥{attester_min_pct}% of validators")
                 
                 # Show MEV filter information
                 if config.get('mev_filter'):

@@ -16,7 +16,7 @@ import yaml
 import os
 import textwrap
 
-from shared.database import get_database_connection
+from shared.database import get_database_connection, get_routed_connection
 from shared.network_spec import get_network_spec
 
 # Configure logging
@@ -73,11 +73,6 @@ def load_mev_slots(
     """
     logger.info(f"Loading MEV slots for network={network}")
 
-    conn = get_database_connection(cluster_name)
-    if not conn:
-        logger.error(f"Failed to get database connection for cluster: {cluster_name}")
-        return []
-
     sql = f"""
         SELECT DISTINCT slot
         FROM `{network}`.int_block_mev_head
@@ -85,6 +80,11 @@ def load_mev_slots(
           AND slot > 0
         ORDER BY slot
     """.replace('{network}', network)
+
+    conn = get_routed_connection(sql, cluster_name)
+    if not conn:
+        logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+        return []
 
     params = {
         'start_date': start_date,
@@ -139,11 +139,6 @@ def load_eligible_slots(
         mev_filter
     )
 
-    conn = get_database_connection(cluster_name)
-    if not conn:
-        logger.error("Failed to get database connection for cluster: %s", cluster_name)
-        return [], {}, {}, []
-
     proposer_filters_sql = ""
     if proposer_type:
         proposer_filters_sql += f"\n      AND coalesce(vm.node_type, 'unknown') = '{proposer_type}'"
@@ -176,6 +171,11 @@ FROM (
 WHERE 1 = 1{mev_filter_sql}
 ORDER BY slot
 """
+
+    conn = get_routed_connection(sql, cluster_name)
+    if not conn:
+        logger.error("Failed to get database connection for cluster: %s", cluster_name)
+        return [], {}, {}, []
 
     params = {'start_date': start_date, 'end_date': end_date}
 
@@ -234,12 +234,12 @@ SELECT
   vm.datacenter     AS proposer_datacenter
 FROM (
   SELECT slot, block_root, proposer_validator_index, slot_start_date_time
-  FROM `{network}`.int_block_proposer_head FINAL
+  FROM `{network}`.fct_block_proposer_head FINAL
   WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
 ) AS base
 LEFT JOIN (
   SELECT DISTINCT slot
-  FROM `{network}`.int_block_mev_head
+  FROM `{network}`.fct_block_mev_head
   WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
 ) ms ON base.slot = ms.slot
 LEFT JOIN (
@@ -282,7 +282,7 @@ def _build_blob_subquery(network: str) -> str:
 SELECT
   slot,
   anyLast(blob_count) AS blob_count
-FROM `{network}`.int_block_blob_count_head FINAL
+FROM `{network}`.fct_block_blob_count_head FINAL
 WHERE slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
 GROUP BY slot
 """.replace('{network}', network).strip()
@@ -295,9 +295,13 @@ def _build_attester_filter_clause(
     architecture_filter: Optional[List[str]],
     operator_filter: Optional[List[str]],
     region_filter: Optional[List[str]] = None,
-    datacenter_filter: Optional[List[str]] = None
+    datacenter_filter: Optional[List[str]] = None,
+    ignore_offline_validators: bool = False
 ) -> str:
     clause = ""
+    # Filter out offline validators (status='missed') if requested
+    if ignore_offline_validators:
+        clause += "\n      AND base.status != 'missed'"
     if attester_type:
         clause += f"\n      AND coalesce(vm.node_type, 'unknown') = '{attester_type}'"
     if cl_filter:
@@ -508,6 +512,7 @@ def load_head_correctness_data(
     datacenter_filter: Optional[List[str]] = None,
     grouping_dimension: Optional[str] = None,
     attester_grouping_dimension: Optional[str] = None,
+    ignore_offline_validators: bool = False,
     cluster_name: Optional[str] = None
 ) -> pd.DataFrame:
     """Load head correctness metrics using precomputed ClickHouse fact tables."""
@@ -522,11 +527,6 @@ def load_head_correctness_data(
 
     if not eligible_slots:
         logger.warning("No eligible slots provided to load_head_correctness_data")
-        return pd.DataFrame()
-
-    conn = get_database_connection(cluster_name)
-    if not conn:
-        logger.error("Failed to obtain ClickHouse connection (cluster=%s)", cluster_name)
         return pd.DataFrame()
 
     proposer_filter_sql = _build_proposer_filter_clause(
@@ -546,7 +546,8 @@ def load_head_correctness_data(
         architecture_filter,
         operator_filter,
         region_filter,
-        datacenter_filter
+        datacenter_filter,
+        ignore_offline_validators
     )
 
     mev_filter_sql = _build_mev_filter_clause(mev_filter)
@@ -557,6 +558,11 @@ def load_head_correctness_data(
     }
 
     base_sql = _build_base_head_correctness_sql(network, proposer_filter_sql, attester_filter_sql, mev_filter_sql)
+    conn = get_routed_connection(base_sql, cluster_name)
+    if not conn:
+        logger.error("Failed to obtain ClickHouse connection (cluster=%s)", cluster_name)
+        return pd.DataFrame()
+
     overall_df = pd.read_sql(base_sql, conn, params=params)
 
     if overall_df.empty:
@@ -575,31 +581,39 @@ def load_head_correctness_data(
 
     if grouping_dimension and grouping_dimension != 'none':
         proposer_sql = _build_proposer_group_sql(network, proposer_filter_sql, attester_filter_sql, grouping_dimension, mev_filter_sql)
-        proposer_df = pd.read_sql(proposer_sql, conn, params=params)
-        if not proposer_df.empty:
-            proposer_df = proposer_df.rename(
-                columns={
-                    'total_scheduled_in_group': 'total_validators_assigned',
-                    'correct_votes_in_group': 'correct_head_votes',
-                }
-            )
-            proposer_df['data_type'] = 'proposer'
-            proposer_df['grouping_dimension'] = grouping_dimension
-            combined_frames.append(proposer_df)
+        proposer_conn = get_routed_connection(proposer_sql, cluster_name)
+        if not proposer_conn:
+            logger.error("Failed to obtain ClickHouse connection for proposer grouping (cluster=%s)", cluster_name)
+        else:
+            proposer_df = pd.read_sql(proposer_sql, proposer_conn, params=params)
+            if not proposer_df.empty:
+                proposer_df = proposer_df.rename(
+                    columns={
+                        'total_scheduled_in_group': 'total_validators_assigned',
+                        'correct_votes_in_group': 'correct_head_votes',
+                    }
+                )
+                proposer_df['data_type'] = 'proposer'
+                proposer_df['grouping_dimension'] = grouping_dimension
+                combined_frames.append(proposer_df)
 
     if attester_grouping_dimension and attester_grouping_dimension != 'none':
         attester_sql = _build_attester_group_sql(network, proposer_filter_sql, attester_filter_sql, attester_grouping_dimension, mev_filter_sql)
-        attester_df = pd.read_sql(attester_sql, conn, params=params)
-        if not attester_df.empty:
-            attester_df = attester_df.rename(
-                columns={
-                    'total_scheduled_in_group': 'total_validators_assigned',
-                    'correct_votes_in_group': 'correct_head_votes',
-                }
-            )
-            attester_df['data_type'] = 'attester'
-            attester_df['grouping_dimension'] = attester_grouping_dimension
-            combined_frames.append(attester_df)
+        attester_conn = get_routed_connection(attester_sql, cluster_name)
+        if not attester_conn:
+            logger.error("Failed to obtain ClickHouse connection for attester grouping (cluster=%s)", cluster_name)
+        else:
+            attester_df = pd.read_sql(attester_sql, attester_conn, params=params)
+            if not attester_df.empty:
+                attester_df = attester_df.rename(
+                    columns={
+                        'total_scheduled_in_group': 'total_validators_assigned',
+                        'correct_votes_in_group': 'correct_head_votes',
+                    }
+                )
+                attester_df['data_type'] = 'attester'
+                attester_df['grouping_dimension'] = attester_grouping_dimension
+                combined_frames.append(attester_df)
 
     result_df = pd.concat(combined_frames, ignore_index=True)
 
@@ -616,17 +630,12 @@ def validate_data_availability(
 ) -> Dict[str, bool]:
     """
     Check which data sources are available for the given time range.
-    
+
     Returns:
         Dictionary indicating availability of each data source
     """
-    conn = get_database_connection(cluster_name)
-    if not conn:
-        logger.error(f"Failed to get database connection for cluster: {cluster_name}")
-        return {}
-    
     availability = {}
-    
+
     # Check beacon API attestations
     try:
         query = """
@@ -636,12 +645,17 @@ def validate_data_availability(
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         LIMIT 1
         """
-        result = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
-        availability['beacon_api'] = result['count'].iloc[0] > 0 if not result.empty else False
+        conn = get_routed_connection(query, cluster_name)
+        if not conn:
+            logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+            availability['beacon_api'] = False
+        else:
+            result = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
+            availability['beacon_api'] = result['count'].iloc[0] > 0 if not result.empty else False
     except Exception as e:
         logger.warning(f"Failed to check beacon_api availability: {e}")
         availability['beacon_api'] = False
-    
+
     # Check libp2p attestations
     try:
         query = """
@@ -651,12 +665,17 @@ def validate_data_availability(
             AND slot_start_date_time BETWEEN %(start_date)s AND %(end_date)s
         LIMIT 1
         """
-        result = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
-        availability['libp2p_gossipsub'] = result['count'].iloc[0] > 0 if not result.empty else False
+        conn = get_routed_connection(query, cluster_name)
+        if not conn:
+            logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+            availability['libp2p_gossipsub'] = False
+        else:
+            result = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
+            availability['libp2p_gossipsub'] = result['count'].iloc[0] > 0 if not result.empty else False
     except Exception as e:
         logger.warning(f"Failed to check libp2p_gossipsub availability: {e}")
         availability['libp2p_gossipsub'] = False
-    
+
     return availability
 
 
@@ -698,11 +717,6 @@ def get_unique_clients(
         return sorted(client_combinations)
     else:
         # Fallback to querying the database if no network spec
-        conn = get_database_connection(cluster_name)
-        if not conn:
-            logger.error(f"Failed to get database connection for cluster: {cluster_name}")
-            return []
-        
         query = """
         SELECT DISTINCT meta_client_name as client_name
         FROM beacon_api_eth_v1_events_attestation
@@ -711,7 +725,12 @@ def get_unique_clients(
             AND meta_client_name != ''
         ORDER BY client_name
         """
-        
+
+        conn = get_routed_connection(query, cluster_name)
+        if not conn:
+            logger.error(f"Failed to get database connection for cluster: {cluster_name}")
+            return []
+
         try:
             df = pd.read_sql(query, conn, params={'network': network, 'start_date': start_date, 'end_date': end_date})
             return df['client_name'].tolist() if not df.empty else []

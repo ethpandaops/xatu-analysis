@@ -78,7 +78,7 @@ def load_peerdas_aggregated_data(
         # Add client filter to params if provided
         if client_filter:
             params['client_filter'] = tuple(client_filter)  # ClickHouse needs tuple for IN clause
-        
+
         # Execute query
         logger.info("Executing PeerDAS query with per-client/per-slot aggregation...")
         df = pd.read_sql(query, conn, params=params)
@@ -158,7 +158,7 @@ def load_node_classification_raw_data(
         # Add client filter to params if provided
         if client_filter:
             params['client_filter'] = tuple(client_filter)  # ClickHouse needs tuple for IN clause
-        
+
         # Execute query
         logger.info("Executing raw node classification query...")
         df = pd.read_sql(query, conn, params=params)
@@ -354,9 +354,9 @@ def validate_data_availability(
             'start_date': start_date,
             'end_date': end_date
         }
-        
+
         result = pd.read_sql(query, conn, params=params)
-        
+
         return {
             'has_data': result['total_rows'].iloc[0] > 0,
             'total_rows': result['total_rows'].iloc[0],

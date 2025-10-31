@@ -115,9 +115,14 @@ def render_sidebar_configuration() -> Dict[str, Any]:
     # Set dates based on selection
     if selected_period != "Custom":
         time_delta = time_options[selected_period]
-        end_date = datetime.now().date()
-        start_date = (datetime.now() - time_delta).date()
-        
+        # Use UTC datetime for predefined periods to match database timestamps
+        end_datetime_calc = datetime.utcnow()
+        start_datetime_calc = end_datetime_calc - time_delta
+
+        # Extract dates for display
+        end_date = end_datetime_calc.date()
+        start_date = start_datetime_calc.date()
+
         # Show the selected range (read-only)
         col1, col2 = st.sidebar.columns(2)
         with col1:
@@ -283,8 +288,9 @@ def render_sidebar_configuration() -> Dict[str, Any]:
                 temp_start_datetime = datetime.combine(start_date, start_time)
                 temp_end_datetime = datetime.combine(end_date, end_time)
             else:
-                temp_start_datetime = datetime.combine(start_date, datetime.min.time())
-                temp_end_datetime = datetime.combine(end_date, datetime.max.time())
+                # Use the actual calculated datetime values for predefined periods
+                temp_start_datetime = start_datetime_calc
+                temp_end_datetime = end_datetime_calc
             
             # Auto-detect max blob count from the dataset
             with st.spinner("Detecting max blob count..."):
@@ -333,24 +339,32 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         start_datetime = datetime.combine(start_date, start_time)
         end_datetime = datetime.combine(end_date, end_time)
     else:
-        # Use min/max times for predefined periods
-        start_datetime = datetime.combine(start_date, datetime.min.time())
-        end_datetime = datetime.combine(end_date, datetime.max.time())
+        # Use the actual calculated datetime values for predefined periods
+        # This ensures we get rolling time windows (e.g., "now - 6 hours" to "now")
+        start_datetime = start_datetime_calc
+        end_datetime = end_datetime_calc
     
     # Update query parameters to persist time range
-    new_params = {
-        "period": selected_period,
-        "start": start_date.strftime("%Y-%m-%d"),
-        "end": end_date.strftime("%Y-%m-%d"),
-    }
-    
-    # Add time parameters if using custom period
+    # For predefined periods, only persist the period name so it recalculates on reload
+    # For custom periods, persist the exact dates/times
+
     if selected_period == "Custom":
-        new_params["start_time"] = start_time.strftime("%H:%M:%S")
-        new_params["end_time"] = end_time.strftime("%H:%M:%S")
-    
-    # Update query params
-    st.query_params.update(new_params)
+        st.query_params.update({
+            "period": selected_period,
+            "start": start_date.strftime("%Y-%m-%d"),
+            "end": end_date.strftime("%Y-%m-%d"),
+            "start_time": start_time.strftime("%H:%M:%S"),
+            "end_time": end_time.strftime("%H:%M:%S")
+        })
+    else:
+        # Only persist the period name for predefined periods
+        # Remove any stale date/time params
+        for param in ["start", "end", "start_time", "end_time"]:
+            if param in st.query_params:
+                del st.query_params[param]
+        st.query_params.update({
+            "period": selected_period
+        })
     
     return {
         'cluster': cluster,
@@ -364,7 +378,8 @@ def render_sidebar_configuration() -> Dict[str, Any]:
         'x_axis_metric': x_axis_metric,
         'analysis_type': analysis_type,
         'bucket_size': bucket_size,
-        'load_data': load_data
+        'load_data': load_data,
+        'selected_period': selected_period
     }
 
 
@@ -457,7 +472,7 @@ def render_peerdas_dashboard():
     
     # Main content area
     st.markdown("---")
-    
+
     # Client filtering section on main page
     with st.expander("🖥️ Client Selection", expanded=True):
         # Create a cache key for the current configuration

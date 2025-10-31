@@ -15,6 +15,13 @@ clickhouse:
       protocol: https
       # Credentials from env: XATU_CLICKHOUSE_USERNAME, XATU_CLICKHOUSE_PASSWORD
       description: "Main Xatu ClickHouse cluster"
+    cbt: 
+      host: chproxy-cbt.analytics.production.platform.ethpandaops.io
+      port: 443
+      database: default
+      protocol: https
+      # Credentials from env: XATU_CLICKHOUSE_USERNAME, XATU_CLICKHOUSE_PASSWORD
+      description: "CBT ClickHouse cluster"
     experimental:
       host: clickhouse.xatu-experimental.ethpandaops.io
       port: 443

@@ -37,7 +37,7 @@ def get_blob_count_query(data_source: str, aggregation: str = "p90", client_filt
     else:
         block_table = 'beacon_api_eth_v1_events_block'
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
-        blob_count_expr = 'length(kzg_commitments)'
+        blob_count_expr = 'kzg_commitments_count'
     
     # Build client filter clause
     client_filter_clause = ""
@@ -136,7 +136,7 @@ def get_custody_count_query(data_source: str, aggregation: str = "p90", client_f
     else:
         block_table = 'beacon_api_eth_v1_events_block'
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
-        blob_count_expr = 'length(kzg_commitments)'
+        blob_count_expr = 'kzg_commitments_count'
     
     # Build client filter clause
     client_filter_clause = ""
@@ -272,7 +272,7 @@ def get_node_classification_raw_query(data_source: str, client_filter: list = No
     else:
         block_table = 'beacon_api_eth_v1_events_block'
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
-        blob_count_expr = 'length(kzg_commitments)'
+        blob_count_expr = 'kzg_commitments_count'
         consensus_impl_col = 'meta_consensus_implementation'
     
     # Build client filter clause
@@ -388,7 +388,7 @@ def get_max_blob_count_query(data_source: str) -> str:
         blob_count_expr = 'kzg_commitments_count'
     else:
         sidecar_table = 'beacon_api_eth_v1_events_data_column_sidecar'
-        blob_count_expr = 'length(kzg_commitments)'
+        blob_count_expr = 'kzg_commitments_count'
     
     query = f"""
     SELECT 
