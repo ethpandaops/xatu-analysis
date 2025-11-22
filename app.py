@@ -96,10 +96,17 @@ beacon_api_events_timing_page = st.Page(
     url_path="beacon-api-events-timing"
 )
 
+beacon_api_events_counts_page = st.Page(
+    "pages/analysis/beacon_api_events_counts/page.py",
+    title="Beacon API Events Counts",
+    icon="📊",
+    url_path="beacon-api-events-counts"
+)
+
 # Configure navigation with sections
 navigation = st.navigation({
     "Main": [home_page],
-    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page, reorg_rates_page, beacon_api_events_timing_page]
+    "Analysis": [block_producer_performance_page, multi_metric_analysis_page, attestation_cdf_page, validator_performance_page, peerdas_analysis_page, peerdas_analysis_v2_page, gossipsub_monitoring_page, reorgs_page, reorg_rates_page, beacon_api_events_timing_page, beacon_api_events_counts_page]
 })
 
 # Run the selected page
